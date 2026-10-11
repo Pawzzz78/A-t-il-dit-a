@@ -19,14 +19,14 @@ surligné et un lien vers la vidéo au bon timestamp.
 ## Traduction automatique
 
 Supadata renvoie la première langue disponible quand la langue demandée (champ « Langue », `fr` par défaut)
-n'existe pas pour la vidéo. Si `ANTHROPIC_API_KEY` est configurée, la transcription est alors **traduite par Claude**
+n'existe pas pour la vidéo. Si `OPENROUTER_API_KEY` est configurée, la transcription est alors **traduite par un modèle économique via OpenRouter**
 (horodatages conservés, texte d'origine gardé sous chaque segment dans l'éditeur). Sans clé, le texte d'origine est
 conservé et signalé (badge « langue : en »), et un bouton « Traduire en français » apparaît dans l'éditeur.
 
 Une traduction n'est pas ce qui a été dit : sur le site, une phrase trouvée uniquement dans une transcription traduite
 n'est jamais affichée comme « Oui, il l'a dit » mais comme **« Trouvé dans une traduction »**, avec un avertissement.
 
-Modèle : `claude-opus-5-5` par défaut ; `TRANSLATE_MODEL=claude-haiku-5-5` réduit fortement le coût.
+Modèle : `google/gemini-2.5-flash-lite` par défaut ; change-le avec `TRANSLATE_MODEL` (identifiant OpenRouter, cf. https://openrouter.ai/models). Un identifiant invalide suspend le traitement avec un message explicite au lieu de faire échouer chaque vidéo.
 
 ## Synchronisation automatique des chaînes
 
@@ -68,7 +68,8 @@ Il faut un Postgres accessible via `DATABASE_URL` (les tables sont créées au d
    | `ADMIN_PASSWORD` | mot de passe de `/admin` |
    | `SESSION_SECRET` | chaîne aléatoire de 32+ caractères (`openssl rand -hex 32`) |
    | `SUPADATA_API_KEY` | clé Supadata (optionnelle tant que tu colles les transcriptions à la main) |
-   | `ANTHROPIC_API_KEY` | clé Anthropic (traduction automatique des transcriptions, optionnelle) |
+   | `OPENROUTER_API_KEY` | clé OpenRouter (traduction automatique des transcriptions, optionnelle) |
+   | `TRANSLATE_MODEL` | modèle de traduction OpenRouter (optionnel) |
    | `YOUTUBE_API_KEY` | clé YouTube Data API v3 (pour la synchronisation automatique des chaînes) |
 
 3. Générer un domaine public (Settings → Networking). Le healthcheck est `/api/health`.
@@ -88,7 +89,7 @@ src/
   normalize.js       normalisation du texte (indexation et requêtes)
   search.js          recherche exacte / approchée, extraits et surlignage
   transcripts.js     Supadata + parseurs SRT/VTT/texte
-  translate.js       traduction des segments avec l'API Claude
+  translate.js       traduction des segments via OpenRouter
   localize.js        récupère la transcription dans la langue demandée (traduit si besoin)
   sync.js            synchronisation : découverte des vidéos, file d'attente, planificateur
   youtube.js         extraction d'ID, métadonnées oEmbed

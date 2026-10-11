@@ -781,7 +781,7 @@ async function renderEditor(id) {
               },
               'Traduire en français',
             )
-          : h('p', { class: 'status err' }, 'ANTHROPIC_API_KEY manquante : impossible de traduire automatiquement.')
+          : h('p', { class: 'status err' }, 'OPENROUTER_API_KEY manquante : impossible de traduire automatiquement.')
         : null,
       trMsg,
     ),

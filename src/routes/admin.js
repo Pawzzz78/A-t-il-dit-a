@@ -123,7 +123,7 @@ adminRouter.post(
     let usedLang = lang;
     let tr = { translated: false, originalLang: null, untranslated: false };
     if (mode === 'supadata') {
-      // Si la langue demandée n'existe pas, on traduit (clé Anthropic) au lieu de garder une autre langue.
+      // Si la langue demandée n'existe pas, on traduit (clé OpenRouter) au lieu de garder une autre langue.
       const t = await fetchLocalized(youtubeId, lang);
       segments = t.segments;
       source = 'supadata';

@@ -4,7 +4,7 @@ import { baseLang, translateConfigured, translateSegments } from './translate.js
 /**
  * Récupère la transcription dans la langue demandée.
  * Supadata renvoie la 1re langue disponible quand celle demandée n'existe pas : dans ce cas on traduit
- * (si ANTHROPIC_API_KEY est configurée), sinon on garde le texte d'origine en le signalant.
+ * (si OPENROUTER_API_KEY est configurée), sinon on garde le texte d'origine en le signalant.
  * Renvoie { segments, lang, translated, originalLang, untranslated }.
  */
 export async function fetchLocalized(youtubeId, lang = 'fr', deps = {}) {
