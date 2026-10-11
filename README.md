@@ -44,7 +44,7 @@ Il faut un Postgres accessible via `DATABASE_URL` (les tables sont créées au d
 ## Charte graphique
 
 Reprise de https://www.unenouvelleenergie.fr/ : bleu `#1d257a`, chamois `#b0ad85`, rose `#d0165f`,
-police Montserrat (fichiers dans `public/fonts/`), logo dans `public/brand/logo.svg`.
+police Montserrat (fichiers dans `public/fonts/`). Le logo officiel n'est volontairement pas utilisé.
 Tout est dans [`public/css/theme.css`](public/css/theme.css) ; `app.css` et `admin.css` n'utilisent que ces variables.
 
 ## Structure

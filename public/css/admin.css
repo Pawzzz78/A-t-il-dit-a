@@ -1,7 +1,7 @@
 body.admin { background: var(--color-bg); }
 .admin .site-header .wrap { padding-block: .6rem; }
 .admin .brand { font-size: .95rem; }
-.admin .brand img { width: 2.8rem; }
+.admin .brand-mark { width: 2.2rem; height: 2.2rem; font-size: 1.2rem; }
 .admin main { padding-top: 1.5rem; }
 .admin .wrap.wide { width: min(100% - 2rem, 78rem); }
 

@@ -30,7 +30,7 @@ a { color: var(--color-primary); }
 .site-header { background: #fff; border-bottom: 1px solid var(--color-hairline); }
 .site-header .wrap { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-block: .8rem; }
 .brand { display: flex; align-items: center; gap: .9rem; color: var(--color-primary); text-decoration: none; font-family: var(--font-display); font-weight: var(--font-weight-display); text-transform: uppercase; letter-spacing: var(--tracking-title); font-size: 1.15rem; line-height: 1.1; }
-.brand img { width: 3.6rem; height: auto; display: block; }
+.brand-mark { width: 2.6rem; height: 2.6rem; flex: none; border-radius: 50%; background: var(--color-primary); color: var(--color-chamois); display: grid; place-items: center; font-size: 1.5rem; line-height: 1; }
 .site-header nav { display: flex; align-items: center; gap: 1.5rem; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-caps); }
 .site-header nav a:not(.btn) { color: var(--color-primary); text-decoration: none; }
 .site-header nav a:not(.btn):hover { text-decoration: underline; }
@@ -105,8 +105,7 @@ mark { background: var(--color-highlight); color: var(--ne-blue-dark); font-weig
 /* --- pied de page --------------------------------------------------------- */
 .site-footer { background: var(--color-primary-dark); color: #fff; padding: 2rem 0; font-size: .85rem; }
 .site-footer .wrap { display: flex; gap: 1.5rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
-.site-footer .logo-tile { background: #fff; border-radius: var(--radius); padding: .5rem .7rem; display: inline-flex; }
-.site-footer .logo-tile img { width: 3.6rem; height: auto; display: block; }
+.site-footer .footer-brand { font-family: var(--font-display); font-weight: var(--font-weight-display); font-size: 1.15rem; text-transform: uppercase; letter-spacing: var(--tracking-title); }
 .site-footer a { color: #fff; }
 .site-footer p { margin: 0; opacity: .85; }
 
