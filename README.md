@@ -63,14 +63,14 @@ attente de transcription (ou en échec) n'apparaît pas tant qu'elle n'est pas t
 
 ## Dernières vidéos et résumés
 
-L'accueil affiche les **5 dernières vidéos par date de publication** : celles des chaînes suivies **et** celles ajoutées à la
+L'accueil affiche, en grille, les **5 dernières vidéos par date de publication** : celles des chaînes suivies **et** celles ajoutées à la
 main dans l'admin (seules celles qui ont une transcription apparaissent). Avec `YOUTUBE_API_KEY`, une vidéo ajoutée à la main
 récupère sa date de publication toute seule ; sinon, renseigne la date dans l'éditeur (bouton « Mettre à jour depuis YouTube »
 pour les vidéos existantes).
 
 Chaque vidéo indexée a son **résumé, rédigé automatiquement** par un modèle (OpenRouter) à partir de la transcription : un
 « En bref », puis des sections avec repères de temps cliquables, des puces et les mots importants en gras. Sous chaque vidéo,
-le bouton **Afficher le résumé** ne fait que lire ce résumé déjà stocké en base ; tant qu'il n'est pas prêt, le bouton est grisé
+le bouton **Afficher le résumé** ouvre une fenêtre (fond flouté ; on la ferme avec la croix, en cliquant à côté ou avec Échap) qui ne fait que lire ce résumé déjà stocké en base ; tant qu'il n'est pas prêt, le bouton est grisé
 (**Résumé en préparation…**).
 
 - **Génération en arrière-plan** : toutes les 2 minutes, le serveur résume les vidéos indexées qui n'ont pas encore de résumé
