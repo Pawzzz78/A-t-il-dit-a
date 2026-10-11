@@ -72,6 +72,13 @@ Page **/admin/#/sync**. On y ajoute une chaîne YouTube ; le site :
 2. récupère leurs transcriptions petit à petit (25 par passe, une passe toutes les 5 minutes) ;
 3. vérifie ensuite **chaque jour** si de nouvelles vidéos sont sorties et les ajoute.
 
+**Shorts.** Seules les vidéos longues sont importées : une vidéo est un Short si elle dure 60 s ou moins, ou si elle figure
+dans la liste des Shorts de YouTube pour la chaîne (nécessaire car un Short peut durer jusqu'à 3 min ; cette liste repose sur
+une playlist interne de YouTube non documentée officiellement, avec repli sur la durée si elle est introuvable). Option
+« Exclure les Shorts » par chaîne (activée par défaut). Le bouton **Retirer les Shorts…** supprime ceux déjà importés, après un
+aperçu et une confirmation ; les Shorts supprimés sont mémorisés et ne reviennent jamais. Les vidéos ajoutées à la main et celles
+corrigées à la main ne sont jamais supprimées.
+
 Garde-fous :
 - le traitement démarre **en pause** : rien n'est facturé tant qu'on n'a pas cliqué sur « Démarrer » ;
 - seuls les sous-titres existants sont demandés (`mode=native`, 1 crédit Supadata par vidéo), jamais de transcription générée par IA ;

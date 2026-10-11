@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { HttpError } from '../http-error.js';
 import { pool } from '../db.js';
-import { discoverChannel, overview, runCycle, setSetting } from '../sync.js';
+import { discoverChannel, overview, previewShorts, purgeShorts, runCycle, setSetting } from '../sync.js';
 import { YouTubeApiError, resolveChannel, youtubeApiConfigured } from '../youtube.js';
 
 export const syncRouter = Router();
@@ -36,11 +36,12 @@ syncRouter.post(
       throw new HttpError(503, "YOUTUBE_API_KEY n'est pas configurée (clé « YouTube Data API v3 » Google).");
     }
     const min = minDuration(req.body?.min_duration_s);
+    const excludeShorts = req.body?.exclude_shorts !== false; // Shorts exclus par défaut
     const info = await resolveChannel(req.body?.input);
     const { rows } = await pool.query(
-      `INSERT INTO channels (youtube_channel_id, title, handle, uploads_playlist_id, min_duration_s)
-       VALUES ($1, $2, $3, $4, $5) ON CONFLICT (youtube_channel_id) DO NOTHING RETURNING *`,
-      [info.youtube_channel_id, info.title, info.handle, info.uploads_playlist_id, min],
+      `INSERT INTO channels (youtube_channel_id, title, handle, uploads_playlist_id, min_duration_s, exclude_shorts)
+       VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (youtube_channel_id) DO NOTHING RETURNING *`,
+      [info.youtube_channel_id, info.title, info.handle, info.uploads_playlist_id, min, excludeShorts],
     );
     if (!rows[0]) throw new HttpError(409, 'Cette chaîne est déjà suivie.');
     let added = 0;
@@ -60,7 +61,13 @@ syncRouter.patch(
     const ch = await getChannel(idParam(req));
     const enabled = req.body?.enabled === undefined ? ch.enabled : Boolean(req.body.enabled);
     const min = req.body?.min_duration_s === undefined ? ch.min_duration_s : minDuration(req.body.min_duration_s);
-    await pool.query('UPDATE channels SET enabled = $2, min_duration_s = $3 WHERE id = $1', [ch.id, enabled, min]);
+    const excludeShorts = req.body?.exclude_shorts === undefined ? ch.exclude_shorts : Boolean(req.body.exclude_shorts);
+    await pool.query('UPDATE channels SET enabled = $2, min_duration_s = $3, exclude_shorts = $4 WHERE id = $1', [
+      ch.id,
+      enabled,
+      min,
+      excludeShorts,
+    ]);
     res.json({ ok: true });
   }),
 );
@@ -85,6 +92,23 @@ syncRouter.post(
       if (e instanceof YouTubeApiError) throw new HttpError(502, e.message);
       throw e;
     }
+  }),
+);
+
+/** Aperçu : combien de Shorts seraient supprimés ? (ne supprime rien) */
+syncRouter.post(
+  '/channels/:id/shorts/preview',
+  ah(async (req, res) => {
+    res.json(await previewShorts(await getChannel(idParam(req))));
+  }),
+);
+
+/** Supprime les Shorts déjà importés de la chaîne (jamais les vidéos ajoutées à la main) et les exclut ensuite. */
+syncRouter.post(
+  '/channels/:id/shorts/purge',
+  ah(async (req, res) => {
+    if (req.body?.confirm !== true) throw new HttpError(400, 'Confirmation requise.');
+    res.json(await purgeShorts(await getChannel(idParam(req))));
   }),
 );
 

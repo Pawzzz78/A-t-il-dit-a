@@ -73,7 +73,10 @@ async function api(resource, params) {
     const msg = reason === 'quotaExceeded' ? 'quota de l’API YouTube dépassé pour aujourd’hui'
       : /keyInvalid|API_KEY_INVALID/.test(String(reason) + JSON.stringify(body)) ? 'clé API YouTube invalide'
       : (body.error?.message ?? res.statusText);
-    throw new YouTubeApiError(`API YouTube : ${msg}`);
+    const err = new YouTubeApiError(`API YouTube : ${msg}`);
+    err.status = res.status;
+    err.reason = reason;
+    throw err;
   }
   return body;
 }
@@ -170,4 +173,27 @@ export async function* iterateUploads({ playlistId, unknownIds }) {
 export async function fetchVideoMeta(youtubeId) {
   if (!youtubeApiConfigured()) return null;
   return (await videoDetails([youtubeId]))[0] ?? null;
+}
+
+/**
+ * Identifiants des Shorts d'une chaîne, via la playlist interne YouTube « UUSH… » (même identifiant que la
+ * chaîne, préfixe UC -> UUSH). Fonctionnement non documenté officiellement : si la playlist est introuvable
+ * (chaîne sans Shorts, ou astuce indisponible), on renvoie { ids: vide, found: false } et l'appelant se rabat
+ * sur la durée seule.
+ */
+export async function listShortIds(youtubeChannelId) {
+  const playlistId = `UUSH${String(youtubeChannelId).slice(2)}`;
+  const ids = new Set();
+  let pageToken;
+  try {
+    do {
+      const page = await api('playlistItems', { part: 'contentDetails', playlistId, maxResults: 50, pageToken });
+      for (const it of page.items ?? []) if (it.contentDetails?.videoId) ids.add(it.contentDetails.videoId);
+      pageToken = page.nextPageToken;
+    } while (pageToken);
+  } catch (e) {
+    if (e instanceof YouTubeApiError && (e.reason === 'playlistNotFound' || e.status === 404)) return { ids, found: false };
+    throw e;
+  }
+  return { ids, found: true };
 }

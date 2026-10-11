@@ -284,17 +284,48 @@ function addForm(config) {
 
 // ------------------------------------------------------------- synchronisation
 
+let syncFlash = null; // message affiché après le rechargement de la page
+
 async function renderSync() {
   const o = await api('GET', '/sync/overview');
   const msg = h('p', { class: 'status' });
+  if (syncFlash) {
+    status(msg, syncFlash.text, syncFlash.kind);
+    syncFlash = null;
+  }
+  // fn peut renvoyer un texte à afficher une fois la page rechargée
   const act = async (fn, okMsg) => {
     try {
-      await fn();
-      if (okMsg) status(msg, okMsg, 'ok');
+      const result = await fn();
+      const text = typeof result === 'string' ? result : okMsg;
+      if (text) syncFlash = { text, kind: 'ok' };
       await renderSync();
     } catch (e) {
       status(msg, e.message, 'err');
     }
+  };
+
+  const plural = (n, one, many) => (n > 1 ? many : one);
+  /** Aperçu puis, après confirmation, suppression des Shorts déjà importés d'une chaîne. */
+  const purgeShortsFlow = async (c) => {
+    const p = await api('POST', `/sync/channels/${c.id}/shorts/preview`, {});
+    if (!p.total) {
+      return p.protected
+        ? `Aucun Short à supprimer (${p.protected} corrigé${plural(p.protected, '', 's')} à la main conservé${plural(p.protected, '', 's')}).`
+        : 'Aucun Short à supprimer : la chaîne est propre.';
+    }
+    const text = [
+      `${p.total} Short${plural(p.total, '', 's')} à supprimer : ${p.with_transcript} déjà transcrit${plural(p.with_transcript, '', 's')} (crédits Supadata déjà dépensés) et ${p.pending} en attente.`,
+      p.detection === 'playlist'
+        ? 'Détection : liste des Shorts de YouTube + durée de 60 s ou moins.'
+        : 'Détection par la durée seule (60 s ou moins) : les Shorts plus longs ne seront pas repérés.',
+      p.protected ? `${p.protected} corrigé${plural(p.protected, '', 's')} à la main : conservé${plural(p.protected, '', 's')}.` : '',
+      `Exemples :\n${p.examples.map((e) => `• ${e.title} (${e.duration_s ?? '?'} s)`).join('\n')}`,
+      'Les vidéos ajoutées à la main ne sont jamais touchées. Les Shorts supprimés ne reviendront pas. Cette action est définitive. Continuer ?',
+    ].filter(Boolean).join('\n\n');
+    if (!confirm(text)) return null;
+    const r = await api('POST', `/sync/channels/${c.id}/shorts/purge`, { confirm: true });
+    return `${r.removed} Short${plural(r.removed, '', 's')} supprimé${plural(r.removed, '', 's')}. Ils ne seront plus importés.`;
   };
   const when = (d) => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
   const keyLine = (ok, name, help) =>
@@ -342,6 +373,7 @@ async function renderSync() {
   // --- chaînes
   const input = h('input', { type: 'text', placeholder: 'https://www.youtube.com/@nomdelachaine', required: true });
   const minD = h('input', { type: 'number', min: '0', value: '0' });
+  const noShorts = h('input', { type: 'checkbox', checked: true });
   const addMsg = h('p', { class: 'status' });
   const addBtn = h('button', { class: 'btn', type: 'submit', disabled: !o.keys.youtube }, 'Ajouter et lister les vidéos');
   const addForm = h(
@@ -352,7 +384,7 @@ async function renderSync() {
         addBtn.disabled = true;
         status(addMsg, 'Recherche de la chaîne et liste des vidéos… (peut prendre quelques secondes)');
         try {
-          const r = await api('POST', '/sync/channels', { input: input.value, min_duration_s: Number(minD.value) || 0 });
+          const r = await api('POST', '/sync/channels', { input: input.value, min_duration_s: Number(minD.value) || 0, exclude_shorts: noShorts.checked });
           if (r.error) status(addMsg, `Chaîne ajoutée, mais la liste a échoué : ${r.error}`, 'err');
           else {
             await renderSync();
@@ -364,7 +396,8 @@ async function renderSync() {
         }
       },
     },
-    h('div', { class: 'row' }, h('label', { class: 'field' }, 'Chaîne YouTube (URL, @nom ou identifiant UC…)', input), h('label', { class: 'field' }, 'Durée minimale (secondes, 0 = tout, 61 = sans les Shorts)', minD)),
+    h('div', { class: 'row' }, h('label', { class: 'field' }, 'Chaîne YouTube (URL, @nom ou identifiant UC…)', input), h('label', { class: 'field' }, 'Durée minimale (secondes, 0 = aucune)', minD)),
+    h('label', { class: 'radio' }, noShorts, 'Exclure les Shorts (vidéos courtes verticales) : seulement les vidéos longues'),
     h('div', { class: 'actions' }, addBtn, addMsg),
   );
 
@@ -375,11 +408,14 @@ async function renderSync() {
       h('td', {}, h('div', { class: 't' }, c.title || c.youtube_channel_id), h('div', { class: 'status' }, c.handle ?? '')),
       h('td', {}, String(c.video_count)),
       h('td', {}, c.min_duration_s ? `${c.min_duration_s} s` : '—'),
+      h('td', {}, c.exclude_shorts ? 'exclus' : h('span', { class: 'status err' }, 'inclus')),
       h('td', {}, c.last_discovery_error ? h('span', { class: 'status err' }, c.last_discovery_error) : when(c.last_discovery_at)),
       h(
         'td',
         { class: 'actions' },
-        h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(async () => { const r = await api('POST', `/sync/channels/${c.id}/discover`, {}); status(msg, `${r.added} nouvelle${r.added > 1 ? 's' : ''} vidéo${r.added > 1 ? 's' : ''}.`, 'ok'); }) }, 'Chercher maintenant'),
+        h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(async () => { const r = await api('POST', `/sync/channels/${c.id}/discover`, {}); return `${r.added} nouvelle${r.added > 1 ? 's' : ''} vidéo${r.added > 1 ? 's' : ''}.`; }) }, 'Chercher maintenant'),
+        h('button', { class: 'btn secondary small', type: 'button', title: 'Supprime les Shorts déjà importés (aperçu et confirmation avant)', onclick: () => act(() => purgeShortsFlow(c)) }, 'Retirer les Shorts…'),
+        c.exclude_shorts ? null : h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/sync/channels/${c.id}`, { exclude_shorts: true }), 'Les Shorts sont désormais exclus.') }, 'Exclure les Shorts'),
         h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/sync/channels/${c.id}`, { enabled: !c.enabled })) }, c.enabled ? 'Suspendre' : 'Reprendre'),
         h('button', { class: 'btn danger small', type: 'button', onclick: () => confirm('Ne plus suivre cette chaîne ? Les vidéos déjà importées sont conservées.') && act(() => api('DELETE', `/sync/channels/${c.id}`)) }, 'Retirer'),
       ),
@@ -391,7 +427,7 @@ async function renderSync() {
     h('h2', {}, 'Chaînes suivies'),
     h('p', { id: 'sync-msg', class: 'status' }),
     rows.length
-      ? h('table', { class: 'videos' }, h('thead', {}, h('tr', {}, ...['Chaîne', 'Vidéos', 'Durée min.', 'Dernière vérif.', ''].map((t) => h('th', {}, t)))), h('tbody', {}, rows))
+      ? h('table', { class: 'videos' }, h('thead', {}, h('tr', {}, ...['Chaîne', 'Vidéos', 'Durée min.', 'Shorts', 'Dernière vérif.', ''].map((t) => h('th', {}, t)))), h('tbody', {}, rows))
       : h('p', { class: 'status' }, 'Aucune chaîne suivie.'),
     h('h3', { style: 'margin-top:1.2rem' }, 'Ajouter une chaîne'),
     addForm,
@@ -428,7 +464,7 @@ async function renderSync() {
       )
     : null;
 
-  $app.replaceChildren(state, channels, failed);
+  $app.replaceChildren(...[state, channels, failed].filter(Boolean));
   const timer = setInterval(() => document.hidden || renderSync().catch(() => {}), 20000);
   cleanup = () => clearInterval(timer);
 }

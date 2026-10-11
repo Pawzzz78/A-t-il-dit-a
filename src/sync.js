@@ -15,7 +15,10 @@ import { pool, replaceSegments, withTransaction } from './db.js';
 import { fetchLocalized } from './localize.js';
 import { TranscriptError, supadataConfigured } from './transcripts.js';
 import { TranslationError } from './translate.js';
-import { iterateUploads, youtubeApiConfigured } from './youtube.js';
+import { iterateUploads, listShortIds, youtubeApiConfigured } from './youtube.js';
+
+/** Durée (s) en dessous de laquelle une vidéo est forcément un Short (les plus longs, jusqu'à 3 min, sont repérés par la liste YouTube). */
+export const SHORT_MAX_S = 60;
 
 const LOCK_ID = 727001;
 const HOUR = 3600 * 1000;
@@ -65,11 +68,27 @@ export async function discoverChannel(channel, deps = {}) {
   const intervalMs = syncConfig().intervalHours * HOUR;
   let added = 0;
   let skipped = 0;
+  // Liste des Shorts de la chaîne : chargée une seule fois, et seulement si on en a besoin.
+  let shorts = null;
+  const isShort = async (v) => {
+    if (v.duration_s != null && v.duration_s <= SHORT_MAX_S) return true;
+    shorts ??= await (deps.listShortIds ?? listShortIds)(channel.youtube_channel_id);
+    return shorts.ids.has(v.youtube_id);
+  };
   try {
     for await (const page of iterate({ playlistId: channel.uploads_playlist_id, unknownIds })) {
       let handled = 0;
       for (const v of page.details) {
         if (v.live) continue; // direct en cours / à venir : on le reprendra plus tard
+        if (channel.exclude_shorts !== false && (await isShort(v))) {
+          await pool.query(
+            `INSERT INTO excluded_videos (youtube_id, reason) VALUES ($1, 'short') ON CONFLICT DO NOTHING`,
+            [v.youtube_id],
+          );
+          skipped++;
+          handled++;
+          continue;
+        }
         if (channel.min_duration_s > 0 && (v.duration_s ?? 0) < channel.min_duration_s) {
           await pool.query(
             `INSERT INTO excluded_videos (youtube_id, reason) VALUES ($1, 'too_short') ON CONFLICT DO NOTHING`,
@@ -118,6 +137,75 @@ export async function discoverChannel(channel, deps = {}) {
   return { added, skipped };
 }
 
+// --- Shorts : détection et nettoyage ------------------------------------------------
+
+/**
+ * Supprime des vidéos synchronisées considérées comme des Shorts, et les mémorise pour que la synchro ne les
+ * rajoute jamais. Ne touche JAMAIS aux vidéos ajoutées à la main (sync_status NULL) ni à celles corrigées à la main.
+ * Renvoie les identifiants YouTube supprimés.
+ */
+export async function removeShorts(videoIds) {
+  if (!videoIds.length) return [];
+  return withTransaction(async (c) => {
+    const { rows } = await c.query(
+      `DELETE FROM videos WHERE id = ANY($1) AND sync_status IS NOT NULL AND NOT edited RETURNING youtube_id`,
+      [videoIds],
+    );
+    const ids = rows.map((r) => r.youtube_id);
+    if (ids.length) {
+      await c.query(
+        `INSERT INTO excluded_videos (youtube_id, reason) SELECT unnest($1::text[]), 'short' ON CONFLICT DO NOTHING`,
+        [ids],
+      );
+    }
+    return ids;
+  });
+}
+
+/** Vidéos déjà importées d'une chaîne qui sont des Shorts. `detection` : 'playlist' (liste YouTube) ou 'duration'. */
+export async function findShorts(channel, deps = {}) {
+  let list = { ids: new Set(), found: false };
+  try {
+    list = await (deps.listShortIds ?? listShortIds)(channel.youtube_channel_id);
+  } catch {
+    // clé YouTube absente ou API indisponible : on se rabat sur la durée seule
+  }
+  const { rows } = await pool.query(
+    `SELECT v.id, v.youtube_id, v.title, v.duration_s, v.sync_status, v.edited,
+            (SELECT count(*) FROM segments s WHERE s.video_id = v.id)::int AS segments
+     FROM videos v WHERE v.channel_id = $1 AND v.sync_status IS NOT NULL
+     ORDER BY v.published_at DESC NULLS LAST`,
+    [channel.youtube_channel_id],
+  );
+  const shorts = rows.filter((v) => (v.duration_s != null && v.duration_s <= SHORT_MAX_S) || list.ids.has(v.youtube_id));
+  return {
+    detection: list.found ? 'playlist' : 'duration',
+    shorts: shorts.filter((v) => !v.edited),
+    protectedCount: shorts.filter((v) => v.edited).length,
+  };
+}
+
+/** Aperçu (rien n'est supprimé) : combien de Shorts, dont combien déjà transcrits. */
+export async function previewShorts(channel, deps = {}) {
+  const { detection, shorts, protectedCount } = await findShorts(channel, deps);
+  return {
+    detection,
+    total: shorts.length,
+    with_transcript: shorts.filter((v) => v.segments > 0).length,
+    pending: shorts.filter((v) => v.sync_status === 'pending').length,
+    protected: protectedCount,
+    examples: shorts.slice(0, 8).map((v) => ({ title: v.title, duration_s: v.duration_s })),
+  };
+}
+
+/** Supprime les Shorts de la chaîne et les exclut désormais de la synchro. */
+export async function purgeShorts(channel, deps = {}) {
+  const { detection, shorts, protectedCount } = await findShorts(channel, deps);
+  const removed = await removeShorts(shorts.map((v) => v.id));
+  await pool.query('UPDATE channels SET exclude_shorts = TRUE WHERE id = $1', [channel.id]);
+  return { detection, removed: removed.length, protected: protectedCount };
+}
+
 // --- 2. traitement de la file ------------------------------------------------------
 
 function retryPlan(code, attempts, publishedAt) {
@@ -133,14 +221,21 @@ function retryPlan(code, attempts, publishedAt) {
 
 /** Traite jusqu'à `limit` vidéos en attente. */
 export async function processPending({ limit, fetchFn = fetchLocalized, gapMs = 1100 } = {}) {
-  const result = { done: 0, retry: 0, failed: 0, skipped: 0, stopped: null };
+  const result = { done: 0, retry: 0, failed: 0, skipped: 0, removed: 0, stopped: null };
   const { rows } = await pool.query(
-    `SELECT id, youtube_id, published_at, sync_attempts, lang FROM videos
-     WHERE sync_status = 'pending' AND sync_next_at <= now()
-     ORDER BY published_at DESC NULLS LAST, id DESC LIMIT $1`,
+    `SELECT v.id, v.youtube_id, v.published_at, v.sync_attempts, v.lang, v.duration_s,
+            COALESCE(c.exclude_shorts, FALSE) AS exclude_shorts
+     FROM videos v LEFT JOIN channels c ON c.youtube_channel_id = v.channel_id
+     WHERE v.sync_status = 'pending' AND v.sync_next_at <= now()
+     ORDER BY v.published_at DESC NULLS LAST, v.id DESC LIMIT $1`,
     [limit],
   );
   for (const v of rows) {
+    // Short déjà en file (ajouté avant que les Shorts soient exclus) : on ne dépense aucun crédit dessus.
+    if (v.exclude_shorts && v.duration_s != null && v.duration_s <= SHORT_MAX_S) {
+      if ((await removeShorts([v.id])).length) result.removed++;
+      continue;
+    }
     try {
       const t = await fetchFn(v.youtube_id, v.lang || 'fr');
       const applied = await withTransaction(async (c) => {

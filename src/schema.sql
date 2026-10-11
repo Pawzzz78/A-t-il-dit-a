@@ -77,3 +77,6 @@ CREATE TABLE IF NOT EXISTS video_summaries (
   source_hash TEXT NOT NULL,                 -- md5 du texte indexé au moment de la génération
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Shorts : exclus par défaut (durée <= 60 s ou présents dans la liste des Shorts YouTube de la chaîne).
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS exclude_shorts BOOLEAN NOT NULL DEFAULT TRUE;
