@@ -67,7 +67,9 @@ export function renderVideoCard(v, summariesEnabled) {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Le résumé est indisponible.');
         const note = [
-          'Résumé généré par IA à partir de la transcription automatique : il peut contenir des erreurs. Écoute la vidéo pour vérifier.',
+          data.edited
+            ? 'Résumé généré par IA puis corrigé à la main. Il peut contenir des erreurs : écoute la vidéo pour vérifier.'
+            : 'Résumé généré par IA à partir de la transcription automatique : il peut contenir des erreurs. Écoute la vidéo pour vérifier.',
           data.translated ? `Il s’appuie sur une traduction automatique${data.original_lang ? ` depuis le ${langName(data.original_lang)}` : ''}.` : '',
         ].filter(Boolean).join(' ');
         panel.replaceChildren(renderSummary(data.markdown, v), h('p', { class: 'summary-note' }, note));

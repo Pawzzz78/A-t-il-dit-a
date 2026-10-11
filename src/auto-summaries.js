@@ -37,7 +37,8 @@ export async function summariesActive() {
 }
 
 const INDEXED_SQL = `v.norm_text <> '' AND (v.duration_s IS NULL OR v.duration_s > ${SHORT_MAX_S})`;
-const OUTDATED_SQL = `(s.video_id IS NULL OR s.source_hash <> v.text_hash || ':' || $1)`;
+// un résumé corrigé à la main (edited_at) n'est jamais « à refaire »
+const OUTDATED_SQL = `(s.video_id IS NULL OR (s.edited_at IS NULL AND s.source_hash <> v.text_hash || ':' || $1))`;
 
 /** Prochaine vidéo à résumer (une seule), ou undefined. `graceMinutes: 0` ignore le délai de grâce. */
 async function nextDue(graceMinutes, idPrefix = null) {
@@ -132,7 +133,7 @@ export async function summariesOverview() {
   const [{ rows: counts }, { rows: failed }, paused, cooldown] = await Promise.all([
     pool.query(
       `SELECT
-         count(*) FILTER (WHERE s.video_id IS NOT NULL AND s.source_hash = v.text_hash || ':' || $1)::int AS ready,
+         count(*) FILTER (WHERE s.video_id IS NOT NULL AND (s.edited_at IS NOT NULL OR s.source_hash = v.text_hash || ':' || $1))::int AS ready,
          count(*) FILTER (WHERE ${OUTDATED_SQL} AND v.summary_attempts < ${MAX_ATTEMPTS})::int AS waiting,
          count(*) FILTER (WHERE ${OUTDATED_SQL} AND v.summary_attempts >= ${MAX_ATTEMPTS})::int AS failed
        FROM videos v LEFT JOIN video_summaries s ON s.video_id = v.id WHERE ${INDEXED_SQL}`,

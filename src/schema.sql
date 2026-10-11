@@ -87,3 +87,4 @@ ALTER TABLE videos ADD COLUMN IF NOT EXISTS summary_attempts INTEGER NOT NULL DE
 ALTER TABLE videos ADD COLUMN IF NOT EXISTS summary_next_at  TIMESTAMPTZ;
 ALTER TABLE videos ADD COLUMN IF NOT EXISTS summary_error    TEXT;
 UPDATE videos SET text_hash = md5(norm_text) WHERE text_hash IS NULL AND norm_text <> '';
+ALTER TABLE video_summaries ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;

@@ -296,6 +296,66 @@ test('auto : un nouveau transcript remet les tentatives à zéro et enregistre l
   assert.equal((await vrow(1)).text_hash, null);
 });
 
+test('édition manuelle : résumé corrigé à la main, protégé de la régénération automatique', { skip: !enabled }, async () => {
+  const vid = await addVideo(1);
+  await cycle(counting());
+  const auto0 = await stored(1);
+  const e = await svc.saveEditedSummary(vid, '## En bref\nUn résumé <b>corrigé</b> à la main par l\'équipe, [avec un lien](http://x.y).\n## [01:00] Une section\n- Un **point** corrigé.');
+  assert.doesNotMatch(e.markdown, /<b>|http/); // même nettoyage que le résumé IA
+  assert.match(e.markdown, /## \[01:00\] Une section/); // le repère écrit par l'admin est conservé
+  let s = await stored(1);
+  assert.equal(s.model, 'manuel');
+  assert.notEqual(s.content, auto0.content);
+  assert.equal((await db.pool.query('SELECT edited_at FROM video_summaries WHERE video_id = $1', [vid])).rows[0].edited_at !== null, true);
+
+  // la génération automatique ne le touche pas, même si les consignes ont changé
+  await db.pool.query('UPDATE video_summaries SET source_hash = text_hash FROM videos v WHERE v.id = video_id AND video_id = $1', [vid]);
+  const complete = counting();
+  assert.equal((await cycle(complete)).done, 0);
+  assert.equal(complete.calls, 0);
+  // une génération qui se termine après l'édition ne l'écrase pas non plus
+  const v = { id: vid, youtube_id: id(1), text_hash: (await vrow(1)).text_hash };
+  assert.equal((await svc.generateSummary(v, { complete })).skipped, 'résumé corrigé à la main');
+  const callsAfterRace = complete.calls;
+  assert.equal((await stored(1)).content, s.content);
+
+  // il reste affiché, même si la transcription est corrigée ensuite
+  await withServer(async (base) => {
+    await db.withTransaction((c) => db.replaceSegments(c, vid, [{ start_ms: 0, text: 'transcription corrigée' }], { edited: true }));
+    const r = await fetch(`${base}/api/summary/${id(1)}`);
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.edited, true);
+    assert.match(body.markdown, /corrigé/);
+    const list = await (await fetch(`${base}/api/latest?limit=50`)).json();
+    assert.equal(list.videos.find((x) => x.youtube_id === id(1)).has_summary, true);
+  });
+  await age(vid);
+  assert.equal((await cycle(complete)).done, 0);
+  assert.equal(complete.calls, callsAfterRace); // le travail de fond n'a rien tenté
+  assert.ok((await auto.summariesOverview()).ready >= 1);
+
+  // « Régénérer » le remplace, et il redevient un résumé automatique
+  await svc.regenerateNow(vid, { complete: counting() });
+  s = await stored(1);
+  assert.notEqual(s.model, 'manuel');
+  assert.equal((await db.pool.query('SELECT edited_at FROM video_summaries WHERE video_id = $1', [vid])).rows[0].edited_at, null);
+});
+
+test('édition manuelle : sur une vidéo sans résumé, et erreurs claires', { skip: !enabled }, async () => {
+  const vid = await addVideo(1);
+  await addVideo(2, { texts: null });
+  const e = await svc.saveEditedSummary(vid, '## En bref\nRésumé écrit entièrement à la main, avant tout travail de l\'IA.');
+  assert.match(e.markdown, /^## En bref/);
+  const complete = counting();
+  assert.equal((await cycle(complete)).done, 0); // plus rien à résumer automatiquement
+  assert.equal((await err(svc.saveEditedSummary(vid, '   '))).status, 400);
+  assert.equal((await err(svc.saveEditedSummary(vid, 'x'.repeat(20000)))).status, 400);
+  assert.equal((await err(svc.saveEditedSummary(999999999, 'Un texte assez long pour être valide.'))).status, 404);
+  assert.equal((await err(svc.saveEditedSummary((await vrow(2)).id, 'Un texte assez long pour être valide.'))).status, 409);
+  assert.equal((await stored(1)).content, e.markdown); // les refus n'abîment rien
+});
+
 test('régénération manuelle : remplace le résumé tout de suite, erreurs claires', { skip: !enabled }, async () => {
   const vid = await addVideo(1);
   await addVideo(2, { texts: null });

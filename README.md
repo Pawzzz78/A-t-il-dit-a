@@ -87,8 +87,13 @@ le bouton **Afficher le résumé** ne fait que lire ce résumé déjà stocké e
 - **Coût borné** : plafond de `SUMMARY_DAILY_CAP` résumés par jour (500 par défaut) et `SUMMARY_PER_CYCLE` par passe (5). Le
   premier déploiement résume tout le catalogue existant, vidéo après vidéo : compte quelques centimes par vidéo selon le modèle.
   Mise en pause possible à tout moment depuis **Admin → Synchronisation → Résumés automatiques**.
-- **Admin** : compteurs (prêts / en attente / en échec), pause et reprise, « Lancer maintenant », liste des échecs ; dans l'éditeur
-  d'une vidéo, état du résumé et bouton « Régénérer maintenant ».
+- **Admin** : compteurs (prêts / en attente / en échec), pause et reprise, « Lancer maintenant », liste des échecs.
+- **Corriger un résumé à la main** : dans l'éditeur d'une vidéo, le panneau « Résumé IA » contient le texte du résumé (même format :
+  `## En bref`, `## [12:34] Titre` pour un repère de temps cliquable, `- puce`, `**gras**`). Après « Enregistrer le résumé », il
+  s'affiche tel quel sur le site avec la mention « généré par IA puis corrigé à la main » et n'est **plus jamais régénéré
+  automatiquement** (ni à cause d'une nouvelle version des consignes, ni après une correction de la transcription ; l'admin
+  signale alors que la transcription a changé). Tu peux aussi l'écrire entièrement toi-même. Seul « Régénérer avec l'IA » le
+  remplace, après confirmation. Le texte est nettoyé comme celui de l'IA (HTML et liens retirés).
 - Fidélité : le modèle ne doit utiliser que le texte ; les repères de temps inexistants sont supprimés, le HTML retiré, la
   taille bornée. Une mention rappelle que le résumé est généré par IA et peut contenir des erreurs. Vidéos très longues : notes
   par partie, puis synthèse. Modèle : `SUMMARY_MODEL`, sinon `SEARCH_MODEL`, sinon `TRANSLATE_MODEL`.

@@ -965,44 +965,79 @@ async function renderEditor(id) {
 
 
 
-  // --- résumé IA
+  // --- résumé IA (modifiable à la main)
   const sumMsg = h('p', { class: 'status' });
   const sumDate = (d) => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '');
   const sumText = {
-    ready: `Prêt (rédigé le ${sumDate(summary.created_at)}, modèle ${summary.model}). Il s’affiche sur le site.`,
-    refresh: 'Un résumé existe, il va être mis à jour automatiquement (transcription ou consignes modifiées).',
-    waiting: 'Sera rédigé automatiquement dans quelques minutes (délai après la dernière modification).',
-    failed: `En échec après ${summary.attempts} tentatives : ${summary.error ?? ''}`,
+    edited: `Corrigé à la main le ${sumDate(summary.edited_at)} : il n’est jamais régénéré automatiquement.${summary.outdated ? ' Attention : la transcription a été modifiée depuis, relis ce résumé.' : ''}`,
+    ready: `Rédigé par l’IA le ${sumDate(summary.created_at)} (modèle ${summary.model}). Il s’affiche sur le site.`,
+    refresh: 'Un résumé existe, il va être mis à jour automatiquement (transcription ou consignes modifiées). Tu peux le corriger toi-même : il ne sera alors plus régénéré.',
+    waiting: 'Sera rédigé automatiquement dans quelques minutes (délai après la dernière modification). Tu peux aussi l’écrire toi-même ci-dessous.',
+    failed: `En échec après ${summary.attempts} tentatives : ${summary.error ?? ''} Tu peux l’écrire toi-même ci-dessous.`,
     none: 'Pas de transcription : pas de résumé.',
   }[summary.status];
+  const sumArea = h('textarea', { class: 'text sum-area', rows: 14, spellcheck: 'true', 'aria-label': 'Résumé de la vidéo', value: summary.content });
+  sumArea.value = summary.content;
+  const saveSum = h('button', { class: 'btn small', type: 'button', disabled: true }, 'Enregistrer le résumé');
+  sumArea.addEventListener('input', () => {
+    saveSum.disabled = sumArea.value === summary.content;
+    status(sumMsg, '');
+  });
+  saveSum.addEventListener('click', async () => {
+    saveSum.disabled = true;
+    try {
+      const r = await api('PUT', `/videos/${id}/summary`, { markdown: sumArea.value });
+      sumArea.value = r.markdown;
+      summary.content = r.markdown;
+      status(sumMsg, 'Résumé enregistré : il est affiché tel quel sur le site et ne sera plus régénéré automatiquement.', 'ok');
+    } catch (e) {
+      saveSum.disabled = false;
+      status(sumMsg, e.message, 'err');
+    }
+  });
   const summaryPanel = h(
     'section',
     { class: 'panel' },
     h(
       'details',
-      { open: summary.status === 'failed' },
-      h('summary', {}, `Résumé IA : ${{ ready: 'prêt', refresh: 'à mettre à jour', waiting: 'en attente', failed: 'en échec', none: 'aucun' }[summary.status]}`),
+      { open: summary.status === 'failed' || summary.status === 'edited' },
+      h('summary', {}, `Résumé IA : ${{ edited: 'corrigé à la main', ready: 'prêt', refresh: 'à mettre à jour', waiting: 'en attente', failed: 'en échec', none: 'aucun' }[summary.status]}`),
       h('p', { class: summary.status === 'failed' ? 'status err' : 'status' }, sumText),
       summary.status === 'none'
         ? null
-        : h(
-            'button',
-            {
-              class: 'btn secondary small',
-              type: 'button',
-              onclick: async () => {
-                if (dirty) return status(sumMsg, 'Enregistre d’abord tes modifications.', 'err');
-                status(sumMsg, 'Rédaction du résumé… (environ une minute)');
-                try {
-                  await api('POST', `/videos/${id}/summary`, {});
-                  route();
-                } catch (e) {
-                  status(sumMsg, e.message, 'err');
-                }
-              },
-            },
-            'Régénérer maintenant',
-          ),
+        : [
+            h(
+              'p',
+              { class: 'status' },
+              'Format : « ## En bref » puis du texte ; « ## [12:34] Titre » pour une section avec repère de temps cliquable ; « - » pour une puce ; **gras** pour un mot important.',
+            ),
+            sumArea,
+            h(
+              'div',
+              { class: 'actions' },
+              saveSum,
+              h(
+                'button',
+                {
+                  class: 'btn secondary small',
+                  type: 'button',
+                  onclick: async () => {
+                    if (dirty) return status(sumMsg, 'Enregistre d’abord tes modifications de la transcription.', 'err');
+                    const lost = summary.status === 'edited' || sumArea.value !== summary.content;
+                    if (lost && !confirm('Régénérer remplacera le résumé actuel (y compris tes corrections) par un nouveau résumé IA. Continuer ?')) return;
+                    status(sumMsg, 'Rédaction du résumé… (environ une minute)');
+                    try {
+                      await api('POST', `/videos/${id}/summary`, {});
+                      route();
+                    } catch (e) {
+                      status(sumMsg, e.message, 'err');
+                    }
+                  },
+                },
+                'Régénérer avec l’IA',
+              ),
+            ),
+          ],
       sumMsg,
     ),
   );
