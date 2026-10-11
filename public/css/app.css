@@ -28,10 +28,10 @@ a { color: var(--color-primary); }
 .topbar a:hover { text-decoration: underline; }
 
 .site-header { background: #fff; border-bottom: 1px solid var(--color-hairline); }
-.site-header .wrap { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-block: .8rem; }
+.site-header .wrap { display: flex; align-items: center; justify-content: space-between; gap: .6rem 1rem; padding-block: .8rem; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: .9rem; color: var(--color-primary); text-decoration: none; font-family: var(--font-display); font-weight: var(--font-weight-display); text-transform: uppercase; letter-spacing: var(--tracking-title); font-size: 1.15rem; line-height: 1.1; }
 .brand-mark { width: 2.6rem; height: 2.6rem; flex: none; border-radius: 50%; background: var(--color-primary); color: var(--color-chamois); display: grid; place-items: center; font-size: 1.5rem; line-height: 1; }
-.site-header nav { display: flex; align-items: center; gap: 1.5rem; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-caps); }
+.site-header nav { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem 1.5rem; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-caps); }
 .site-header nav a:not(.btn) { color: var(--color-primary); text-decoration: none; }
 .site-header nav a:not(.btn):hover { text-decoration: underline; }
 

@@ -54,7 +54,7 @@ textarea.seg { width: 100%; resize: none; overflow: hidden; font: inherit; line-
 .seg .tools button { border: 0; background: transparent; cursor: pointer; padding: .25rem .4rem; border-radius: 6px; color: var(--color-muted); font-size: .95rem; }
 .seg .tools button:hover { background: var(--color-border); color: var(--color-text); }
 
-.savebar { position: sticky; bottom: 0; z-index: 5; display: flex; gap: 1rem; align-items: center; justify-content: space-between; background: var(--color-surface); border-top: 1px solid var(--color-border); padding: .7rem 1rem; box-shadow: 0 -6px 20px rgba(0,0,0,.06); border-radius: var(--radius) var(--radius) 0 0; }
+.savebar { position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: .4rem 1rem; align-items: center; justify-content: space-between; background: var(--color-surface); border-top: 1px solid var(--color-border); padding: .7rem 1rem; box-shadow: 0 -6px 20px rgba(0,0,0,.06); border-radius: var(--radius) var(--radius) 0 0; }
 .badge { font-size: .72rem; font-weight: 700; padding: .12rem .55rem; border-radius: var(--radius-pill); background: var(--color-border); color: var(--color-muted); text-transform: uppercase; letter-spacing: .03em; }
 .badge.ok { background: var(--color-success-bg); color: var(--color-success); }
 
@@ -79,3 +79,25 @@ td.actions { display: flex; gap: .4rem; flex-wrap: wrap; }
 
 .textcell { min-width: 0; }
 .textcell .orig { font-size: .78rem; font-style: italic; color: var(--color-muted); padding: .15rem .5rem 0; }
+
+/* Chaînes suivies et vidéos en échec : cartes (le tableau débordait sur téléphone) */
+.chan-list { display: grid; gap: .8rem; }
+.chan { border: 1px solid var(--color-hairline); border-radius: var(--radius); padding: .9rem 1.1rem; background: var(--color-surface); }
+.chan .t { font-weight: 700; color: var(--color-primary); overflow-wrap: anywhere; }
+.chan-meta { display: flex; flex-wrap: wrap; gap: .2rem 1rem; margin: .35rem 0 .8rem; font-size: .85rem; color: var(--color-muted); }
+.chan-meta span:empty { display: none; }
+.chan .actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+.chan p.status { margin: .3rem 0 .8rem; overflow-wrap: anywhere; }
+.panel { overflow-wrap: anywhere; }
+/* le reste de l'admin ne doit jamais déborder de l'écran */
+@media (max-width: 700px) {
+  .videos img { display: none; }
+  .videos th:nth-child(1), .videos td:nth-child(1) { display: none; }
+  .videos td, .videos th { padding: .5rem .35rem; }
+}
+
+@media (max-width: 700px) {
+  .admin .site-header .wrap { padding-block: .5rem; }
+  .admin .site-header nav { gap: .3rem 1rem; font-size: .68rem; }
+  .admin .brand span { font-size: .85rem; }
+}

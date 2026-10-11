@@ -23,7 +23,16 @@ export function createApp() {
   app.use('/api/admin', express.json({ limit: '10mb' }), adminRouter);
   app.use('/api', publicRouter);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Route inconnue.' }));
-  app.use(express.static(publicDir, { extensions: ['html'], maxAge: '5m' }));
+  app.use(
+    express.static(publicDir, {
+      extensions: ['html'],
+      setHeaders: (res, file) => {
+        // Polices : immuables. Le reste (pages, JS, CSS) est revalidé à chaque visite pour que les mises à jour
+        // s'affichent tout de suite (réponse 304 sans corps si rien n'a changé).
+        res.setHeader('Cache-Control', file.endsWith('.woff2') ? 'public, max-age=31536000, immutable' : 'no-cache');
+      },
+    }),
+  );
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, _req, res, _next) => {

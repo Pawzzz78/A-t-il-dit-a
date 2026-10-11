@@ -104,11 +104,8 @@ window.addEventListener('hashchange', route);
 function renderNav() {
   $nav.replaceChildren(
     h('a', { href: '#/' }, 'Vidéos'),
-    ' · ',
     h('a', { href: '#/sync' }, 'Synchronisation'),
-    ' · ',
     h('a', { href: '/' }, 'Voir le site'),
-    ' · ',
     h(
       'a',
       {
@@ -403,21 +400,26 @@ async function renderSync() {
 
   const rows = o.channels.map((c) =>
     h(
-      'tr',
-      {},
-      h('td', {}, h('div', { class: 't' }, c.title || c.youtube_channel_id), h('div', { class: 'status' }, c.handle ?? '')),
-      h('td', {}, String(c.video_count)),
-      h('td', {}, c.min_duration_s ? `${c.min_duration_s} s` : '—'),
-      h('td', {}, c.exclude_shorts ? 'exclus' : h('span', { class: 'status err' }, 'inclus')),
-      h('td', {}, c.last_discovery_error ? h('span', { class: 'status err' }, c.last_discovery_error) : when(c.last_discovery_at)),
+      'article',
+      { class: 'chan' },
+      h('div', { class: 't' }, c.title || c.youtube_channel_id, c.handle ? h('span', { class: 'status' }, ` ${c.handle}`) : null),
       h(
-        'td',
+        'p',
+        { class: 'chan-meta' },
+        h('span', {}, `${c.video_count} vidéo${plural(c.video_count, '', 's')}`),
+        h('span', {}, `Durée min. : ${c.min_duration_s ? `${c.min_duration_s} s` : 'aucune'}`),
+        h('span', {}, 'Shorts : ', c.exclude_shorts ? 'exclus' : h('strong', { class: 'status err' }, 'inclus')),
+        h('span', {}, c.enabled ? '' : 'suspendue'),
+        h('span', {}, c.last_discovery_error ? h('span', { class: 'status err' }, c.last_discovery_error) : `Vérifiée : ${when(c.last_discovery_at)}`),
+      ),
+      h(
+        'div',
         { class: 'actions' },
         h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(async () => { const r = await api('POST', `/sync/channels/${c.id}/discover`, {}); return `${r.added} nouvelle${r.added > 1 ? 's' : ''} vidéo${r.added > 1 ? 's' : ''}.`; }) }, 'Chercher maintenant'),
-        h('button', { class: 'btn secondary small', type: 'button', title: 'Supprime les Shorts déjà importés (aperçu et confirmation avant)', onclick: () => act(() => purgeShortsFlow(c)) }, 'Retirer les Shorts…'),
+        h('button', { class: 'btn small', type: 'button', title: 'Supprime les Shorts déjà importés (aperçu et confirmation avant)', onclick: () => act(() => purgeShortsFlow(c)) }, 'Retirer les Shorts…'),
         c.exclude_shorts ? null : h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/sync/channels/${c.id}`, { exclude_shorts: true }), 'Les Shorts sont désormais exclus.') }, 'Exclure les Shorts'),
         h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/sync/channels/${c.id}`, { enabled: !c.enabled })) }, c.enabled ? 'Suspendre' : 'Reprendre'),
-        h('button', { class: 'btn danger small', type: 'button', onclick: () => confirm('Ne plus suivre cette chaîne ? Les vidéos déjà importées sont conservées.') && act(() => api('DELETE', `/sync/channels/${c.id}`)) }, 'Retirer'),
+        h('button', { class: 'btn danger small', type: 'button', onclick: () => confirm('Ne plus suivre cette chaîne ? Les vidéos déjà importées sont conservées.') && act(() => api('DELETE', `/sync/channels/${c.id}`)) }, 'Retirer la chaîne'),
       ),
     ),
   );
@@ -426,9 +428,7 @@ async function renderSync() {
     { class: 'panel' },
     h('h2', {}, 'Chaînes suivies'),
     h('p', { id: 'sync-msg', class: 'status' }),
-    rows.length
-      ? h('table', { class: 'videos' }, h('thead', {}, h('tr', {}, ...['Chaîne', 'Vidéos', 'Durée min.', 'Shorts', 'Dernière vérif.', ''].map((t) => h('th', {}, t)))), h('tbody', {}, rows))
-      : h('p', { class: 'status' }, 'Aucune chaîne suivie.'),
+    rows.length ? h('div', { class: 'chan-list' }, rows) : h('p', { class: 'status' }, 'Aucune chaîne suivie.'),
     h('h3', { style: 'margin-top:1.2rem' }, 'Ajouter une chaîne'),
     addForm,
   );
@@ -441,22 +441,19 @@ async function renderSync() {
         h('h2', {}, `Vidéos en échec (${o.counts.failed})`),
         h('p', { class: 'status' }, 'Souvent : pas de sous-titres disponibles. Tu peux relancer, ou ouvrir la vidéo pour coller une transcription à la main.'),
         h(
-          'table',
-          { class: 'videos' },
-          h(
-            'tbody',
-            {},
-            o.failed.map((v) =>
+          'div',
+          { class: 'chan-list' },
+          o.failed.map((v) =>
+            h(
+              'article',
+              { class: 'chan' },
+              h('div', { class: 't' }, v.title || v.youtube_id),
+              h('p', { class: 'status err' }, v.sync_error ?? ''),
               h(
-                'tr',
-                {},
-                h('td', {}, h('div', { class: 't' }, v.title || v.youtube_id), h('div', { class: 'status err' }, v.sync_error ?? '')),
-                h(
-                  'td',
-                  { class: 'actions' },
-                  h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('POST', `/sync/videos/${v.id}/retry`, {}), 'Remise en file d’attente.') }, 'Réessayer'),
-                  h('a', { class: 'btn small', href: `#/video/${v.id}` }, 'Ouvrir'),
-                ),
+                'div',
+                { class: 'actions' },
+                h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('POST', `/sync/videos/${v.id}/retry`, {}), 'Remise en file d’attente.') }, 'Réessayer'),
+                h('a', { class: 'btn small', href: `#/video/${v.id}` }, 'Ouvrir'),
               ),
             ),
           ),
