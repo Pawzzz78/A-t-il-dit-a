@@ -5,7 +5,8 @@ import { interpretQuery, isQuestionLike } from '../query-understanding.js';
 import { LIMITS, buildExcerpt, findApprox, findExact, maxSpanFor, queryTokens } from '../search.js';
 import { SHORT_MAX_S } from '../constants.js';
 import { HttpError } from '../http-error.js';
-import { getSummary, summariesEnabled } from '../summaries.js';
+import { summariesActive } from '../auto-summaries.js';
+import { HAS_SUMMARY_SQL, getStoredSummary } from '../summaries.js';
 import { parseYoutubeId, watchUrl } from '../youtube.js';
 
 export const publicRouter = Router();
@@ -199,7 +200,8 @@ publicRouter.get(
   ah(async (req, res) => {
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 5, 1), 12);
     const { rows } = await pool.query(
-      `SELECT youtube_id, title, channel, published_at, thumbnail_url, duration_s, translated, original_lang, lang
+      `SELECT youtube_id, title, channel, published_at, thumbnail_url, duration_s, translated, original_lang, lang,
+              ${HAS_SUMMARY_SQL()} AS has_summary
        FROM videos WHERE ${INDEXED}
        ORDER BY published_at DESC NULLS LAST, id DESC LIMIT $1`,
       [limit],
@@ -208,7 +210,7 @@ publicRouter.get(
       rows: [{ n: total }],
     } = await pool.query(`SELECT count(*)::int AS n FROM videos WHERE ${INDEXED}`);
     res.set('Cache-Control', 'public, max-age=60');
-    res.json({ videos: rows, total, summaries_enabled: summariesEnabled() });
+    res.json({ videos: rows, total, summaries_enabled: await summariesActive() });
   }),
 );
 
@@ -225,7 +227,8 @@ publicRouter.get(
     const order = req.query.sort === 'old' ? 'ASC' : 'DESC';
     const tokens = normalize(String(req.query.q ?? '').slice(0, 100)).split(' ').filter(Boolean);
     const { rows } = await pool.query(
-      `SELECT youtube_id, title, channel, published_at, thumbnail_url, duration_s, translated, original_lang, lang
+      `SELECT youtube_id, title, channel, published_at, thumbnail_url, duration_s, translated, original_lang, lang,
+              ${HAS_SUMMARY_SQL()} AS has_summary
        FROM videos WHERE ${INDEXED}
        ORDER BY published_at ${order} NULLS LAST, id ${order}`,
     );
@@ -243,19 +246,23 @@ publicRouter.get(
       page,
       pages,
       has_more: page < pages,
-      summaries_enabled: summariesEnabled(),
+      summaries_enabled: await summariesActive(),
     });
   }),
 );
 
-/** Résumé IA d'une vidéo (POST : peut déclencher une génération payante, jamais par simple préchargement). */
-publicRouter.post(
+/**
+ * Résumé IA d'une vidéo : lecture seule. Le résumé est généré en arrière-plan dès que la vidéo est transcrite ;
+ * cette route ne déclenche jamais de génération (aucun coût, aucun appel au modèle).
+ */
+publicRouter.get(
   '/summary/:youtubeId',
   ah(async (req, res) => {
     const id = parseYoutubeId(req.params.youtubeId);
     if (!id) throw new HttpError(404, 'Vidéo introuvable.');
-    res.set('Cache-Control', 'no-store');
-    res.json(await getSummary(id, { ip: req.ip }));
+    const summary = await getStoredSummary(id);
+    res.set('Cache-Control', 'public, max-age=60'); // seulement les succès : un « pas encore prêt » ne doit pas rester en cache
+    res.json(summary);
   }),
 );
 

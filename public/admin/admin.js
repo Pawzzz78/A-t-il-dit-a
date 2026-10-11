@@ -417,6 +417,57 @@ async function renderSync() {
     ),
   );
 
+
+  // --- résumés automatiques
+  const sm = o.summaries;
+  const summariesPanel = h(
+    'section',
+    { class: 'panel' },
+    h('h2', {}, 'Résumés automatiques'),
+    h('ul', { class: 'checks' }, keyLine(sm.configured, 'OPENROUTER_API_KEY', 'nécessaire pour rédiger les résumés')),
+    h('div', { class: 'stats' }, stat(sm.ready, 'résumés prêts'), stat(sm.waiting, 'en attente'), stat(sm.failed, 'en échec')),
+    h(
+      'p',
+      { class: 'status' },
+      `Chaque vidéo transcrite reçoit automatiquement son résumé, quelques minutes après sa transcription (modèle : ${sm.model}). Les visiteurs ne font qu’afficher les résumés déjà prêts : ils ne déclenchent aucun appel à l’IA, donc aucun coût. Un résumé est refait tout seul si tu corriges la transcription.`,
+    ),
+    sm.paused
+      ? h('p', { class: 'notice' }, 'Génération des résumés en pause : les nouvelles vidéos n’auront pas de résumé tant que tu ne l’as pas relancée.')
+      : sm.configured
+        ? h('p', { class: 'status ok' }, 'Génération automatique active.')
+        : null,
+    sm.cooldown_until ? h('p', { class: 'status err' }, `Génération suspendue jusqu’à ${when(sm.cooldown_until)} après une erreur du modèle (voir le message ci-dessus).`) : null,
+    h(
+      'div',
+      { class: 'actions' },
+      sm.paused
+        ? h('button', { class: 'btn', type: 'button', disabled: !sm.configured, onclick: () => act(() => api('POST', '/sync/summaries/resume', {}), 'Génération des résumés relancée.') }, 'Relancer les résumés')
+        : h('button', { class: 'btn secondary', type: 'button', onclick: () => act(() => api('POST', '/sync/summaries/pause', {}), 'Génération des résumés mise en pause.') }, 'Mettre en pause'),
+      !sm.paused && sm.configured ? h('button', { class: 'btn secondary', type: 'button', onclick: () => act(() => api('POST', '/sync/summaries/run', {}), 'Passe lancée : les résumés en attente sont rédigés (une minute environ chacun).') }, 'Lancer maintenant') : null,
+    ),
+    sm.failed_list.length
+      ? h(
+          'div',
+          { class: 'chan-list', style: 'margin-top:1rem' },
+          h('p', { class: 'status' }, 'Résumés en échec (5 tentatives) :'),
+          sm.failed_list.map((v) =>
+            h(
+              'article',
+              { class: 'chan' },
+              h('div', { class: 't' }, v.title),
+              h('p', { class: 'status err' }, v.summary_error ?? ''),
+              h(
+                'div',
+                { class: 'actions' },
+                h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('POST', `/sync/summaries/${v.id}/retry`, {}), 'Nouvelle tentative lancée.') }, 'Réessayer'),
+                h('a', { class: 'btn small', href: `#/video/${v.id}` }, 'Ouvrir'),
+              ),
+            ),
+          ),
+        )
+      : null,
+  );
+
   // --- chaînes
   const input = h('input', { type: 'text', placeholder: 'https://www.youtube.com/@nomdelachaine', required: true });
   const minD = h('input', { type: 'number', min: '0', value: '0' });
@@ -530,7 +581,7 @@ async function renderSync() {
       )
     : null;
 
-  $app.replaceChildren(...[state, channels, failed].filter(Boolean));
+  $app.replaceChildren(...[state, summariesPanel, channels, failed].filter(Boolean));
   const timer = setInterval(() => document.hidden || renderSync().catch(() => {}), 20000);
   cleanup = () => clearInterval(timer);
 }
@@ -538,7 +589,7 @@ async function renderSync() {
 // ---------------------------------------------------------------------- éditeur
 
 async function renderEditor(id) {
-  const { video, segments } = await api('GET', `/videos/${id}`);
+  const { video, segments, summary } = await api('GET', `/videos/${id}`);
   const config = await api('GET', '/config');
   let segs = segments.map((s) => ({ ...s, orig: s.text, origStart: s.start_ms }));
   let dirty = false;
@@ -913,6 +964,49 @@ async function renderEditor(id) {
   );
 
 
+
+  // --- résumé IA
+  const sumMsg = h('p', { class: 'status' });
+  const sumDate = (d) => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '');
+  const sumText = {
+    ready: `Prêt (rédigé le ${sumDate(summary.created_at)}, modèle ${summary.model}). Il s’affiche sur le site.`,
+    refresh: 'Un résumé existe, il va être mis à jour automatiquement (transcription ou consignes modifiées).',
+    waiting: 'Sera rédigé automatiquement dans quelques minutes (délai après la dernière modification).',
+    failed: `En échec après ${summary.attempts} tentatives : ${summary.error ?? ''}`,
+    none: 'Pas de transcription : pas de résumé.',
+  }[summary.status];
+  const summaryPanel = h(
+    'section',
+    { class: 'panel' },
+    h(
+      'details',
+      { open: summary.status === 'failed' },
+      h('summary', {}, `Résumé IA : ${{ ready: 'prêt', refresh: 'à mettre à jour', waiting: 'en attente', failed: 'en échec', none: 'aucun' }[summary.status]}`),
+      h('p', { class: summary.status === 'failed' ? 'status err' : 'status' }, sumText),
+      summary.status === 'none'
+        ? null
+        : h(
+            'button',
+            {
+              class: 'btn secondary small',
+              type: 'button',
+              onclick: async () => {
+                if (dirty) return status(sumMsg, 'Enregistre d’abord tes modifications.', 'err');
+                status(sumMsg, 'Rédaction du résumé… (environ une minute)');
+                try {
+                  await api('POST', `/videos/${id}/summary`, {});
+                  route();
+                } catch (e) {
+                  status(sumMsg, e.message, 'err');
+                }
+              },
+            },
+            'Régénérer maintenant',
+          ),
+      sumMsg,
+    ),
+  );
+
   // --- transcription locale (Whisper)
   const hasTranscript = segs.length > 0;
   const whisperPanel = h(
@@ -998,7 +1092,7 @@ async function renderEditor(id) {
   $app.replaceChildren(
     h('p', {}, h('a', { href: '#/' }, '← Toutes les vidéos')),
     info,
-    h('div', { class: 'editor' }, h('aside', { class: 'side' }, playerBox, whisperPanel, translatePanel, tools, source, danger), list),
+    h('div', { class: 'editor' }, h('aside', { class: 'side' }, playerBox, summaryPanel, whisperPanel, translatePanel, tools, source, danger), list),
     savebar,
   );
 

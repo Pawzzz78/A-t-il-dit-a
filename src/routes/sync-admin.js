@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { retrySummary, runSummaryCycle } from '../auto-summaries.js';
 import { HttpError } from '../http-error.js';
 import { pool } from '../db.js';
 import { discoverChannel, overview, previewShorts, purgeShorts, runCycle, setSetting } from '../sync.js';
@@ -135,6 +136,46 @@ syncRouter.post(
   '/run',
   ah(async (_req, res) => {
     runCycle().catch((e) => console.error(`sync : ${e.message}`));
+    res.status(202).json({ ok: true });
+  }),
+);
+
+// --- résumés automatiques -----------------------------------------------------------
+
+syncRouter.post(
+  '/summaries/pause',
+  ah(async (_req, res) => {
+    await setSetting('summaries_paused', true);
+    res.json({ ok: true });
+  }),
+);
+
+syncRouter.post(
+  '/summaries/resume',
+  ah(async (_req, res) => {
+    await setSetting('summaries_paused', false);
+    await setSetting('summary_cooldown_until', null);
+    runSummaryCycle({ graceMinutes: 0 }).catch((e) => console.error(`résumés : ${e.message}`));
+    res.status(202).json({ ok: true });
+  }),
+);
+
+/** Lance une passe tout de suite, sans attendre le délai de grâce après une modification. */
+syncRouter.post(
+  '/summaries/run',
+  ah(async (_req, res) => {
+    await setSetting('summary_cooldown_until', null);
+    runSummaryCycle({ graceMinutes: 0 }).catch((e) => console.error(`résumés : ${e.message}`));
+    res.status(202).json({ ok: true });
+  }),
+);
+
+/** Remet à zéro les tentatives d'une vidéo dont le résumé est en échec. */
+syncRouter.post(
+  '/summaries/:id/retry',
+  ah(async (req, res) => {
+    if (!(await retrySummary(idParam(req)))) throw new HttpError(404, 'Vidéo introuvable.');
+    runSummaryCycle({ graceMinutes: 0 }).catch((e) => console.error(`résumés : ${e.message}`));
     res.status(202).json({ ok: true });
   }),
 );

@@ -13,6 +13,7 @@
  */
 import { pool, replaceSegments, withTransaction } from './db.js';
 import { getSetting, setSetting } from './settings.js';
+import { summariesOverview } from './auto-summaries.js';
 import { SHORT_MAX_S } from './constants.js';
 import { fetchLocalized } from './localize.js';
 import { TranscriptError, supadataConfigured } from './transcripts.js';
@@ -334,7 +335,7 @@ export function startScheduler() {
 // --- vue d'ensemble pour l'admin ---------------------------------------------------
 
 export async function overview() {
-  const [{ rows: channels }, { rows: counts }, { rows: failed }, paused, cooldown, lastError, llmError] = await Promise.all([
+  const [{ rows: channels }, { rows: counts }, { rows: failed }, paused, cooldown, lastError, llmError, summaries] = await Promise.all([
     pool.query(`SELECT c.*, (SELECT count(*)::int FROM videos v WHERE v.channel_id = c.youtube_channel_id) AS video_count
                 FROM channels c ORDER BY c.id`),
     pool.query(`SELECT coalesce(sync_status, 'manual') AS status, count(*)::int AS n FROM videos GROUP BY 1`),
@@ -344,6 +345,7 @@ export async function overview() {
     getSetting('cooldown_until', null),
     getSetting('last_error', null),
     getSetting('llm_last_error', null),
+    summariesOverview(),
   ]);
   const byStatus = Object.fromEntries(counts.map((r) => [r.status, r.n]));
   return {
@@ -352,6 +354,7 @@ export async function overview() {
     cooldown_until: cooldown && new Date(cooldown) > new Date() ? cooldown : null,
     last_error: lastError,
     llm_error: llmError,
+    summaries,
     interval_hours: syncConfig().intervalHours,
     counts: { pending: byStatus.pending ?? 0, done: byStatus.done ?? 0, failed: byStatus.failed ?? 0, manual: byStatus.manual ?? 0 },
     channels,

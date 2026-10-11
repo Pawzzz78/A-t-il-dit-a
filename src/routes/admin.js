@@ -13,6 +13,8 @@ import { HttpError } from '../http-error.js';
 import { syncRouter } from './sync-admin.js';
 import { YouTubeApiError } from '../youtube.js';
 import { fetchLocalized } from '../localize.js';
+import { regenerateNow } from '../summaries.js';
+import { PROMPT_VERSION } from '../summarize.js';
 import { TranscriptError, parseTranscriptText, supadataConfigured } from '../transcripts.js';
 import { TranslationError, baseLang, translateConfigured, translateSegments } from '../translate.js';
 import { fetchMetadata, fetchVideoMeta, parseYoutubeId, youtubeApiConfigured } from '../youtube.js';
@@ -97,7 +99,17 @@ adminRouter.get(
       'SELECT start_ms, duration_ms, text, text_original FROM segments WHERE video_id = $1 ORDER BY position',
       [video.id],
     );
-    res.json({ video, segments: rows });
+    const { rows: sm } = await pool.query(
+      `SELECT s.created_at, s.model, s.source_hash, v.text_hash, v.summary_attempts, v.summary_error
+       FROM videos v LEFT JOIN video_summaries s ON s.video_id = v.id WHERE v.id = $1`,
+      [video.id],
+    );
+    const x = sm[0];
+    let summary = { status: rows.length ? 'waiting' : 'none' };
+    if (x.created_at && x.source_hash === `${x.text_hash}:${PROMPT_VERSION}`) summary = { status: 'ready', created_at: x.created_at, model: x.model };
+    else if (rows.length && x.summary_attempts >= 5) summary = { status: 'failed', error: x.summary_error, attempts: x.summary_attempts };
+    else if (x.created_at && String(x.source_hash).split(':')[0] === x.text_hash) summary = { status: 'refresh', created_at: x.created_at, model: x.model };
+    res.json({ video, segments: rows, summary });
   }),
 );
 
@@ -191,6 +203,22 @@ adminRouter.patch(
       ],
     );
     res.json(await getVideo(id));
+  }),
+);
+
+/** Régénère tout de suite le résumé IA (après avoir corrigé la transcription, par exemple). Peut durer une minute. */
+adminRouter.post(
+  '/videos/:id/summary',
+  ah(async (req, res) => {
+    const id = videoId(req);
+    await getVideo(id);
+    try {
+      const s = await regenerateNow(id);
+      res.json({ ok: true, model: s.model, created_at: s.created_at });
+    } catch (e) {
+      if (e instanceof HttpError) throw e;
+      throw new HttpError(502, `Résumé impossible : ${e.message}`);
+    }
   }),
 );
 

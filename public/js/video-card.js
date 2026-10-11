@@ -44,23 +44,26 @@ export function renderVideoCard(v, summariesEnabled) {
   const panel = h('div', { class: 'summary', hidden: true, 'aria-live': 'polite' });
   let loaded = false;
 
-  const button = summariesEnabled
-    ? h('button', { class: 'btn small', type: 'button' }, 'Résumer')
-    : null;
+  // Les résumés sont générés automatiquement : le visiteur ne fait que les afficher.
+  //  - résumé prêt            -> « Afficher le résumé »
+  //  - pas encore prêt (auto) -> bouton inactif « Résumé en préparation… » (aucune génération n'est déclenchée)
+  //  - résumés désactivés     -> rien
+  let button = null;
+  if (v.has_summary) button = h('button', { class: 'btn small', type: 'button' }, 'Afficher le résumé');
+  else if (summariesEnabled) button = h('button', { class: 'btn small', type: 'button', disabled: true, title: 'Le résumé sera disponible dans quelques minutes' }, 'Résumé en préparation…');
 
-  if (button) {
+  if (button && v.has_summary) {
     button.addEventListener('click', async () => {
       if (loaded) {
         panel.hidden = !panel.hidden;
-        button.textContent = panel.hidden ? 'Voir le résumé' : 'Masquer le résumé';
+        button.textContent = panel.hidden ? 'Afficher le résumé' : 'Masquer le résumé';
         return;
       }
       button.disabled = true;
-      button.textContent = 'Résumé en cours…';
       panel.hidden = false;
-      panel.replaceChildren(h('p', { class: 'hint' }, 'Le résumé est en cours de rédaction… cela peut prendre jusqu’à une minute pour une longue vidéo.'));
+      panel.replaceChildren(h('p', { class: 'hint' }, 'Chargement du résumé…'));
       try {
-        const res = await fetch(`/api/summary/${encodeURIComponent(v.youtube_id)}`, { method: 'POST', signal: AbortSignal.timeout(180_000) });
+        const res = await fetch(`/api/summary/${encodeURIComponent(v.youtube_id)}`, { signal: AbortSignal.timeout(30_000) });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Le résumé est indisponible.');
         const note = [
@@ -71,8 +74,8 @@ export function renderVideoCard(v, summariesEnabled) {
         loaded = true;
         button.textContent = 'Masquer le résumé';
       } catch (e) {
-        panel.replaceChildren(h('p', { class: 'error' }, e.name === 'TimeoutError' ? 'Le résumé met trop de temps, réessaie dans un instant.' : e.message));
-        button.textContent = 'Résumer';
+        panel.replaceChildren(h('p', { class: 'error' }, e.name === 'TimeoutError' ? 'Le chargement du résumé a été trop long, réessaie.' : e.message));
+        button.textContent = 'Afficher le résumé';
       } finally {
         button.disabled = false;
       }

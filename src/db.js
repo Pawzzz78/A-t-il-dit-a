@@ -109,10 +109,15 @@ export async function replaceSegments(client, videoId, segments, { edited, sourc
   }
   await client.query(
     `UPDATE videos SET norm_text = $2, updated_at = now(),
+       text_hash = CASE WHEN $2 = '' THEN NULL ELSE md5($2) END,
        edited = COALESCE($3, edited), source = COALESCE($4, source),
        -- une vidéo qui a maintenant une transcription n'a plus rien à attendre de la synchro
        sync_status = CASE WHEN $5 AND sync_status IN ('pending', 'failed') THEN 'done' ELSE sync_status END,
        sync_error = CASE WHEN $5 THEN NULL ELSE sync_error END,
+       -- transcription nouvelle ou modifiée : le résumé sera (re)généré, on repart de zéro côté tentatives
+       summary_attempts = CASE WHEN $5 THEN 0 ELSE summary_attempts END,
+       summary_next_at = CASE WHEN $5 THEN NULL ELSE summary_next_at END,
+       summary_error = CASE WHEN $5 THEN NULL ELSE summary_error END,
        translated = COALESCE($6::boolean, translated),
        original_lang = CASE WHEN $6::boolean IS NULL THEN original_lang ELSE $7 END
      WHERE id = $1`,

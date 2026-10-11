@@ -80,3 +80,10 @@ CREATE TABLE IF NOT EXISTS video_summaries (
 
 -- Shorts : exclus par défaut (durée <= 60 s ou présents dans la liste des Shorts YouTube de la chaîne).
 ALTER TABLE channels ADD COLUMN IF NOT EXISTS exclude_shorts BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- Résumés automatiques : empreinte de la transcription (comparée à celle du résumé) et suivi des tentatives -------
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS text_hash        TEXT;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS summary_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS summary_next_at  TIMESTAMPTZ;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS summary_error    TEXT;
+UPDATE videos SET text_hash = md5(norm_text) WHERE text_hash IS NULL AND norm_text <> '';

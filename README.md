@@ -57,7 +57,7 @@ vérifier des propos publics, à ta charge.
 
 Sous les dernières vidéos, le bouton **Voir toutes les vidéos (N)** ouvre `/videos/` : le catalogue complet des vidéos
 **indexées** (celles qui ont une transcription, hors Shorts), de la plus récente à la plus ancienne, avec filtre par titre ou
-chaîne (sans accents ni casse), tri, pagination « Voir plus » et le même bouton **Résumer**. « Indexée » veut dire « transcrite » :
+chaîne (sans accents ni casse), tri, pagination « Voir plus » et le même bouton **Afficher le résumé**. « Indexée » veut dire « transcrite » :
 c'est le même critère pour le compteur de l'accueil, « Dernières vidéos » et ce catalogue, donc les nombres concordent. Une vidéo en
 attente de transcription (ou en échec) n'apparaît pas tant qu'elle n'est pas transcrite.
 
@@ -68,16 +68,30 @@ main dans l'admin (seules celles qui ont une transcription apparaissent). Avec `
 récupère sa date de publication toute seule ; sinon, renseigne la date dans l'éditeur (bouton « Mettre à jour depuis YouTube »
 pour les vidéos existantes).
 
-Le bouton **Résumer** demande à un modèle (OpenRouter) de résumer la transcription : un « En bref », puis des sections avec
-repères de temps cliquables, des puces et les mots importants en gras.
+Chaque vidéo indexée a son **résumé, rédigé automatiquement** par un modèle (OpenRouter) à partir de la transcription : un
+« En bref », puis des sections avec repères de temps cliquables, des puces et les mots importants en gras. Sous chaque vidéo,
+le bouton **Afficher le résumé** ne fait que lire ce résumé déjà stocké en base ; tant qu'il n'est pas prêt, le bouton est grisé
+(**Résumé en préparation…**).
 
-- Le résumé est **généré une seule fois** par vidéo puis stocké ; il n'est régénéré que si la transcription change. Plusieurs
-  clics simultanés ne déclenchent qu'un seul appel.
+- **Génération en arrière-plan** : toutes les 2 minutes, le serveur résume les vidéos indexées qui n'ont pas encore de résumé
+  (les plus récentes d'abord, 5 par passe), quelle que soit l'origine de la transcription (synchro de la chaîne, ajout manuel,
+  import, Whisper, correction à la main). Un délai de grâce de 3 minutes après la dernière modification évite de résumer pendant
+  que tu corriges la transcription. `SUMMARY_AUTO=false` désactive ce travail.
+- **Le public ne déclenche rien** : la route publique est en lecture seule, donc le trafic du site ne coûte aucun appel au modèle.
+- **Mise à jour automatique** : si la transcription est modifiée, ou si les consignes de rédaction sont améliorées, le résumé est
+  refait en arrière-plan. Un résumé écrit avec d'anciennes consignes reste affiché en attendant ; un résumé d'une ancienne
+  transcription est masqué.
+- **Échecs** : nouvelle tentative après 30 min, 1 h, 2 h, 4 h, puis abandon au bout de 5 essais (visible dans l'admin, bouton
+  « Réessayer »). Clé refusée ou crédits épuisés : tout est suspendu 3 h (clé) ou 1 h (crédits) au lieu d'insister ; trois échecs
+  d'affilée arrêtent aussi la passe.
+- **Coût borné** : plafond de `SUMMARY_DAILY_CAP` résumés par jour (500 par défaut) et `SUMMARY_PER_CYCLE` par passe (5). Le
+  premier déploiement résume tout le catalogue existant, vidéo après vidéo : compte quelques centimes par vidéo selon le modèle.
+  Mise en pause possible à tout moment depuis **Admin → Synchronisation → Résumés automatiques**.
+- **Admin** : compteurs (prêts / en attente / en échec), pause et reprise, « Lancer maintenant », liste des échecs ; dans l'éditeur
+  d'une vidéo, état du résumé et bouton « Régénérer maintenant ».
 - Fidélité : le modèle ne doit utiliser que le texte ; les repères de temps inexistants sont supprimés, le HTML retiré, la
-  taille bornée. Une mention rappelle que le résumé est généré par IA et peut contenir des erreurs.
-- Vidéos très longues : notes par partie, puis synthèse.
-- Coût plafonné : 10 générations/heure/visiteur et 100/jour au total (`SUMMARY_PER_IP_HOURLY`, `SUMMARY_DAILY_CAP`) ; les
-  résumés déjà stockés restent toujours lisibles. Modèle : `SUMMARY_MODEL`, sinon `SEARCH_MODEL`, sinon `TRANSLATE_MODEL`.
+  taille bornée. Une mention rappelle que le résumé est généré par IA et peut contenir des erreurs. Vidéos très longues : notes
+  par partie, puis synthèse. Modèle : `SUMMARY_MODEL`, sinon `SEARCH_MODEL`, sinon `TRANSLATE_MODEL`.
 
 ## Recherche par question
 
@@ -182,7 +196,8 @@ src/
 tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéos sans sous-titres, envoyée au site
   openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
-  summaries.js       résumés stockés en base, plafonds, anti-doublons
+  summaries.js       résumés stockés en base : lecture publique, génération, anti-doublons
+  auto-summaries.js  génération automatique en arrière-plan (file, délai de grâce, reprises, plafonds, pause)
   budget.js          plafonds d'appels par visiteur / par jour
   query-understanding.js  extrait les mots-clés d'une question, plafonds de coût, repli sans modèle
   translate.js       traduction des segments via OpenRouter
