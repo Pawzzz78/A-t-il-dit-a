@@ -9,7 +9,7 @@ import { pool } from './db.js';
 import { HttpError } from './http-error.js';
 import { LlmError, completeWithOpenRouter, llmConfigured } from './openrouter.js';
 import { recordLlmError } from './settings.js';
-import { summarizeTranscript, summaryModel } from './summarize.js';
+import { PROMPT_VERSION, summarizeTranscript, summaryModel } from './summarize.js';
 
 const budget = createBudget(() => ({
   perIpHourly: Number(process.env.SUMMARY_PER_IP_HOURLY) || 10,
@@ -62,6 +62,8 @@ export async function getSummary(youtubeId, { ip = 'anon', complete = completeWi
   );
   const video = rows[0];
   if (!video) throw new HttpError(404, 'Vidéo introuvable.');
+  // transcription + version des consignes : un résumé écrit avec d'anciennes consignes est régénéré au prochain clic
+  video.hash = `${video.hash}:${PROMPT_VERSION}`;
   if (!video.has_text) throw new HttpError(409, "La transcription de cette vidéo n'est pas encore disponible.");
 
   const flags = { translated: video.translated, original_lang: video.original_lang, lang: video.lang };

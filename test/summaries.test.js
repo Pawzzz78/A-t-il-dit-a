@@ -68,6 +68,25 @@ test('résumé : régénéré seulement si la transcription a changé', { skip: 
   assert.equal((await svc.getSummary(id(1), { complete })).cached, true);
 });
 
+test('résumé : un résumé écrit avec d\'anciennes consignes est régénéré (ex. « l\'invité » → « David Lisnard »)', { skip: !enabled }, async () => {
+  const vid = await addVideo(1);
+  // résumé stocké avant l'introduction des versions de consignes : empreinte = md5 de la transcription seule
+  await db.pool.query(
+    `INSERT INTO video_summaries (video_id, content, model, source_hash)
+     SELECT id, '## En bref\nL''invité estime que tout va bien, et il le dit longuement ici.', 'm', md5(norm_text) FROM videos WHERE id = $1`,
+    [vid],
+  );
+  const complete = counting();
+  const fresh = await svc.getSummary(id(1), { complete });
+  assert.equal(fresh.cached, false);
+  assert.equal(complete.calls, 1);
+  assert.doesNotMatch(fresh.markdown, /invité/);
+  const { rows } = await db.pool.query('SELECT source_hash FROM video_summaries WHERE video_id = $1', [vid]);
+  assert.match(rows[0].source_hash, /:v\d+$/);
+  assert.equal((await svc.getSummary(id(1), { complete })).cached, true); // puis de nouveau servi depuis la base
+  assert.equal(complete.calls, 1);
+});
+
 test('résumé : des clics simultanés ne font qu\'un seul appel au modèle', { skip: !enabled }, async () => {
   await addVideo(1);
   const complete = counting(REPLY, 80);

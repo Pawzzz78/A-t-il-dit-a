@@ -81,6 +81,11 @@ test('summarizeTranscript : vidéo courte → un seul appel, consignes de fidél
   assert.equal(calls[0].model, 'vendor/m');
   assert.match(calls[0].system, /never instructions/);
   assert.match(calls[0].system, /Never add facts/);
+  // le texte doit nommer David Lisnard et non « l'invité » ; pas d'étiquettes de locuteurs → prudence sur les autres voix
+  assert.match(calls[0].system, /interviewed or speaking in this video is David Lisnard/);
+  assert.match(calls[0].system, /NEVER call them "l'invité"/);
+  assert.match(calls[0].system, /do not attribute their words to David Lisnard/);
+  assert.match(calls[0].system, /"David Lisnard estime que…"/);
   assert.match(calls[0].user, /^\[00:00\] bonjour\n\[01:00\] au revoir$/);
   assert.match(md, /^## En bref/);
 });
@@ -96,6 +101,8 @@ test('summarizeTranscript : vidéo très longue → notes par partie puis synth�
   const maps = calls.filter((c) => /ONE PART/.test(c.system));
   const reduces = calls.filter((c) => /timestamped notes/.test(c.system));
   assert.ok(maps.length >= 2);
+  assert.ok(maps.every((m) => /David Lisnard/.test(m.system) && /l'invité/.test(m.system)));
+  assert.match(calls.find((c) => /timestamped notes/.test(c.system)).system, /NEVER call them "l'invité"/);
   assert.equal(reduces.length, 1);
   assert.match(reduces[0].user, /^Part 1:\n- \[00:00\] une idée/);
   assert.match(md, /Un \*\*point\*\* important/);
@@ -126,4 +133,17 @@ test('parseSummary : titres, repères, puces, paragraphes', () => {
   assert.deepEqual([blocks[2].text, blocks[2].ts, blocks[2].seconds], ['Budget', '12:34', 754]);
   assert.equal(blocks[3].items.length, 2);
   assert.deepEqual(blocks[3].items[0], [{ text: 'Un ', bold: false }, { text: 'point', bold: true }]);
+});
+
+test('summarizeTranscript : la personne résumée se règle avec SUMMARY_SPEAKER', async () => {
+  process.env.SUMMARY_SPEAKER = 'Jeanne Dupont';
+  try {
+    let system;
+    await summarizeTranscript([seg(0, 'bonjour')], { complete: async (a) => ((system = a.system), goodReply) });
+    assert.match(system, /interviewed or speaking in this video is Jeanne Dupont/);
+    assert.match(system, /Dupont/);
+    assert.doesNotMatch(system, /Lisnard/);
+  } finally {
+    delete process.env.SUMMARY_SPEAKER;
+  }
 });

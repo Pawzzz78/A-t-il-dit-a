@@ -17,16 +17,60 @@ export const pool = new Pool({
   max: 10,
 });
 
-export async function initDb() {
-  const schema = await readFile(new URL('./schema.sql', import.meta.url), 'utf8');
-  await pool.query(schema);
-  try {
-    await pool.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
-    await pool.query(
-      'CREATE INDEX IF NOT EXISTS videos_norm_text_trgm ON videos USING gin (norm_text gin_trgm_ops)',
+/** Découpe schema.sql en instructions (les commentaires de ligne entière sont ignorés). */
+export function splitStatements(sql) {
+  return sql
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('--'))
+    .join('\n')
+    .split(/;\s*(?:\n|$)/)
+    .map((st) => st.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Exécute une instruction du schéma. Les « ADD COLUMN IF NOT EXISTS » et « CREATE INDEX IF NOT EXISTS » sont
+ * ignorés quand l'objet existe déjà : même sans rien changer, ces instructions verrouillent la table, ce qui peut
+ * bloquer (ou provoquer un « deadlock » avec) une autre copie du serveur en train d'écrire pendant un déploiement.
+ */
+async function applyStatement(client, st) {
+  const col = st.match(/^ALTER TABLE\s+(\w+)\s+ADD COLUMN IF NOT EXISTS\s+(\w+)/i);
+  if (col) {
+    const { rowCount } = await client.query(
+      'SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2',
+      [col[1], col[2]],
     );
-  } catch (e) {
-    console.warn(`pg_trgm indisponible, la recherche sera plus lente : ${e.message}`);
+    if (rowCount) return;
+  }
+  const idx = st.match(/^CREATE (?:UNIQUE )?INDEX IF NOT EXISTS\s+(\w+)/i);
+  if (idx) {
+    const { rowCount } = await client.query('SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() AND indexname = $1', [idx[1]]);
+    if (rowCount) return;
+  }
+  await client.query(st);
+}
+
+export async function initDb() {
+  const statements = splitStatements(await readFile(new URL('./schema.sql', import.meta.url), 'utf8'));
+  // Un seul démarrage à la fois ; chaque instruction est validée séparément (pas de verrous cumulés).
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT pg_advisory_lock(727002)');
+    await client.query("SET lock_timeout = '15s'");
+    for (const st of statements) await applyStatement(client, st);
+    try {
+      await client.query('CREATE EXTENSION IF NOT EXISTS pg_trgm');
+      await applyStatement(
+        client,
+        'CREATE INDEX IF NOT EXISTS videos_norm_text_trgm ON videos USING gin (norm_text gin_trgm_ops)',
+      );
+    } catch (e) {
+      console.warn(`pg_trgm indisponible, la recherche sera plus lente : ${e.message}`);
+    }
+  } finally {
+    await client.query('RESET lock_timeout').catch(() => {});
+    await client.query('SELECT pg_advisory_unlock(727002)').catch(() => {});
+    client.release();
   }
 }
 
