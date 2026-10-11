@@ -12,7 +12,9 @@ import { pool, replaceSegments, withTransaction } from '../db.js';
 import { HttpError } from '../http-error.js';
 import { syncRouter } from './sync-admin.js';
 import { YouTubeApiError } from '../youtube.js';
-import { TranscriptError, fetchTranscript, parseTranscriptText, supadataConfigured } from '../transcripts.js';
+import { fetchLocalized } from '../localize.js';
+import { TranscriptError, parseTranscriptText, supadataConfigured } from '../transcripts.js';
+import { TranslationError, baseLang, translateConfigured, translateSegments } from '../translate.js';
 import { fetchMetadata, parseYoutubeId } from '../youtube.js';
 
 export const adminRouter = Router();
@@ -46,7 +48,9 @@ adminRouter.get('/me', (req, res) => res.json({ authenticated: isAuthenticated(r
 // Tout ce qui suit demande une session valide.
 adminRouter.use(requireAdmin);
 
-adminRouter.get('/config', (_req, res) => res.json({ supadata: supadataConfigured() }));
+adminRouter.get('/config', (_req, res) =>
+  res.json({ supadata: supadataConfigured(), translate: translateConfigured() }),
+);
 
 adminRouter.use('/sync', syncRouter);
 
@@ -54,7 +58,8 @@ adminRouter.use('/sync', syncRouter);
 
 const LIST_SQL = `
   SELECT v.id, v.youtube_id, v.title, v.channel, v.published_at, v.thumbnail_url,
-         v.source, v.edited, v.updated_at, v.sync_status, v.sync_error, count(s.id)::int AS segment_count
+         v.source, v.edited, v.updated_at, v.sync_status, v.sync_error, v.lang, v.translated, v.original_lang,
+         count(s.id)::int AS segment_count
   FROM videos v LEFT JOIN segments s ON s.video_id = v.id`;
 
 adminRouter.get(
@@ -69,7 +74,8 @@ adminRouter.get(
 
 async function getVideo(id) {
   const { rows } = await pool.query(
-    `SELECT id, youtube_id, title, channel, published_at, thumbnail_url, lang, source, edited, updated_at
+    `SELECT id, youtube_id, title, channel, published_at, thumbnail_url, lang, source, edited, updated_at,
+            translated, original_lang
      FROM videos WHERE id = $1`,
     [id],
   );
@@ -88,7 +94,7 @@ adminRouter.get(
   ah(async (req, res) => {
     const video = await getVideo(videoId(req));
     const { rows } = await pool.query(
-      'SELECT start_ms, duration_ms, text FROM segments WHERE video_id = $1 ORDER BY position',
+      'SELECT start_ms, duration_ms, text, text_original FROM segments WHERE video_id = $1 ORDER BY position',
       [video.id],
     );
     res.json({ video, segments: rows });
@@ -115,11 +121,14 @@ adminRouter.post(
     let segments = [];
     let source = 'manual';
     let usedLang = lang;
+    let tr = { translated: false, originalLang: null, untranslated: false };
     if (mode === 'supadata') {
-      const t = await fetchTranscript(youtubeId, lang);
+      // Si la langue demandée n'existe pas, on traduit (clé Anthropic) au lieu de garder une autre langue.
+      const t = await fetchLocalized(youtubeId, lang);
       segments = t.segments;
       source = 'supadata';
       usedLang = t.lang;
+      tr = t;
     } else if (mode === 'paste') {
       segments = parseTranscriptText(transcript);
       if (!segments.length) throw new HttpError(400, 'Aucune ligne de transcription reconnue.');
@@ -144,10 +153,13 @@ adminRouter.post(
           source,
         ],
       );
-      await replaceSegments(client, rows[0].id, segments);
+      await replaceSegments(client, rows[0].id, segments, {
+        translated: tr.translated,
+        originalLang: tr.originalLang,
+      });
       return rows[0].id;
     });
-    res.status(201).json({ id });
+    res.status(201).json({ id, translated: tr.translated, untranslated: tr.untranslated, lang: usedLang });
   }),
 );
 
@@ -194,12 +206,17 @@ adminRouter.post(
   ah(async (req, res) => {
     const id = videoId(req);
     const video = await getVideo(id);
-    const t = await fetchTranscript(video.youtube_id, req.body?.lang || video.lang || 'fr');
+    const t = await fetchLocalized(video.youtube_id, req.body?.lang || video.lang || 'fr');
     await withTransaction(async (client) => {
-      await replaceSegments(client, id, t.segments, { edited: false, source: 'supadata' });
+      await replaceSegments(client, id, t.segments, {
+        edited: false,
+        source: 'supadata',
+        translated: t.translated,
+        originalLang: t.originalLang,
+      });
       await client.query('UPDATE videos SET lang = $2 WHERE id = $1', [id, t.lang]);
     });
-    res.json({ ok: true, segment_count: t.segments.length });
+    res.json({ ok: true, segment_count: t.segments.length, translated: t.translated, untranslated: t.untranslated });
   }),
 );
 
@@ -210,7 +227,34 @@ adminRouter.post(
     await getVideo(id);
     const segments = parseTranscriptText(req.body?.transcript);
     if (!segments.length) throw new HttpError(400, 'Aucune ligne de transcription reconnue.');
-    await withTransaction((client) => replaceSegments(client, id, segments, { edited: true, source: 'manual' }));
+    await withTransaction((client) =>
+      replaceSegments(client, id, segments, { edited: true, source: 'manual', translated: false, originalLang: null }),
+    );
+    res.json({ ok: true, segment_count: segments.length });
+  }),
+);
+
+/** Traduit la transcription actuelle (texte d'origine conservé). Écrase le texte affiché, corrections comprises. */
+adminRouter.post(
+  '/videos/:id/translate',
+  ah(async (req, res) => {
+    const id = videoId(req);
+    const video = await getVideo(id);
+    const to = baseLang(req.body?.lang || 'fr');
+    const from = baseLang(video.lang);
+    if (!to || !/^[a-z]{2,3}$/.test(to)) throw new HttpError(400, 'Langue invalide.');
+    if (!from) throw new HttpError(400, "La langue d'origine de la vidéo est inconnue : renseigne-la d'abord.");
+    if (from === to) throw new HttpError(400, `La transcription est déjà en « ${to} ».`);
+    const { rows } = await pool.query(
+      'SELECT start_ms, duration_ms, text, text_original FROM segments WHERE video_id = $1 ORDER BY position',
+      [id],
+    );
+    if (!rows.length) throw new HttpError(400, 'Aucune transcription à traduire.');
+    const segments = await translateSegments(rows, { from, to });
+    await withTransaction(async (client) => {
+      await replaceSegments(client, id, segments, { translated: true, originalLang: video.original_lang || from });
+      await client.query('UPDATE videos SET lang = $2 WHERE id = $1', [id, to]);
+    });
     res.json({ ok: true, segment_count: segments.length });
   }),
 );
@@ -238,6 +282,7 @@ adminRouter.delete(
 adminRouter.use((err, _req, res, _next) => {
   if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, ...err.extra });
   if (err instanceof TranscriptError) return res.status(err.status).json({ error: err.message });
+  if (err instanceof TranslationError) return res.status(err.code === 'config' ? 503 : 502).json({ error: err.message });
   if (err instanceof YouTubeApiError) return res.status(502).json({ error: err.message });
   console.error(err);
   res.status(500).json({ error: 'Erreur interne.' });

@@ -61,3 +61,10 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value JSONB NOT NULL
 );
+
+-- Traduction automatique des transcriptions -------------------------------------------
+-- videos.lang = langue du texte stocké ; original_lang = langue d'origine quand il a été traduit.
+-- segments.text_original = texte d'origine (avant traduction), conservé pour vérification.
+ALTER TABLE videos   ADD COLUMN IF NOT EXISTS original_lang TEXT;
+ALTER TABLE videos   ADD COLUMN IF NOT EXISTS translated    BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE segments ADD COLUMN IF NOT EXISTS text_original TEXT;

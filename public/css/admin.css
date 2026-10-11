@@ -76,3 +76,6 @@ textarea.seg { width: 100%; resize: none; overflow: hidden; font: inherit; line-
 .stat .l { font-size: .75rem; color: var(--color-muted); text-transform: uppercase; letter-spacing: var(--tracking-caps); }
 .notice { background: var(--ne-chamois-light); color: var(--ne-blue-dark); border-radius: var(--radius); padding: .8rem 1rem; font-weight: 600; font-size: .9rem; }
 td.actions { display: flex; gap: .4rem; flex-wrap: wrap; }
+
+.textcell { min-width: 0; }
+.textcell .orig { font-size: .78rem; font-style: italic; color: var(--color-muted); padding: .15rem .5rem 0; }

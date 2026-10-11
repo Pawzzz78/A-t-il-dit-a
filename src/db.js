@@ -34,12 +34,13 @@ export async function initDb() {
  * Remplace tous les segments d'une vidéo et recalcule l'index de recherche.
  * `segments` : [{ start_ms, duration_ms?, text }]
  */
-export async function replaceSegments(client, videoId, segments, { edited, source } = {}) {
+export async function replaceSegments(client, videoId, segments, { edited, source, translated, originalLang } = {}) {
   const clean = segments
     .map((s) => ({
       start_ms: Math.max(0, Math.round(Number(s.start_ms) || 0)),
       duration_ms: s.duration_ms == null ? null : Math.max(0, Math.round(Number(s.duration_ms) || 0)),
       text: String(s.text ?? '').replace(/\s+/g, ' ').trim(),
+      text_original: s.text_original ? String(s.text_original).replace(/\s+/g, ' ').trim() : null,
     }))
     .filter((s) => s.text);
   const { normText, offsets } = buildIndex(clean);
@@ -47,10 +48,10 @@ export async function replaceSegments(client, videoId, segments, { edited, sourc
   await client.query('DELETE FROM segments WHERE video_id = $1', [videoId]);
   if (clean.length) {
     await client.query(
-      `INSERT INTO segments (video_id, position, start_ms, duration_ms, text, norm_start)
-       SELECT $1, t.pos - 1, t.start_ms, t.duration_ms, t.text, t.norm_start
-       FROM unnest($2::int[], $3::int[], $4::int[], $5::text[], $6::int[])
-         AS t(pos, start_ms, duration_ms, text, norm_start)`,
+      `INSERT INTO segments (video_id, position, start_ms, duration_ms, text, norm_start, text_original)
+       SELECT $1, t.pos - 1, t.start_ms, t.duration_ms, t.text, t.norm_start, t.text_original
+       FROM unnest($2::int[], $3::int[], $4::int[], $5::text[], $6::int[], $7::text[])
+         AS t(pos, start_ms, duration_ms, text, norm_start, text_original)`,
       [
         videoId,
         clean.map((_, i) => i + 1),
@@ -58,6 +59,7 @@ export async function replaceSegments(client, videoId, segments, { edited, sourc
         clean.map((s) => s.duration_ms),
         clean.map((s) => s.text),
         offsets,
+        clean.map((s) => s.text_original),
       ],
     );
   }
@@ -66,9 +68,11 @@ export async function replaceSegments(client, videoId, segments, { edited, sourc
        edited = COALESCE($3, edited), source = COALESCE($4, source),
        -- une vidéo qui a maintenant une transcription n'a plus rien à attendre de la synchro
        sync_status = CASE WHEN $5 AND sync_status IN ('pending', 'failed') THEN 'done' ELSE sync_status END,
-       sync_error = CASE WHEN $5 THEN NULL ELSE sync_error END
+       sync_error = CASE WHEN $5 THEN NULL ELSE sync_error END,
+       translated = COALESCE($6::boolean, translated),
+       original_lang = CASE WHEN $6::boolean IS NULL THEN original_lang ELSE $7 END
      WHERE id = $1`,
-    [videoId, normText, edited ?? null, source ?? null, clean.length > 0],
+    [videoId, normText, edited ?? null, source ?? null, clean.length > 0, translated ?? null, originalLang ?? null],
   );
   return clean.length;
 }

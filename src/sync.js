@@ -12,7 +12,9 @@
  * (automatiquement ou corrigées à la main) ne sont ni relues ni modifiées.
  */
 import { pool, replaceSegments, withTransaction } from './db.js';
-import { TranscriptError, fetchTranscript, supadataConfigured } from './transcripts.js';
+import { fetchLocalized } from './localize.js';
+import { TranscriptError, supadataConfigured } from './transcripts.js';
+import { TranslationError } from './translate.js';
 import { iterateUploads, youtubeApiConfigured } from './youtube.js';
 
 const LOCK_ID = 727001;
@@ -130,7 +132,7 @@ function retryPlan(code, attempts, publishedAt) {
 }
 
 /** Traite jusqu'à `limit` vidéos en attente. */
-export async function processPending({ limit, fetchFn = fetchTranscript, gapMs = 1100 } = {}) {
+export async function processPending({ limit, fetchFn = fetchLocalized, gapMs = 1100 } = {}) {
   const result = { done: 0, retry: 0, failed: 0, skipped: 0, stopped: null };
   const { rows } = await pool.query(
     `SELECT id, youtube_id, published_at, sync_attempts, lang FROM videos
@@ -149,7 +151,12 @@ export async function processPending({ limit, fetchFn = fetchTranscript, gapMs =
         );
         // Quelqu'un est passé par là (édition, suppression, import manuel) : on ne touche à rien.
         if (!cur[0] || cur[0].sync_status !== 'pending' || cur[0].edited || cur[0].n > 0) return false;
-        await replaceSegments(c, v.id, t.segments, { edited: false, source: 'supadata' });
+        await replaceSegments(c, v.id, t.segments, {
+          edited: false,
+          source: 'supadata',
+          translated: Boolean(t.translated),
+          originalLang: t.originalLang ?? null,
+        });
         await c.query(
           `UPDATE videos SET sync_status = 'done', sync_error = NULL, sync_next_at = NULL, lang = $2 WHERE id = $1`,
           [v.id, t.lang],
@@ -159,7 +166,7 @@ export async function processPending({ limit, fetchFn = fetchTranscript, gapMs =
       if (applied) result.done++;
       else result.skipped++;
     } catch (e) {
-      const code = e instanceof TranscriptError ? e.code : 'upstream';
+      const code = e instanceof TranscriptError || e instanceof TranslationError ? e.code : 'upstream';
       if (code === 'quota' || code === 'auth' || code === 'config') {
         result.stopped = { code, message: e.message };
         break;

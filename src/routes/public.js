@@ -10,7 +10,7 @@ const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 const escapeLike = (s) => s.replace(/[\\%_]/g, '\\$&');
 
-const VIDEO_COLS = 'id, youtube_id, title, channel, published_at, thumbnail_url, norm_text';
+const VIDEO_COLS = 'id, youtube_id, title, channel, published_at, thumbnail_url, translated, original_lang, norm_text';
 
 function presentVideo(v) {
   return {
@@ -20,6 +20,8 @@ function presentVideo(v) {
     channel: v.channel,
     published_at: v.published_at,
     thumbnail_url: v.thumbnail_url,
+    translated: Boolean(v.translated),
+    original_lang: v.original_lang ?? null,
   };
 }
 
@@ -73,7 +75,11 @@ async function runSearch(rawQuery) {
     )
   ).rows;
   const exact = await toResults(exactRows, (t) => findExact(t, nq), 'exact');
-  if (exact.length) return { verdict: 'exact', video_count: videoCount, results: exact };
+  if (exact.length) {
+    // Une phrase retrouvée uniquement dans une traduction automatique n'est pas ce qui a été prononcé.
+    const verdict = exact.some((r) => !r.video.translated) ? 'exact' : 'translated';
+    return { verdict, video_count: videoCount, results: exact };
+  }
 
   const tokens = queryTokens(nq);
   if (tokens.length >= 2) {

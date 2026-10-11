@@ -171,6 +171,8 @@ async function renderList() {
         h(
           'td',
           {},
+          v.translated ? h('span', { class: 'badge ok', title: `Traduit automatiquement depuis ${v.original_lang ?? '?'}` }, `traduit ${v.original_lang ?? ''}→${v.lang ?? ''}`) : null,
+          !v.translated && v.lang && v.lang !== 'fr' ? h('span', { class: 'badge warn', title: 'Transcription non traduite' }, `langue : ${v.lang}`) : null,
           v.sync_status === 'pending' ? h('span', { class: 'badge' }, 'en attente') : null,
           v.sync_status === 'failed' ? h('span', { class: 'badge warn', title: v.sync_error ?? '' }, 'échec') : null,
           v.segment_count === 0 && !v.sync_status ? h('span', { class: 'badge' }, 'vide') : null,
@@ -558,7 +560,7 @@ async function renderEditor(id) {
           h('button', { class: 'play', type: 'button', title: 'Écouter à partir d’ici', onclick: () => seek(s.start_ms) }, '▶'),
           ts,
         ),
-        ta,
+        h('div', { class: 'textcell' }, ta, s.text_original ? h('div', { class: 'orig', title: 'Texte d’origine avant traduction' }, s.text_original) : null),
         h(
           'div',
           { class: 'tools' },
@@ -571,7 +573,7 @@ async function renderEditor(id) {
             const span = s.duration_ms ?? (next ? next.start_ms - s.start_ms : 0);
             const newStart = s.start_ms + Math.round(Math.max(span, 0) * (left.length / s.text.length));
             s.text = left;
-            segs.splice(i + 1, 0, { start_ms: newStart, duration_ms: null, text: right, orig: '', origStart: -1 });
+            segs.splice(i + 1, 0, { start_ms: newStart, duration_ms: null, text: right, text_original: null, orig: '', origStart: -1 });
             markDirty();
             renderSegs();
           }),
@@ -579,13 +581,14 @@ async function renderEditor(id) {
             const next = segs[i + 1];
             if (!next) return;
             s.text = `${s.text.trim()} ${next.text.trim()}`;
+            s.text_original = [s.text_original, next.text_original].filter(Boolean).join(' ') || null;
             s.duration_ms = null;
             segs.splice(i + 1, 1);
             markDirty();
             renderSegs();
           }),
           btn('＋', 'Insérer un segment dessous', () => {
-            segs.splice(i + 1, 0, { start_ms: s.start_ms + (s.duration_ms ?? 0), duration_ms: null, text: '', orig: '', origStart: -1 });
+            segs.splice(i + 1, 0, { start_ms: s.start_ms + (s.duration_ms ?? 0), duration_ms: null, text: '', text_original: null, orig: '', origStart: -1 });
             markDirty();
             renderSegs();
             rowEls[i + 1]?.querySelector('textarea').focus();
@@ -740,6 +743,50 @@ async function renderEditor(id) {
     ),
   );
 
+
+  // --- traduction
+  const trMsg = h('p', { class: 'status' });
+  const translatable = Boolean(video.lang) && video.lang !== 'fr';
+  const translatePanel = h(
+    'section',
+    { class: 'panel' },
+    h(
+      'details',
+      { open: translatable || video.translated },
+      h('summary', {}, 'Langue et traduction'),
+      h(
+        'p',
+        { class: 'status' },
+        `Langue du texte affiché : ${video.lang ?? 'inconnue'}. `,
+        video.translated ? `Traduit automatiquement depuis « ${video.original_lang ?? '?'} » : le texte d’origine est conservé sous chaque segment. Sur le site, les résultats sont signalés comme traduction.` : '',
+      ),
+      translatable
+        ? config.translate
+          ? h(
+              'button',
+              {
+                class: 'btn secondary small',
+                type: 'button',
+                onclick: async () => {
+                  if (dirty) return status(trMsg, 'Enregistre d’abord tes modifications.', 'err');
+                  if (!confirm('Le texte affiché sera remplacé par une traduction automatique en français (le texte d’origine est conservé). Continuer ?')) return;
+                  status(trMsg, 'Traduction en cours… (une à deux minutes pour une longue vidéo)');
+                  try {
+                    await api('POST', `/videos/${id}/translate`, { lang: 'fr' });
+                    route();
+                  } catch (e) {
+                    status(trMsg, e.message, 'err');
+                  }
+                },
+              },
+              'Traduire en français',
+            )
+          : h('p', { class: 'status err' }, 'ANTHROPIC_API_KEY manquante : impossible de traduire automatiquement.')
+        : null,
+      trMsg,
+    ),
+  );
+
   const danger = h(
     'section',
     { class: 'panel' },
@@ -769,7 +816,7 @@ async function renderEditor(id) {
     try {
       segs = segs.filter((s) => s.text.trim());
       await api('PUT', `/videos/${id}/segments`, {
-        segments: segs.map(({ start_ms, duration_ms, text }) => ({ start_ms, duration_ms, text })),
+        segments: segs.map(({ start_ms, duration_ms, text, text_original }) => ({ start_ms, duration_ms, text, text_original })),
       });
       segs.forEach((s) => ((s.orig = s.text), (s.origStart = s.start_ms)));
       renderSegs();
@@ -793,7 +840,7 @@ async function renderEditor(id) {
   $app.replaceChildren(
     h('p', {}, h('a', { href: '#/' }, '← Toutes les vidéos')),
     info,
-    h('div', { class: 'editor' }, h('aside', { class: 'side' }, playerBox, tools, source, danger), list),
+    h('div', { class: 'editor' }, h('aside', { class: 'side' }, playerBox, translatePanel, tools, source, danger), list),
     savebar,
   );
 
