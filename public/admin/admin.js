@@ -429,7 +429,7 @@ async function renderSync() {
     h(
       'p',
       { class: 'status' },
-      `Chaque vidéo transcrite reçoit automatiquement son résumé, quelques minutes après sa transcription (modèle : ${sm.model}). Les visiteurs ne font qu’afficher les résumés déjà prêts : ils ne déclenchent aucun appel à l’IA, donc aucun coût. Un résumé est refait tout seul si tu corriges la transcription.`,
+      `Chaque vidéo transcrite reçoit automatiquement son résumé, quelques minutes après sa transcription (modèle : ${sm.model}). Un résumé n’est écrit qu’une seule fois : une vidéo qui en a un n’est jamais re-résumée automatiquement. Les visiteurs ne font qu’afficher les résumés déjà prêts : ils ne déclenchent aucun appel à l’IA, donc aucun coût.`,
     ),
     sm.paused
       ? h('p', { class: 'notice' }, 'Génération des résumés en pause : les nouvelles vidéos n’auront pas de résumé tant que tu ne l’as pas relancée.')
@@ -969,9 +969,8 @@ async function renderEditor(id) {
   const sumMsg = h('p', { class: 'status' });
   const sumDate = (d) => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '');
   const sumText = {
-    edited: `Corrigé à la main le ${sumDate(summary.edited_at)} : il n’est jamais régénéré automatiquement.${summary.outdated ? ' Attention : la transcription a été modifiée depuis, relis ce résumé.' : ''}`,
-    ready: `Rédigé par l’IA le ${sumDate(summary.created_at)} (modèle ${summary.model}). Il s’affiche sur le site.`,
-    refresh: 'Un résumé existe, il va être mis à jour automatiquement (transcription ou consignes modifiées). Tu peux le corriger toi-même : il ne sera alors plus régénéré.',
+    edited: `Corrigé à la main le ${sumDate(summary.edited_at)} : il n’est jamais régénéré automatiquement.${summary.outdated ? ' La transcription a été modifiée depuis : relis ce résumé.' : ''}`,
+    ready: `Rédigé par l’IA le ${sumDate(summary.created_at)} (modèle ${summary.model}). Il s’affiche sur le site et n’est jamais refait automatiquement.${summary.outdated ? ' La transcription a été modifiée depuis : si besoin, corrige le résumé ou clique sur « Régénérer avec l’IA ».' : ''}`,
     waiting: 'Sera rédigé automatiquement dans quelques minutes (délai après la dernière modification). Tu peux aussi l’écrire toi-même ci-dessous.',
     failed: `En échec après ${summary.attempts} tentatives : ${summary.error ?? ''} Tu peux l’écrire toi-même ci-dessous.`,
     none: 'Pas de transcription : pas de résumé.',
@@ -989,7 +988,7 @@ async function renderEditor(id) {
       const r = await api('PUT', `/videos/${id}/summary`, { markdown: sumArea.value });
       sumArea.value = r.markdown;
       summary.content = r.markdown;
-      status(sumMsg, 'Résumé enregistré : il est affiché tel quel sur le site et ne sera plus régénéré automatiquement.', 'ok');
+      status(sumMsg, 'Résumé enregistré : il est affiché tel quel sur le site.', 'ok');
     } catch (e) {
       saveSum.disabled = false;
       status(sumMsg, e.message, 'err');
@@ -1001,7 +1000,7 @@ async function renderEditor(id) {
     h(
       'details',
       { open: summary.status === 'failed' || summary.status === 'edited' },
-      h('summary', {}, `Résumé IA : ${{ edited: 'corrigé à la main', ready: 'prêt', refresh: 'à mettre à jour', waiting: 'en attente', failed: 'en échec', none: 'aucun' }[summary.status]}`),
+      h('summary', {}, `Résumé IA : ${{ edited: 'corrigé à la main', ready: 'prêt', waiting: 'en attente', failed: 'en échec', none: 'aucun' }[summary.status]}`),
       h('p', { class: summary.status === 'failed' ? 'status err' : 'status' }, sumText),
       summary.status === 'none'
         ? null
@@ -1023,8 +1022,7 @@ async function renderEditor(id) {
                   type: 'button',
                   onclick: async () => {
                     if (dirty) return status(sumMsg, 'Enregistre d’abord tes modifications de la transcription.', 'err');
-                    const lost = summary.status === 'edited' || sumArea.value !== summary.content;
-                    if (lost && !confirm('Régénérer remplacera le résumé actuel (y compris tes corrections) par un nouveau résumé IA. Continuer ?')) return;
+                    if (summary.content && !confirm('Régénérer remplacera le résumé actuel (y compris tes corrections) par un nouveau résumé IA. Continuer ?')) return;
                     status(sumMsg, 'Rédaction du résumé… (environ une minute)');
                     try {
                       await api('POST', `/videos/${id}/summary`, {});

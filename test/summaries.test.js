@@ -139,45 +139,49 @@ test('auto : délai de grâce après une modification', { skip: !enabled }, asyn
   assert.ok(v2 && (await stored(2)));
 });
 
-test('auto : transcription corrigée → nouveau résumé ; l\'ancien n\'est plus servi pendant ce temps', { skip: !enabled }, async () => {
+test('auto : un résumé existant n\'est JAMAIS refait, même si la transcription est corrigée ensuite', { skip: !enabled }, async () => {
   const vid = await addVideo(1);
   const complete = counting();
   await cycle(complete);
-  const before = (await vrow(1)).text_hash;
+  const first = await stored(1);
   await withServer(async (base) => {
-    assert.equal((await fetch(`${base}/api/summary/${id(1)}`)).status, 200);
     await db.withTransaction((c) => db.replaceSegments(c, vid, [{ start_ms: 0, text: 'texte corrigé à la main' }], { edited: true }));
-    assert.notEqual((await vrow(1)).text_hash, before);
-    const stale = await fetch(`${base}/api/summary/${id(1)}`);
-    assert.equal(stale.status, 404); // résumé d'une ancienne transcription : masqué
-    assert.equal((await stale.json()).pending, true);
-  });
-  assert.equal((await cycle(complete)).done, 0); // délai de grâce après la correction
-  await age(vid);
-  assert.equal((await cycle(complete)).done, 1);
-  assert.equal(complete.calls, 2);
-  assert.equal((await stored(1)).source_hash.split(':')[0], (await vrow(1)).text_hash);
-});
-
-test('auto : un résumé écrit avec d\'anciennes consignes est refait, mais reste affiché en attendant', { skip: !enabled }, async () => {
-  const vid = await addVideo(1);
-  await db.pool.query(
-    `INSERT INTO video_summaries (video_id, content, model, source_hash)
-     SELECT id, '## En bref\nL''invité estime que tout va bien, et il le dit longuement ici.', 'm', text_hash || ':v0' FROM videos WHERE id = $1`,
-    [vid],
-  );
-  await withServer(async (base) => {
-    const old = await fetch(`${base}/api/summary/${id(1)}`);
-    assert.equal(old.status, 200);
-    assert.match((await old.json()).markdown, /invité/);
+    await age(vid);
+    // toujours affiché, tel quel
+    const r = await fetch(`${base}/api/summary/${id(1)}`);
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).markdown, first.content);
     const list = await (await fetch(`${base}/api/latest?limit=50`)).json();
     assert.equal(list.videos.find((v) => v.youtube_id === id(1)).has_summary, true);
   });
+  for (let i = 0; i < 3; i++) assert.equal((await cycle(complete)).done, 0); // on ne repasse pas en boucle
+  assert.equal(complete.calls, 1);
+  assert.equal((await stored(1)).content, first.content);
+  const o = await auto.summariesOverview();
+  assert.ok(o.ready >= 1);
+});
+
+test('auto : un résumé écrit avec d\'anciennes consignes (ou sans empreinte) n\'est pas refait', { skip: !enabled }, async () => {
+  const vid = await addVideo(1);
+  const old = '## En bref\nL\'invité estime que tout va bien, et il le dit longuement ici.';
+  await db.pool.query(
+    `INSERT INTO video_summaries (video_id, content, model, source_hash)
+     SELECT id, $2, 'm', text_hash || ':v0' FROM videos WHERE id = $1`,
+    [vid, old],
+  );
   const complete = counting();
-  assert.equal((await cycle(complete)).done, 1);
+  for (let i = 0; i < 2; i++) assert.equal((await cycle(complete)).done, 0);
+  assert.equal(complete.calls, 0);
+  assert.equal((await stored(1)).content, old);
+  await withServer(async (base) => {
+    const r = await fetch(`${base}/api/summary/${id(1)}`);
+    assert.equal(r.status, 200);
+    assert.match((await r.json()).markdown, /invité/);
+  });
+  // seule la régénération explicite de l'admin le remplace
+  await svc.regenerateNow(vid, { complete });
   assert.doesNotMatch((await stored(1)).content, /invité/);
-  assert.match((await stored(1)).source_hash, /:v[1-9]\d*$/);
-  assert.equal((await cycle(complete)).done, 0);
+  assert.equal(complete.calls, 1);
 });
 
 test('auto : échec → nouvelle tentative espacée, abandon après 5 essais, « Réessayer » remet à zéro', { skip: !enabled }, async () => {
@@ -308,14 +312,13 @@ test('édition manuelle : résumé corrigé à la main, protégé de la régén�
   assert.notEqual(s.content, auto0.content);
   assert.equal((await db.pool.query('SELECT edited_at FROM video_summaries WHERE video_id = $1', [vid])).rows[0].edited_at !== null, true);
 
-  // la génération automatique ne le touche pas, même si les consignes ont changé
-  await db.pool.query('UPDATE video_summaries SET source_hash = text_hash FROM videos v WHERE v.id = video_id AND video_id = $1', [vid]);
+  // la génération automatique ne le touche pas
   const complete = counting();
   assert.equal((await cycle(complete)).done, 0);
   assert.equal(complete.calls, 0);
   // une génération qui se termine après l'édition ne l'écrase pas non plus
   const v = { id: vid, youtube_id: id(1), text_hash: (await vrow(1)).text_hash };
-  assert.equal((await svc.generateSummary(v, { complete })).skipped, 'résumé corrigé à la main');
+  assert.equal((await svc.generateSummary(v, { complete })).skipped, 'résumé déjà présent');
   const callsAfterRace = complete.calls;
   assert.equal((await stored(1)).content, s.content);
 

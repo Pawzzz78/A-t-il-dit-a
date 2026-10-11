@@ -1,8 +1,8 @@
 /**
  * Génération automatique des résumés : toute vidéo indexée (transcrite, hors Shorts) reçoit son résumé en arrière-plan.
  *
- *  - Une vidéo est « à résumer » si elle n'a pas de résumé, ou si son résumé ne correspond plus à la transcription
- *    ou à la version des consignes. Les plus récentes d'abord.
+ *  - Une vidéo est « à résumer » uniquement si elle n'a PAS encore de résumé : un résumé existant n'est jamais refait
+ *    automatiquement (ni si la transcription change, ni si les consignes évoluent). Les plus récentes d'abord.
  *  - Délai de grâce de 3 minutes après la dernière modification : pas de résumé pendant que tu corriges la transcription.
  *  - Échec : nouvelle tentative espacée (30 min, 1 h, 2 h, 4 h), puis abandon après 5 tentatives (visible dans l'admin).
  *  - Clé refusée ou crédits épuisés : tout s'arrête un moment au lieu d'insister ; 3 échecs d'affilée arrêtent aussi la passe.
@@ -14,7 +14,7 @@ import { pool } from './db.js';
 import { LlmError, completeWithOpenRouter, llmConfigured } from './openrouter.js';
 import { getSetting, recordLlmError, setSetting } from './settings.js';
 import { generateSummary } from './summaries.js';
-import { PROMPT_VERSION, summaryModel } from './summarize.js';
+import { summaryModel } from './summarize.js';
 
 const LOCK_ID = 727003;
 const MAX_ATTEMPTS = 5;
@@ -37,21 +37,21 @@ export async function summariesActive() {
 }
 
 const INDEXED_SQL = `v.norm_text <> '' AND (v.duration_s IS NULL OR v.duration_s > ${SHORT_MAX_S})`;
-// un résumé corrigé à la main (edited_at) n'est jamais « à refaire »
-const OUTDATED_SQL = `(s.video_id IS NULL OR (s.edited_at IS NULL AND s.source_hash <> v.text_hash || ':' || $1))`;
+// « à résumer » = aucun résumé en base. Un résumé existant (automatique ou corrigé à la main) n'est jamais repris.
+const MISSING_SQL = 's.video_id IS NULL';
 
 /** Prochaine vidéo à résumer (une seule), ou undefined. `graceMinutes: 0` ignore le délai de grâce. */
 async function nextDue(graceMinutes, idPrefix = null) {
   const { rows } = await pool.query(
     `SELECT v.id, v.youtube_id, v.text_hash FROM videos v
      LEFT JOIN video_summaries s ON s.video_id = v.id
-     WHERE ${INDEXED_SQL} AND ${OUTDATED_SQL}
-       AND v.updated_at <= now() - $2 * interval '1 minute'
+     WHERE ${INDEXED_SQL} AND ${MISSING_SQL}
+       AND v.updated_at <= now() - $1 * interval '1 minute'
        AND v.summary_attempts < ${MAX_ATTEMPTS}
        AND (v.summary_next_at IS NULL OR v.summary_next_at <= now())
-       AND ($3::text IS NULL OR v.youtube_id LIKE $3 || '%')
+       AND ($2::text IS NULL OR v.youtube_id LIKE $2 || '%')
      ORDER BY v.published_at DESC NULLS LAST, v.id DESC LIMIT 1`,
-    [PROMPT_VERSION, graceMinutes, idPrefix],
+    [graceMinutes, idPrefix],
   );
   return rows[0];
 }
@@ -133,18 +133,16 @@ export async function summariesOverview() {
   const [{ rows: counts }, { rows: failed }, paused, cooldown] = await Promise.all([
     pool.query(
       `SELECT
-         count(*) FILTER (WHERE s.video_id IS NOT NULL AND (s.edited_at IS NOT NULL OR s.source_hash = v.text_hash || ':' || $1))::int AS ready,
-         count(*) FILTER (WHERE ${OUTDATED_SQL} AND v.summary_attempts < ${MAX_ATTEMPTS})::int AS waiting,
-         count(*) FILTER (WHERE ${OUTDATED_SQL} AND v.summary_attempts >= ${MAX_ATTEMPTS})::int AS failed
+         count(*) FILTER (WHERE s.video_id IS NOT NULL)::int AS ready,
+         count(*) FILTER (WHERE ${MISSING_SQL} AND v.summary_attempts < ${MAX_ATTEMPTS})::int AS waiting,
+         count(*) FILTER (WHERE ${MISSING_SQL} AND v.summary_attempts >= ${MAX_ATTEMPTS})::int AS failed
        FROM videos v LEFT JOIN video_summaries s ON s.video_id = v.id WHERE ${INDEXED_SQL}`,
-      [PROMPT_VERSION],
     ),
     pool.query(
       `SELECT v.id, v.title, v.summary_error, v.summary_attempts FROM videos v
        LEFT JOIN video_summaries s ON s.video_id = v.id
-       WHERE ${INDEXED_SQL} AND ${OUTDATED_SQL} AND v.summary_attempts >= ${MAX_ATTEMPTS}
+       WHERE ${INDEXED_SQL} AND ${MISSING_SQL} AND v.summary_attempts >= ${MAX_ATTEMPTS}
        ORDER BY v.published_at DESC NULLS LAST LIMIT 50`,
-      [PROMPT_VERSION],
     ),
     summariesPaused(),
     getSetting('summary_cooldown_until', null),

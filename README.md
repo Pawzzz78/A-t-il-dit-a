@@ -78,9 +78,10 @@ le bouton **Afficher le résumé** ne fait que lire ce résumé déjà stocké e
   import, Whisper, correction à la main). Un délai de grâce de 3 minutes après la dernière modification évite de résumer pendant
   que tu corriges la transcription. `SUMMARY_AUTO=false` désactive ce travail.
 - **Le public ne déclenche rien** : la route publique est en lecture seule, donc le trafic du site ne coûte aucun appel au modèle.
-- **Mise à jour automatique** : si la transcription est modifiée, ou si les consignes de rédaction sont améliorées, le résumé est
-  refait en arrière-plan. Un résumé écrit avec d'anciennes consignes reste affiché en attendant ; un résumé d'une ancienne
-  transcription est masqué.
+- **Une seule fois par vidéo** : seules les vidéos qui n'ont **pas encore** de résumé sont traitées. Un résumé existant n'est
+  jamais refait automatiquement, ni si la transcription est corrigée ensuite, ni si les consignes de rédaction évoluent. Dans
+  l'admin, l'éditeur signale simplement « la transcription a été modifiée depuis » ; pour refaire un résumé, il faut cliquer sur
+  « Régénérer avec l'IA » (avec confirmation).
 - **Échecs** : nouvelle tentative après 30 min, 1 h, 2 h, 4 h, puis abandon au bout de 5 essais (visible dans l'admin, bouton
   « Réessayer »). Clé refusée ou crédits épuisés : tout est suspendu 3 h (clé) ou 1 h (crédits) au lieu d'insister ; trois échecs
   d'affilée arrêtent aussi la passe.
@@ -90,9 +91,8 @@ le bouton **Afficher le résumé** ne fait que lire ce résumé déjà stocké e
 - **Admin** : compteurs (prêts / en attente / en échec), pause et reprise, « Lancer maintenant », liste des échecs.
 - **Corriger un résumé à la main** : dans l'éditeur d'une vidéo, le panneau « Résumé IA » contient le texte du résumé (même format :
   `## En bref`, `## [12:34] Titre` pour un repère de temps cliquable, `- puce`, `**gras**`). Après « Enregistrer le résumé », il
-  s'affiche tel quel sur le site avec la mention « généré par IA puis corrigé à la main » et n'est **plus jamais régénéré
-  automatiquement** (ni à cause d'une nouvelle version des consignes, ni après une correction de la transcription ; l'admin
-  signale alors que la transcription a changé). Tu peux aussi l'écrire entièrement toi-même. Seul « Régénérer avec l'IA » le
+  s'affiche tel quel sur le site avec la mention « généré par IA puis corrigé à la main » et reste tel quel (comme tout résumé
+  existant, il n'est jamais refait automatiquement). Tu peux aussi l'écrire entièrement toi-même. Seul « Régénérer avec l'IA » le
   remplace, après confirmation. Le texte est nettoyé comme celui de l'IA (HTML et liens retirés).
 - Fidélité : le modèle ne doit utiliser que le texte ; les repères de temps inexistants sont supprimés, le HTML retiré, la
   taille bornée. Une mention rappelle que le résumé est généré par IA et peut contenir des erreurs. Vidéos très longues : notes

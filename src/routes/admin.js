@@ -14,7 +14,6 @@ import { syncRouter } from './sync-admin.js';
 import { YouTubeApiError } from '../youtube.js';
 import { fetchLocalized } from '../localize.js';
 import { regenerateNow, saveEditedSummary } from '../summaries.js';
-import { PROMPT_VERSION } from '../summarize.js';
 import { TranscriptError, parseTranscriptText, supadataConfigured } from '../transcripts.js';
 import { TranslationError, baseLang, translateConfigured, translateSegments } from '../translate.js';
 import { fetchMetadata, fetchVideoMeta, parseYoutubeId, youtubeApiConfigured } from '../youtube.js';
@@ -107,10 +106,10 @@ adminRouter.get(
     const x = sm[0];
     const sameText = String(x.source_hash).split(':')[0] === x.text_hash;
     let summary = { status: rows.length ? 'waiting' : 'none' };
-    if (x.edited_at) summary = { status: 'edited', edited_at: x.edited_at, outdated: !sameText }; // outdated : transcription modifiée depuis
-    else if (x.created_at && x.source_hash === `${x.text_hash}:${PROMPT_VERSION}`) summary = { status: 'ready', created_at: x.created_at, model: x.model };
+    // outdated : la transcription a changé depuis le résumé (qui n'est jamais refait tout seul)
+    if (x.edited_at) summary = { status: 'edited', edited_at: x.edited_at, outdated: !sameText };
+    else if (x.created_at) summary = { status: 'ready', created_at: x.created_at, model: x.model, outdated: !sameText };
     else if (rows.length && x.summary_attempts >= 5) summary = { status: 'failed', error: x.summary_error, attempts: x.summary_attempts };
-    else if (x.created_at && sameText) summary = { status: 'refresh', created_at: x.created_at, model: x.model };
     summary.content = x.content ?? ''; // point de départ de l'édition, quel que soit l'état
     res.json({ video, segments: rows, summary });
   }),
