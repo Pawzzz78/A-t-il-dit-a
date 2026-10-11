@@ -266,14 +266,6 @@ publicRouter.get(
   }),
 );
 
-/** Coordonnées de l'éditeur pour la page « Mentions légales » (variables LEGAL_*, à renseigner sur Railway). */
-publicRouter.get('/legal', (_req, res) => {
-  const env = (k) => (process.env[k] ?? '').trim().slice(0, 300) || null;
-  const publisher = env('LEGAL_PUBLISHER');
-  res.set('Cache-Control', 'public, max-age=300');
-  res.json({ publisher, director: env('LEGAL_DIRECTOR') ?? publisher, address: env('LEGAL_ADDRESS'), email: env('LEGAL_CONTACT_EMAIL') });
-});
-
 publicRouter.get(
   '/stats',
   ah(async (_req, res) => {

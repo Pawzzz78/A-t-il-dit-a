@@ -180,14 +180,14 @@ Il faut un Postgres accessible via `DATABASE_URL` (les tables sont créées au d
    | `OPENROUTER_API_KEY` | clé OpenRouter (traduction automatique des transcriptions, optionnelle) |
    | `TRANSLATE_MODEL` | modèle de traduction OpenRouter (optionnel) |
    | `YOUTUBE_API_KEY` | clé YouTube Data API v3 (pour la synchronisation automatique des chaînes) |
-   | `LEGAL_PUBLISHER`, `LEGAL_DIRECTOR`, `LEGAL_CONTACT_EMAIL`, `LEGAL_ADDRESS` | coordonnées affichées sur `/mentions-legales/` (voir ci-dessous) |
 
 3. Générer un domaine public (Settings → Networking). Le healthcheck est `/api/health`.
 
 Le site public ne contient aucun lien vers l'admin : accède-y directement par `/admin/` (mets l'adresse en favori).
-La page **/mentions-legales/** (lien dans le pied de page) affiche « Non renseigné » pour l'éditeur et le contact tant que les
-variables `LEGAL_*` ne sont pas définies. Le reste du texte (hébergeur, données personnelles, sources) est rédigé d'après le
-fonctionnement réel du site ; à faire relire si le site devient plus qu'un projet personnel.
+La page **/mentions-legales/** (lien dans le pied de page) est un fichier statique, `public/mentions-legales/index.html` : éditeur
+anonyme (particulier, identité communiquée à l'hébergeur, LCEN art. 6 III 2°), hébergeur, contact par e-mail, fonctionnement du
+site, sources et données personnelles. Elle est rédigée d'après le fonctionnement réel du site ; à faire relire et à mettre à jour
+si celui-ci change (cookies, statistiques, publicité…).
 
 ## Charte graphique
 
