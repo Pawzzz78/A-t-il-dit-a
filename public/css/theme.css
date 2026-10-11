@@ -1,33 +1,78 @@
 /*
  * THÈME — seul fichier à modifier pour changer la charte graphique.
- *
- * ⚠️ Valeurs PROVISOIRES : la charte de https://www.unenouvelleenergie.fr/ n'a pas
- * pu être lue (domaine bloqué dans l'environnement de développement).
- * Remplacer les couleurs, polices et le logo ci-dessous par ceux du site officiel.
+ * Valeurs relevées sur https://www.unenouvelleenergie.fr/ (feuille de style publique) :
+ * bleu #1d257a, chamois #b0ad85, rose #d0165f, police Montserrat.
  */
-:root {
-  /* Couleurs */
-  --color-primary: #0b2a6f;       /* TODO charte : couleur principale (titres, header) */
-  --color-primary-contrast: #ffffff;
-  --color-accent: #f28c00;        /* TODO charte : couleur d'accent (boutons, surlignage) */
-  --color-accent-contrast: #101828;
-  --color-bg: #f6f7fb;
-  --color-surface: #ffffff;
-  --color-text: #101828;
-  --color-muted: #5b6475;
-  --color-border: #dfe3ee;
-  --color-highlight: #ffe08a;     /* surlignage des mots trouvés */
-  --color-success: #0f7b4a;
-  --color-warning: #a35a00;
-  --color-danger: #b42318;
 
-  /* Typographie — TODO charte : remplacer par les polices du site (Google Fonts, @font-face…) */
-  --font-display: "Helvetica Neue", Arial, system-ui, sans-serif;
-  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+@font-face {
+  font-display: swap;
+  font-family: Montserrat;
+  font-style: normal;
+  font-weight: 400 800;
+  src: url(/fonts/montserrat-variable-latin-ext.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-display: swap;
+  font-family: Montserrat;
+  font-style: normal;
+  font-weight: 400 800;
+  src: url(/fonts/montserrat-variable-latin.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  /* Palette officielle */
+  --ne-blue: #1d257a;
+  --ne-blue-dark: #0f1752;
+  --ne-chamois: #b0ad85;
+  --ne-chamois-dark: #98955f;
+  --ne-chamois-light: #dedbbd;
+  --ne-off-white: #f9f9f9;
+  --ne-gainsboro: #dcdfdf;
+  --ne-emerald: #52c985;
+  --ne-emerald-tint: #dff7e9;
+  --ne-emerald-ink: #177344;
+  --ne-pink: #d0165f;
+  --ne-indigo: #4a36a3;
+
+  /* Rôles utilisés par app.css / admin.css */
+  --color-primary: var(--ne-blue);
+  --color-primary-dark: var(--ne-blue-dark);
+  --color-primary-contrast: #ffffff;
+  --color-accent: var(--ne-pink);
+  --color-accent-contrast: #ffffff;
+  --color-chamois: var(--ne-chamois);
+  --color-chamois-contrast: var(--ne-blue-dark);
+  --color-bg: var(--ne-off-white);
+  --color-surface: #ffffff;
+  --color-surface-alt: #f3f1f7;
+  --color-text: #171b3e;
+  --color-muted: #4a5464;
+  --color-border: var(--ne-gainsboro);
+  --color-hairline: #dedbe9;
+  --color-highlight: var(--ne-chamois-light);
+  --color-ring: var(--ne-indigo);
+  --color-success: var(--ne-emerald-ink);
+  --color-success-bg: var(--ne-emerald-tint);
+  --color-warning: var(--ne-chamois-dark);
+  --color-danger: oklch(57.7% 0.245 27.325);
+
+  /* Typographie */
+  --font-display: "Montserrat", Arial, sans-serif;
+  --font-body: "Montserrat", Arial, sans-serif;
   --font-weight-display: 800;
+  --tracking-title: -0.02em;
+  --tracking-display: -0.035em;
+  --tracking-label: 0.16em;
+  --tracking-caps: 0.08em;
 
   /* Formes */
-  --radius: 14px;
+  --radius: 0.75rem;
+  --radius-card: 1.5rem;
   --radius-pill: 999px;
-  --shadow: 0 8px 28px rgba(11, 42, 111, 0.1);
+  --shadow: 0 1rem 3rem #1d257a17;
+  --shadow-hover: 0 1rem 2.5rem #1d257a2e;
 }

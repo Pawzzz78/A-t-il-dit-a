@@ -57,7 +57,7 @@ function renderMatch(m) {
       'div',
       { class: 'match-foot' },
       h('span', { class: `tag ${m.type}` }, m.type === 'exact' ? 'Mot pour mot' : 'Formulation proche'),
-      h('a', { class: 'watch', href: m.url, target: '_blank', rel: 'noopener noreferrer' }, `▶ Voir à ${fmtTime(m.start_ms)}`),
+      h('a', { class: 'watch', href: m.url, target: '_blank', rel: 'noopener noreferrer' }, `▶ Voir à ${fmtTime(m.start_ms)} ↗`),
     ),
   );
 }
@@ -71,7 +71,7 @@ function renderResult(r) {
     v.thumbnail_url ? h('img', { src: v.thumbnail_url, alt: '', loading: 'lazy' }) : null,
     h('div', {}, h('h3', {}, v.title), h('p', { class: 'meta' }, meta)),
   );
-  const card = h('article', { class: 'result' }, head, r.matches.map(renderMatch));
+  const card = h('article', { class: 'result card' }, head, r.matches.map(renderMatch));
   if (r.total_matches > r.matches.length) {
     card.append(h('p', { class: 'more' }, `+ ${r.total_matches - r.matches.length} autre(s) occurrence(s) dans cette vidéo`));
   }
@@ -82,12 +82,12 @@ function render(data) {
   out.replaceChildren();
   const n = data.results.length;
   const verdicts = {
-    exact: ['Oui, il l\'a dit.', `Trouvé mot pour mot dans ${n} vidéo${n > 1 ? 's' : ''}.`],
-    approx: ['Pas mot pour mot, mais des propos proches.', 'Tous les mots de ta recherche apparaissent près les uns des autres. Vérifie le contexte.'],
-    none: ['Aucune trace.', `Cette phrase n'apparaît dans aucune des ${data.video_count} vidéo${data.video_count > 1 ? 's' : ''} indexée${data.video_count > 1 ? 's' : ''}.`],
+    exact: ['Oui, il l\'a dit', `Trouvé mot pour mot dans ${n} vidéo${n > 1 ? 's' : ''}.`],
+    approx: ['Pas mot pour mot, mais des propos proches', 'Tous les mots de ta recherche apparaissent près les uns des autres. Vérifie le contexte.'],
+    none: ['Aucune trace', `Cette phrase n'apparaît dans aucune des ${data.video_count} vidéo${data.video_count > 1 ? 's' : ''} indexée${data.video_count > 1 ? 's' : ''}.`],
   };
   const [title, sub] = verdicts[data.verdict];
-  out.append(h('div', { class: `verdict ${data.verdict}` }, h('h2', {}, title), h('p', {}, sub)));
+  out.append(h('div', { class: `verdict card ${data.verdict}` }, h('p', { class: 'eyebrow' }, 'Résultat'), h('h2', {}, title), h('p', {}, sub)));
   data.results.forEach((r) => out.append(renderResult(r)));
 }
 

@@ -5,42 +5,57 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>A-t-il dit ça ? – Vérifie les propos de David Lisnard</title>
   <meta name="description" content="Retrouve si David Lisnard a déjà prononcé une phrase ou une expression dans ses interviews, avec l'extrait et la vidéo à l'appui.">
+  <meta name="theme-color" content="#1d257a">
+  <link rel="icon" href="/brand/logo.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/montserrat-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/css/theme.css">
   <link rel="stylesheet" href="/css/app.css">
 </head>
 <body>
+  <div class="topbar">
+    <div class="wrap"><a href="#methode">Comment ça marche</a></div>
+  </div>
   <header class="site-header">
     <div class="wrap">
-      <a class="brand" href="/"><span class="brand-mark" aria-hidden="true">?</span><span>A-t-il dit ça&nbsp;?</span></a>
-      <nav><a href="#methode">Comment ça marche</a></nav>
+      <a class="brand" href="/"><img src="/brand/logo.svg" alt="Nouvelle Énergie" width="149" height="128"><span>A-t-il dit ça&nbsp;?</span></a>
+      <nav><a class="btn chamois small" href="#q">Vérifier une phrase</a></nav>
     </div>
   </header>
 
   <section class="hero">
     <div class="wrap">
+      <p class="eyebrow">Vérification</p>
       <h1>A-t-il vraiment <em>dit ça</em>&nbsp;?</h1>
       <p>Colle une phrase ou une expression qui circule sur Internet : on cherche dans les interviews de David Lisnard et on te montre l'extrait exact.</p>
     </div>
   </section>
 
   <div class="search wrap">
-    <form id="form" role="search">
-      <label class="sr-only" for="q">Phrase ou expression à vérifier</label>
-      <input id="q" name="q" type="search" placeholder="Une phrase ou une expression…" autocomplete="off" maxlength="300" required minlength="3">
-      <button class="btn" type="submit">Vérifier</button>
-    </form>
-    <p class="hint" id="stats"></p>
+    <div class="card search-card">
+      <form id="form" role="search">
+        <label class="sr-only" for="q">Phrase ou expression à vérifier</label>
+        <input id="q" name="q" type="search" placeholder="Une phrase ou une expression…" autocomplete="off" maxlength="300" required minlength="3">
+        <button class="btn" type="submit">Vérifier</button>
+      </form>
+      <p class="hint" id="stats"></p>
+    </div>
   </div>
 
   <main class="wrap" aria-live="polite">
     <div id="out"></div>
 
-    <section id="methode" class="disclaimer">
-      <p><strong>Comment ça marche.</strong> Les transcriptions proviennent des sous-titres des vidéos YouTube. Elles sont générées automatiquement puis corrigées à la main par l'équipe, mais peuvent contenir des erreurs&nbsp;: clique toujours sur la vidéo pour entendre la phrase dans son contexte. Une absence de résultat signifie seulement que la phrase n'apparaît pas dans les vidéos déjà indexées.</p>
+    <section id="methode" class="disclaimer card">
+      <p class="eyebrow">Comment ça marche</p>
+      <p>Les transcriptions proviennent des sous-titres des vidéos YouTube. Elles sont générées automatiquement puis corrigées à la main, mais peuvent contenir des erreurs&nbsp;: <strong>clique toujours sur la vidéo</strong> pour entendre la phrase dans son contexte. Une absence de résultat signifie seulement que la phrase n'apparaît pas dans les vidéos déjà indexées.</p>
     </section>
   </main>
 
-  <footer class="site-footer"><div class="wrap">Projet indépendant de vérification. · <a href="/admin/">Admin</a></div></footer>
+  <footer class="site-footer">
+    <div class="wrap">
+      <span class="logo-tile"><img src="/brand/logo.svg" alt="Nouvelle Énergie" width="149" height="128" loading="lazy"></span>
+      <p>A-t-il dit ça&nbsp;? · Transcriptions issues de YouTube · <a href="/admin/">Admin</a></p>
+    </div>
+  </footer>
   <script src="/js/app.js" type="module"></script>
 </body>
 </html>
