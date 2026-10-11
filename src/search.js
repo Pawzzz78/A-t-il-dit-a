@@ -3,13 +3,16 @@ import { normalize, normalizeWithMap } from './normalize.js';
 const STOPWORDS = new Set(
   ('le la les l un une des de du d et ou a à au aux en dans sur sous par pour que qu qui quoi ' +
     'ce cet cette ces se s sa son ses ne n pas plus il elle ils elles on nous vous je j tu ' +
-    'me m te t y est sont etait ete etre avoir ai as ont avait c mais donc or ni car si')
+    'me m te t y est sont etait ete etre avoir ai as ont avait c mais donc or ni car si ' +
+    // attribution (« il a dit que… », « selon Lisnard ») : ne fait pas partie des mots à retrouver
+    'lisnard david dit disait dire selon aurait')
     .split(' '),
 );
 
 export const LIMITS = {
   maxVideos: 30,
   maxMatchesPerVideo: 5,
+  maxTopicMatchesPerVideo: 3,
   contextBefore: 1,
   contextAfter: 1,
 };

@@ -16,6 +16,24 @@ surligné et un lien vers la vidéo au bon timestamp.
   - corriger la transcription segment par segment (lecteur YouTube intégré, couper / fusionner / insérer / supprimer, chercher-remplacer, Ctrl+S) ;
   - modifier titre, chaîne, date ; supprimer une vidéo.
 
+## Recherche par question
+
+On peut saisir une phrase qui circule (« on va tout casser… ») **ou une question** (« est-ce que Lisnard a déjà parlé
+de réémigration ? »). Pour une question, le site ne cherche pas la phrase entière : un modèle (OpenRouter) en extrait les
+mots à chercher (« réémigration » + variantes d'orthographe que les sous-titres peuvent produire : « remigration »,
+« ré-émigration »), puis ces mots sont cherchés dans les transcriptions.
+
+- Le modèle **ne fait que choisir des mots-clés** : extraits, nombres et verdict viennent des transcriptions réelles, il ne
+  peut rien inventer. Sa sortie est validée (8 mots max, nom de l'orateur et mots vides écartés) et la saisie est traitée
+  comme une donnée, jamais comme une consigne.
+- Une citation mot pour mot est trouvée **sans aucun appel au modèle** (le cas le plus fréquent).
+- Les mots réellement recherchés sont affichés sous le verdict. Le verdict est « Oui, il en a parlé » : il dit que le mot est
+  prononcé, pas ce que Lisnard en pense.
+- Coût plafonné : cache 24 h, 30 appels/heure/visiteur, 300 appels/jour au total (`SEARCH_LLM_PER_IP_HOURLY`,
+  `SEARCH_LLM_DAILY_CAP`). Au-delà, ou si le modèle est indisponible, repli automatique sans modèle (on retire « est-ce que »,
+  « a-t-il déjà parlé de », le nom de l'orateur… et on cherche le reste).
+- Modèle : `SEARCH_MODEL`, sinon `TRANSLATE_MODEL`, sinon le modèle par défaut.
+
 ## Traduction automatique
 
 Supadata renvoie la première langue disponible quand la langue demandée (champ « Langue », `fr` par défaut)
@@ -89,6 +107,8 @@ src/
   normalize.js       normalisation du texte (indexation et requêtes)
   search.js          recherche exacte / approchée, extraits et surlignage
   transcripts.js     Supadata + parseurs SRT/VTT/texte
+  openrouter.js      client OpenRouter minimal (traduction et recherche par question)
+  query-understanding.js  extrait les mots-clés d'une question, plafonds de coût, repli sans modèle
   translate.js       traduction des segments via OpenRouter
   localize.js        récupère la transcription dans la langue demandée (traduit si besoin)
   sync.js            synchronisation : découverte des vidéos, file d'attente, planificateur

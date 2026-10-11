@@ -66,7 +66,7 @@ function renderMatch(m, video) {
       { class: 'match-foot' },
       video.translated
         ? h('span', { class: 'tag translated' }, 'Traduction automatique')
-        : h('span', { class: `tag ${m.type}` }, m.type === 'exact' ? 'Mot pour mot' : 'Formulation proche'),
+        : h('span', { class: `tag ${m.type}` }, { exact: 'Mot pour mot', topic: 'Mot trouvé' }[m.type] ?? 'Formulation proche'),
       h('a', { class: 'watch', href: m.url, target: '_blank', rel: 'noopener noreferrer' }, `▶ Voir à ${fmtTime(m.start_ms)} ↗`),
     ),
   );
@@ -97,14 +97,48 @@ function renderResult(r) {
 function render(data) {
   out.replaceChildren();
   const n = data.results.length;
-  const verdicts = {
-    exact: ['Oui, il l\'a dit', `Trouvé mot pour mot dans ${n} vidéo${n > 1 ? 's' : ''}.`],
-    translated: ['Trouvé dans une traduction', 'Cette phrase apparaît dans la traduction automatique d\'une vidéo dans une autre langue. Ce n\'est pas la formulation exacte prononcée : écoute la vidéo pour vérifier.'],
-    approx: ['Pas mot pour mot, mais des propos proches', 'Tous les mots de ta recherche apparaissent près les uns des autres. Vérifie le contexte.'],
-    none: ['Aucune trace', `Cette phrase n'apparaît dans aucune des ${data.video_count} vidéo${data.video_count > 1 ? 's' : ''} indexée${data.video_count > 1 ? 's' : ''}.`],
-  };
-  const [title, sub] = verdicts[data.verdict];
-  out.append(h('div', { class: `verdict card ${data.verdict}` }, h('p', { class: 'eyebrow' }, 'Résultat'), h('h2', {}, title), h('p', {}, sub)));
+  const plural = (k, one, many) => (k > 1 ? many : one);
+  const topic = data.interpreted;
+  const main = topic?.keywords?.[0] ?? '';
+  const indexed = `${data.video_count} vidéo${plural(data.video_count, '', 's')} indexée${plural(data.video_count, '', 's')}`;
+
+  let title;
+  let sub;
+  if (topic) {
+    // Recherche par sujet : on a cherché un mot (et ses variantes), pas la phrase entière.
+    const total = data.topic?.total_matches ?? 0;
+    const vids = `${data.topic?.truncated ? 'au moins ' : ''}${n} vidéo${plural(n, '', 's')}`;
+    ({
+      topic: () => {
+        title = 'Oui, il en a parlé';
+        sub = `« ${main} » est prononcé ${total} fois dans ${vids}. Ces extraits montrent que le mot est prononcé, pas ce que David Lisnard en pense : écoute le contexte dans la vidéo.`;
+      },
+      translated: () => {
+        title = 'Évoqué dans une traduction';
+        sub = 'Le mot apparaît dans la traduction automatique d\'une vidéo dans une autre langue, pas dans les mots exacts prononcés. Écoute la vidéo pour vérifier.';
+      },
+      none: () => {
+        title = 'Aucune trace';
+        sub = `« ${main} » n'apparaît dans aucune des ${indexed}.`;
+      },
+    })[data.verdict]();
+  } else {
+    const verdicts = {
+      exact: ['Oui, il l\'a dit', `Trouvé mot pour mot dans ${n} vidéo${plural(n, '', 's')}.`],
+      translated: ['Trouvé dans une traduction', 'Cette phrase apparaît dans la traduction automatique d\'une vidéo dans une autre langue. Ce n\'est pas la formulation exacte prononcée : écoute la vidéo pour vérifier.'],
+      approx: ['Pas mot pour mot, mais des propos proches', 'Tous les mots de ta recherche apparaissent près les uns des autres. Vérifie le contexte.'],
+      none: ['Aucune trace', `Cette phrase n'apparaît dans aucune des ${indexed}.`],
+    };
+    [title, sub] = verdicts[data.verdict];
+  }
+
+  const verdict = h('div', { class: `verdict card ${data.verdict}` }, h('p', { class: 'eyebrow' }, 'Résultat'), h('h2', {}, title), h('p', {}, sub));
+  if (topic) {
+    verdict.append(
+      h('p', { class: 'searched' }, 'Mots recherchés dans les transcriptions : ', ...topic.keywords.map((k) => h('span', { class: 'kw' }, k))),
+    );
+  }
+  out.append(verdict);
   data.results.forEach((r) => out.append(renderResult(r)));
 }
 

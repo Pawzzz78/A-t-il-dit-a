@@ -76,6 +76,11 @@ main { padding-bottom: 4rem; }
 .verdict.exact .eyebrow { color: var(--color-success); }
 .verdict.approx { border-color: var(--ne-chamois); }
 .verdict.approx .eyebrow { color: var(--ne-chamois-dark); }
+.verdict .searched { margin-top: .9rem; font-size: .8rem; color: var(--color-muted); display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
+.verdict .kw { background: var(--color-surface-alt); color: var(--color-primary); font-weight: 700; border-radius: var(--radius-pill); padding: .15rem .7rem; }
+.tag.topic { background: var(--color-success-bg); color: var(--color-success); }
+.verdict.topic { border-color: var(--ne-emerald); }
+.verdict.topic .eyebrow { color: var(--color-success); }
 .verdict.translated { border-color: var(--ne-chamois); }
 .verdict.translated .eyebrow { color: var(--ne-chamois-dark); }
 .verdict.none { border-color: var(--color-accent); }

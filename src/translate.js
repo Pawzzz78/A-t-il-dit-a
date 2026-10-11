@@ -1,23 +1,14 @@
 /**
- * Traduction des transcriptions via OpenRouter (API compatible OpenAI), avec un modèle économique.
+ * Traduction des transcriptions via OpenRouter, avec un modèle économique.
  * Les segments (et leurs horodatages) sont conservés tels quels : seul le texte est traduit.
  * Le texte d'origine est gardé dans `text_original`.
  */
+import { DEFAULT_MODEL, LlmError, completeWithOpenRouter, llmConfigured } from './openrouter.js';
 
-const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
-
-// Modèle par défaut : à vérifier sur https://openrouter.ai/models ; se change avec TRANSLATE_MODEL.
-export const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
-
-export const translateConfigured = () => Boolean(process.env.OPENROUTER_API_KEY);
-
-/** code : 'config' | 'auth' | 'quota' | 'upstream' (mêmes valeurs que TranscriptError, pour la synchro) */
-export class TranslationError extends Error {
-  constructor(message, code = 'upstream') {
-    super(message);
-    this.code = code;
-  }
-}
+export { DEFAULT_MODEL, completeWithOpenRouter };
+export const translateConfigured = llmConfigured;
+export { LlmError as TranslationError };
+const TranslationError = LlmError;
 
 /** "fr-FR" -> "fr" */
 export const baseLang = (code) => String(code ?? '').toLowerCase().split(/[-_]/)[0] || null;
@@ -73,68 +64,6 @@ export function parseLines(output, expected) {
     if (wanted.has(n) && text && !out.has(n)) out.set(n, text);
   }
   return out;
-}
-
-// --- appel à l'API -----------------------------------------------------------------
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-/**
- * Une requête de complétion vers OpenRouter. Renvoie le texte de la réponse.
- * Réessaie (1 s, 2 s, 4 s) sur 429 et 5xx ; les autres erreurs sont classées pour la synchro.
- */
-export async function completeWithOpenRouter({ model, system, user }, { fetchImpl = fetch, retryDelayMs = 1000 } = {}) {
-  const key = process.env.OPENROUTER_API_KEY;
-  if (!key) throw new TranslationError("OPENROUTER_API_KEY n'est pas configurée.", 'config');
-  const body = JSON.stringify({
-    model,
-    temperature: 0, // traduction littérale, résultat reproductible
-    max_tokens: 8000,
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
-  });
-
-  let lastError;
-  for (let attempt = 0; attempt < 4; attempt++) {
-    if (attempt) await sleep(retryDelayMs * 2 ** (attempt - 1));
-    let res;
-    try {
-      res = await fetchImpl(ENDPOINT, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'A-t-il dit ça' },
-        body,
-        signal: AbortSignal.timeout(120_000),
-      });
-    } catch (e) {
-      lastError = new TranslationError(`OpenRouter injoignable : ${e.message}`);
-      continue;
-    }
-    const json = await res.json().catch(() => ({}));
-    // OpenRouter peut aussi répondre 200 avec un objet `error` quand le fournisseur en amont échoue.
-    const apiError = json.error ?? (res.ok ? null : { message: res.statusText });
-    if (apiError) {
-      const detail = apiError.message ?? JSON.stringify(apiError);
-      const status = res.ok ? Number(apiError.code) || 502 : res.status;
-      if (status === 401 || status === 403) throw new TranslationError(`Clé OpenRouter refusée (${detail}).`, 'auth');
-      if (status === 402) throw new TranslationError(`Crédits OpenRouter insuffisants (${detail}).`, 'quota');
-      if (status === 400 || status === 404) {
-        const code = /model/i.test(detail) ? 'config' : 'upstream';
-        throw new TranslationError(code === 'config' ? `Modèle de traduction refusé : vérifie TRANSLATE_MODEL (${detail}).` : `Requête refusée (${detail}).`, code);
-      }
-      lastError = new TranslationError(`OpenRouter : ${detail}`, status === 429 ? 'quota' : 'upstream');
-      continue; // 429, 5xx, erreurs en amont : on réessaie
-    }
-    const choice = json.choices?.[0];
-    const text = choice?.message?.content;
-    if (typeof text !== 'string' || !text.trim()) {
-      lastError = new TranslationError('Réponse OpenRouter vide.');
-      continue;
-    }
-    return text;
-  }
-  throw lastError ?? new TranslationError('Traduction impossible.');
 }
 
 async function translateChunk(complete, model, system, texts, indices) {
