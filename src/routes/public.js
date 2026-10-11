@@ -7,6 +7,7 @@ import { SHORT_MAX_S } from '../constants.js';
 import { HttpError } from '../http-error.js';
 import { summariesActive } from '../auto-summaries.js';
 import { HAS_SUMMARY_SQL, getStoredSummary } from '../summaries.js';
+import { getTopWords, getTrends } from '../trends.js';
 import { parseYoutubeId, watchUrl } from '../youtube.js';
 
 export const publicRouter = Router();
@@ -263,6 +264,26 @@ publicRouter.get(
     const summary = await getStoredSummary(id);
     res.set('Cache-Control', 'public, max-age=60'); // seulement les succès : un « pas encore prêt » ne doit pas rester en cache
     res.json(summary);
+  }),
+);
+
+/** Tendances : évolution d'un à quatre mots dans le temps (vidéos indexées, datées, non traduites). */
+publicRouter.get(
+  '/trends',
+  ah(async (req, res) => {
+    const data = await getTrends(String(req.query.q ?? ''), { ip: req.ip });
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json(data);
+  }),
+);
+
+/** Mots les plus prononcés, pour amorcer la page Tendances. */
+publicRouter.get(
+  '/trends/words',
+  ah(async (req, res) => {
+    const words = await getTopWords({ ip: req.ip });
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json({ words });
   }),
 );
 

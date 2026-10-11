@@ -513,11 +513,16 @@ test('API : liste complète — pagination, filtre sans accents, tri, mêmes cri
     assert.deepEqual((await get('q=zzqliste&page=9')).videos, []);
 
     // même critère que le compteur de l'accueil et que « Dernières vidéos »
-    const all = await get('');
-    const latest = await (await fetch(`${base}/api/latest?limit=1`)).json();
-    const stats = await (await fetch(`${base}/api/stats`)).json();
-    assert.equal(all.total, latest.total);
-    assert.equal(all.total, stats.videos);
+    // (d'autres fichiers de test ajoutent des vidéos en parallèle : on recommence si le total a bougé entre les trois appels)
+    let totals;
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const all = await get('');
+      const latest = await (await fetch(`${base}/api/latest?limit=1`)).json();
+      const stats = await (await fetch(`${base}/api/stats`)).json();
+      totals = [all.total, latest.total, stats.videos];
+      if (new Set(totals).size === 1) break;
+    }
+    assert.equal(new Set(totals).size, 1, `les trois compteurs doivent concorder : ${totals}`);
   } finally {
     server.close();
   }

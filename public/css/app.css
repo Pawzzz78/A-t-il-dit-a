@@ -206,3 +206,63 @@ body.modal-open { overflow: hidden; }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @media (max-width: 560px) { .video-grid, #latest-list, #list { grid-template-columns: 1fr; } .modal-head { padding: 1rem 1rem .8rem; } .modal-body { padding: 1.1rem 1rem 1.2rem; } .modal-foot { padding: .75rem 1rem; } }
 @media (prefers-reduced-motion: reduce) { .summary-modal[open], .summary-modal::backdrop, .video-card { animation: none; transition: none; } }
+
+/* --- tendances ------------------------------------------------------------------ */
+.topbar a[aria-current="page"] { text-decoration: underline; text-underline-offset: .35em; }
+.trend-result { margin-top: 2.5rem; transition: opacity .15s; }
+.trend-result.loading { opacity: .55; }
+.trend-head { display: flex; justify-content: space-between; align-items: flex-end; gap: .8rem 1.2rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.trend-head .section-title { margin: 0; }
+.trend-tools { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; }
+.seg { display: inline-flex; background: var(--color-surface-alt); border-radius: var(--radius-pill); padding: .25rem; }
+.seg button { font: inherit; font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-caps); border: 0; background: transparent; color: var(--color-primary); padding: .6rem 1.05rem; border-radius: var(--radius-pill); cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--color-primary); color: #fff; }
+.seg button:focus-visible, .word-cloud button:focus-visible { outline: 3px solid var(--color-ring); outline-offset: 2px; }
+.trend-legend { display: flex; flex-wrap: wrap; gap: .4rem 1.5rem; margin: 0 0 .9rem; font-size: .9rem; }
+.legend-item { display: inline-flex; align-items: center; gap: .55rem; font-weight: 600; color: var(--color-text); }
+.legend-key, .tip-key, .term-key { flex: none; width: 1.3rem; height: 3px; border-radius: 2px; }
+.chart-card { padding: 1.2rem 1rem .6rem; }
+.chart-wrap { position: relative; outline: none; }
+.chart-wrap:focus-visible { outline: 3px solid var(--color-ring); outline-offset: 4px; border-radius: .5rem; }
+.chart-svg { display: block; overflow: visible; }
+.chart-grid { stroke: var(--color-hairline); stroke-width: 1; }
+.chart-axis { stroke: #b9bccb; stroke-width: 1; }
+.chart-tick { font-size: 11px; fill: var(--color-muted); font-family: var(--font-body); }
+.chart-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart-area { opacity: .1; stroke: none; }
+.chart-dot { stroke: var(--color-surface); stroke-width: 2; }
+.chart-cursor { stroke: var(--color-muted); stroke-width: 1; }
+.chart-overlay { fill: transparent; touch-action: pan-y; cursor: crosshair; }
+.chart-tip { position: absolute; z-index: 2; pointer-events: none; background: #fff; border: 1px solid var(--color-hairline); border-radius: var(--radius); box-shadow: var(--shadow); padding: .65rem .85rem; min-width: 10.5rem; max-width: 15rem; font-size: .8rem; }
+.chart-tip[hidden] { display: none; }
+.chart-tip p { margin: 0; }
+.tip-title { font-weight: 800; color: var(--color-primary); text-transform: capitalize; }
+.tip-sub { color: var(--color-muted); font-size: .72rem; margin-bottom: .35rem !important; }
+.tip-row { display: flex; align-items: center; gap: .5rem; margin-top: .25rem !important; flex-wrap: wrap; }
+.tip-row strong { font-size: 1rem; color: var(--color-text); }
+.tip-name { color: var(--color-muted); overflow-wrap: anywhere; }
+.tip-extra { margin-left: auto; color: var(--color-muted); font-size: .7rem; }
+.trend-data { margin-top: .4rem; font-size: .88rem; }
+.trend-data summary { cursor: pointer; color: var(--color-primary); font-weight: 700; padding: .4rem 0; }
+.table-scroll { max-height: 22rem; overflow: auto; background: var(--color-surface); border-radius: var(--radius); }
+.trend-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.trend-table caption { text-align: left; padding: .6rem .8rem; color: var(--color-muted); }
+.trend-table th, .trend-table td { padding: .45rem .8rem; text-align: right; border-top: 1px solid var(--color-hairline); font-variant-numeric: tabular-nums; }
+.trend-table th:first-child, .trend-table thead th { text-align: left; }
+.trend-table thead th { position: sticky; top: 0; background: var(--color-surface-alt); }
+.term-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); gap: 1.2rem; margin-top: 1.6rem; }
+.term-card { padding: 1.3rem 1.5rem 1.4rem; }
+.term-card h3 { display: flex; align-items: center; gap: .6rem; margin: 0 0 .6rem; font-size: 1.05rem; color: var(--color-primary); overflow-wrap: anywhere; }
+.term-stat { margin: 0; font-family: var(--font-display); font-weight: var(--font-weight-display); font-size: 2rem; line-height: 1.05; letter-spacing: var(--tracking-title); color: var(--color-primary); }
+.term-stat span { font-family: var(--font-body); font-weight: 600; font-size: .85rem; letter-spacing: 0; color: var(--color-muted); }
+.term-facts { margin: .6rem 0 0; color: var(--color-muted); font-size: .82rem; line-height: 1.5; }
+.term-videos { list-style: none; margin: 1rem 0 .9rem; padding: 0; display: grid; gap: .55rem; }
+.term-videos li { display: flex; justify-content: space-between; gap: .8rem; font-size: .85rem; line-height: 1.35; }
+.term-videos a { color: var(--color-primary); font-weight: 600; text-decoration: none; }
+.term-videos a:hover { text-decoration: underline; }
+.term-videos span { flex: none; color: var(--color-muted); font-size: .75rem; white-space: nowrap; }
+.trend-words { margin-top: 3rem; }
+.word-cloud { list-style: none; margin: 1.1rem 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+.word-cloud button { font: inherit; font-weight: 700; color: var(--color-primary); background: #fff; border: 1px solid var(--color-hairline); border-radius: var(--radius-pill); padding: .4rem 1rem; cursor: pointer; transition: background .15s, color .15s; }
+.word-cloud button:hover { background: var(--color-primary); color: #fff; }
+@media (max-width: 560px) { .trend-tools { width: 100%; justify-content: space-between; } .chart-card { padding: 1rem .4rem .4rem; } .term-grid { grid-template-columns: 1fr; } }

@@ -61,6 +61,27 @@ chaîne (sans accents ni casse), tri, pagination « Voir plus » et le même bou
 c'est le même critère pour le compteur de l'accueil, « Dernières vidéos » et ce catalogue, donc les nombres concordent. Une vidéo en
 attente de transcription (ou en échec) n'apparaît pas tant qu'elle n'est pas transcrite.
 
+## Tendances
+
+La page **/tendances/** est le « Google Trends » de David Lisnard : on tape un mot ou une expression (ou jusqu'à 4, séparés par des
+virgules, pour les comparer) et le site trace combien de fois il l'a prononcé, **mois par mois** (par année au-delà de 5 ans
+d'historique).
+
+- **Base de calcul** : les vidéos indexées (transcrites, hors Shorts) **datées** et **non traduites automatiquement** (une
+  traduction ne contient pas les mots réellement prononcés). Les vidéos écartées (traduites, sans date) sont comptées et signalées
+  sous le graphique.
+- **Comptage** : mots entiers, sans accents ni casse, avec le pluriel en « s » ou « x » (« migrant » compte aussi « migrants »,
+  mais pas « migrantes » ni « immigration »). Une expression (« dette publique ») est comptée telle quelle, mots dans l'ordre.
+- **Deux mesures** : *Fréquence* (mentions pour 10 000 mots prononcés ce mois-là, comparable d'un mois à l'autre même si le nombre de
+  vidéos varie ; une période sans vidéo n'a pas de point plutôt qu'un faux zéro) et *Mentions* (nombre brut).
+- **Détail par mot** : total, nombre de vidéos, première et dernière apparition, mois record, les 8 vidéos où il revient le plus
+  (liens YouTube) et un lien « Voir les extraits » vers la recherche.
+- **Mots les plus prononcés** (hors mots-outils), affichés avec leurs accents d'origine, comme point de départ.
+- Le graphique (SVG sans bibliothèque) a un curseur avec infobulle (souris, doigt ou flèches du clavier), un tableau des chiffres
+  et des couleurs vérifiées pour le daltonisme (`--chart-1` à `--chart-4` dans `theme.css`).
+- L'API (`GET /api/trends?q=…`, `GET /api/trends/words`) met ses résultats en cache 5 minutes (invalidés dès qu'une vidéo change) et
+  limite le calcul à 120 requêtes par heure et par visiteur.
+
 ## Dernières vidéos et résumés
 
 L'accueil affiche, en grille, les **5 dernières vidéos par date de publication** : celles des chaînes suivies **et** celles ajoutées à la
@@ -208,6 +229,7 @@ src/
 tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéos sans sous-titres, envoyée au site
   openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
+  trends.js          tendances : comptage des mots par mois, mots les plus prononcés, cache et limites
   summaries.js       résumés stockés en base : lecture publique, génération, anti-doublons
   auto-summaries.js  génération automatique en arrière-plan (file, délai de grâce, reprises, plafonds, pause)
   budget.js          plafonds d'appels par visiteur / par jour
@@ -218,6 +240,6 @@ tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéo
   youtube.js         extraction d'ID, métadonnées oEmbed
   auth.js            session admin (cookie signé HMAC), limiteur de tentatives
   routes/            API publique (/api/search…) et admin (/api/admin/…)
-public/              site (index.html, videos/, mentions-legales/) et admin (admin/)
+public/              site (index.html, videos/, tendances/, mentions-legales/) et admin (admin/)
 test/                tests unitaires + test d'intégration (si DATABASE_URL défini)
 ```

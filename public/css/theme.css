@@ -52,6 +52,12 @@
   --ne-pink: #d0165f;
   --ne-indigo: #4a36a3;
 
+  /* Courbes des graphiques, dans l'ordre fixe (validées : écart de teinte, daltonisme, contraste ≥ 3:1 sur blanc) */
+  --chart-1: #3d4bb8;
+  --chart-2: #d0165f;
+  --chart-3: #b8860b;
+  --chart-4: #177344;
+
   /* Rôles utilisés par app.css / admin.css */
   --color-primary: var(--ne-blue);
   --color-primary-dark: var(--ne-blue-dark);
