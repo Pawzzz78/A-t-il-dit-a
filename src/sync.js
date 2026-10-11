@@ -12,13 +12,11 @@
  * (automatiquement ou corrigées à la main) ne sont ni relues ni modifiées.
  */
 import { pool, replaceSegments, withTransaction } from './db.js';
+import { SHORT_MAX_S } from './constants.js';
 import { fetchLocalized } from './localize.js';
 import { TranscriptError, supadataConfigured } from './transcripts.js';
 import { TranslationError } from './translate.js';
 import { iterateUploads, listShortIds, youtubeApiConfigured } from './youtube.js';
-
-/** Durée (s) en dessous de laquelle une vidéo est forcément un Short (les plus longs, jusqu'à 3 min, sont repérés par la liste YouTube). */
-export const SHORT_MAX_S = 60;
 
 const LOCK_ID = 727001;
 const HOUR = 3600 * 1000;
@@ -177,7 +175,12 @@ export async function findShorts(channel, deps = {}) {
      ORDER BY v.published_at DESC NULLS LAST`,
     [channel.youtube_channel_id],
   );
-  const shorts = rows.filter((v) => (v.duration_s != null && v.duration_s <= SHORT_MAX_S) || list.ids.has(v.youtube_id));
+  // Un Short : 60 s ou moins, présent dans la liste YouTube des Shorts, ou plus court que la durée minimale de la chaîne.
+  const min = channel.min_duration_s > 0 ? channel.min_duration_s : 0;
+  const shorts = rows.filter(
+    (v) =>
+      (v.duration_s != null && (v.duration_s <= SHORT_MAX_S || v.duration_s < min)) || list.ids.has(v.youtube_id),
+  );
   return {
     detection: list.found ? 'playlist' : 'duration',
     shorts: shorts.filter((v) => !v.edited),

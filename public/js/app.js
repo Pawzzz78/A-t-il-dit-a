@@ -24,6 +24,14 @@ const fmtTime = (ms) => {
   return hh ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
 };
 
+const fmtDuration = (sec) => {
+  if (!sec) return '';
+  if (sec < 60) return `${sec} s`;
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return h ? `${h} h ${String(m).padStart(2, '0')}` : `${m} min`;
+};
+
 const fmtDate = (d) => {
   if (!d) return '';
   const [y, m, day] = d.slice(0, 10).split('-').map(Number);
@@ -273,7 +281,7 @@ function renderLatestVideo(v, summariesEnabled) {
         'div',
         { class: 'video-info' },
         h('h3', {}, h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, v.title)),
-        h('p', { class: 'meta' }, [v.channel, date ? `Publiée le ${date}` : ''].filter(Boolean).join(' · ')),
+        h('p', { class: 'meta' }, [v.channel, date ? `Publiée le ${date}` : '', fmtDuration(v.duration_s)].filter(Boolean).join(' · ')),
         h('div', { class: 'video-actions' }, button, h('a', { class: 'watch', href: url, target: '_blank', rel: 'noopener noreferrer' }, 'Voir la vidéo ↗')),
       ),
     ),

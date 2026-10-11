@@ -18,10 +18,10 @@ const counting = (reply = REPLY, delay = 0) => {
   f.calls = 0;
   return f;
 };
-const addVideo = async (n, { published = null, texts = ['bonjour à tous', 'merci'], source = 'manual', translated = false } = {}) => {
+const addVideo = async (n, { published = null, texts = ['bonjour à tous', 'merci'], source = 'manual', translated = false, duration = null } = {}) => {
   const { rows } = await db.pool.query(
-    `INSERT INTO videos (youtube_id, title, channel, published_at, source, lang, translated) VALUES ($1, $2, 'Chaîne', $3, $4, 'fr', $5) RETURNING id`,
-    [id(n), `Vidéo ${n}`, published, source, translated],
+    `INSERT INTO videos (youtube_id, title, channel, published_at, source, lang, translated, duration_s) VALUES ($1, $2, 'Chaîne', $3, $4, 'fr', $5, $6) RETURNING id`,
+    [id(n), `Vidéo ${n}`, published, source, translated, duration],
   );
   if (texts) await db.withTransaction((c) => db.replaceSegments(c, rows[0].id, texts.map((text, i) => ({ start_ms: i * 60000, text }))));
   return rows[0].id;
@@ -126,12 +126,15 @@ test('API : /latest mêle vidéos de chaînes et ajouts manuels, triées par dat
   await addVideo(3, { published: '2099-04-01', source: 'manual' });
   await addVideo(4, { published: '2099-06-01', texts: null }); // sans transcription : absente
   await addVideo(5, { published: null });
+  await addVideo(6, { published: '2099-07-01', duration: 45 }); // un Short qui aurait échappé au nettoyage : jamais sur l'accueil
+  await addVideo(7, { published: '2099-02-01', duration: 1800 });
   const { createApp } = await import('../src/server.js');
   const server = createApp().listen(0);
   try {
     const base = `http://127.0.0.1:${server.address().port}`;
     const r = await (await fetch(`${base}/api/latest?limit=3`)).json();
     assert.deepEqual(r.videos.map((v) => v.youtube_id), [id(2), id(3), id(1)]);
+    assert.ok(!(await (await fetch(`${base}/api/latest?limit=12`)).json()).videos.some((v) => v.youtube_id === id(6)));
     assert.equal(r.videos[0].published_at, '2099-05-01');
     assert.equal(typeof r.summaries_enabled, 'boolean');
     const five = await (await fetch(`${base}/api/latest`)).json();

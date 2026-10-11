@@ -3,6 +3,7 @@ import { pool } from '../db.js';
 import { normalize } from '../normalize.js';
 import { interpretQuery, isQuestionLike } from '../query-understanding.js';
 import { LIMITS, buildExcerpt, findApprox, findExact, maxSpanFor, queryTokens } from '../search.js';
+import { SHORT_MAX_S } from '../constants.js';
 import { HttpError } from '../http-error.js';
 import { getSummary, summariesEnabled } from '../summaries.js';
 import { parseYoutubeId, watchUrl } from '../youtube.js';
@@ -196,9 +197,9 @@ publicRouter.get(
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 5, 1), 12);
     const { rows } = await pool.query(
       `SELECT youtube_id, title, channel, published_at, thumbnail_url, duration_s, translated, original_lang, lang
-       FROM videos WHERE norm_text <> ''
+       FROM videos WHERE norm_text <> '' AND (duration_s IS NULL OR duration_s > $2)
        ORDER BY published_at DESC NULLS LAST, id DESC LIMIT $1`,
-      [limit],
+      [limit, SHORT_MAX_S],
     );
     res.set('Cache-Control', 'public, max-age=60');
     res.json({ videos: rows, summaries_enabled: summariesEnabled() });

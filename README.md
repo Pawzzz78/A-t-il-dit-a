@@ -76,7 +76,9 @@ Page **/admin/#/sync**. On y ajoute une chaîne YouTube ; le site :
 dans la liste des Shorts de YouTube pour la chaîne (nécessaire car un Short peut durer jusqu'à 3 min ; cette liste repose sur
 une playlist interne de YouTube non documentée officiellement, avec repli sur la durée si elle est introuvable). Option
 « Exclure les Shorts » par chaîne (activée par défaut). Le bouton **Retirer les Shorts…** supprime ceux déjà importés, après un
-aperçu et une confirmation ; les Shorts supprimés sont mémorisés et ne reviennent jamais. Les vidéos ajoutées à la main et celles
+aperçu et une confirmation ; les Shorts supprimés sont mémorisés et ne reviennent jamais. Le bouton **Durée minimale…** écarte aussi les vidéos plus courtes qu'un seuil (181 s retire tous les Shorts, même de
+1 à 3 min) ; « Retirer les Shorts… » applique ce seuil aux vidéos déjà importées. La durée est affichée sur l'accueil et
+dans l'admin, et l'accueil masque toute vidéo de 60 s ou moins. Les vidéos ajoutées à la main et celles
 corrigées à la main ne sont jamais supprimées.
 
 Garde-fous :

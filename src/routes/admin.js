@@ -58,7 +58,7 @@ adminRouter.use('/sync', syncRouter);
 
 const LIST_SQL = `
   SELECT v.id, v.youtube_id, v.title, v.channel, v.published_at, v.thumbnail_url,
-         v.source, v.edited, v.updated_at, v.sync_status, v.sync_error, v.lang, v.translated, v.original_lang,
+         v.source, v.edited, v.updated_at, v.sync_status, v.sync_error, v.lang, v.translated, v.original_lang, v.duration_s,
          count(s.id)::int AS segment_count
   FROM videos v LEFT JOIN segments s ON s.video_id = v.id`;
 

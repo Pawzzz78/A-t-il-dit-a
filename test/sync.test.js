@@ -342,3 +342,18 @@ test('Shorts : l\'API exige une confirmation avant de supprimer', { skip: !enabl
     server.close();
   }
 });
+
+test('Shorts : le nettoyage applique aussi la durée minimale de la chaîne (Shorts de 1 à 3 min non listés)', { skip: !enabled }, async () => {
+  await sync.discoverChannel({ ...channel, exclude_shorts: false }, {
+    listShortIds: noShorts,
+    iterateUploads: iterate([video(1, { duration_s: 90 }), video(2, { duration_s: 170 }), video(3, { duration_s: 900 })]),
+  });
+  const none = await sync.previewShorts(channel, { listShortIds: noShorts });
+  assert.equal(none.total, 0); // 90 s et 170 s ne sont ni ≤ 60 s ni dans la liste YouTube
+  const withMin = await sync.previewShorts({ ...channel, min_duration_s: 181 }, { listShortIds: noShorts });
+  assert.equal(withMin.total, 2);
+  const res = await sync.purgeShorts({ ...channel, min_duration_s: 181 }, { listShortIds: noShorts });
+  assert.equal(res.removed, 2);
+  assert.ok(await row(3));
+  assert.equal(await row(1), undefined);
+});

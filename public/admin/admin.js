@@ -52,6 +52,14 @@ function fmtTs(ms) {
   return hh ? `${hh}:${rest}` : rest;
 }
 
+const fmtDuration = (sec) => {
+  if (sec == null) return '';
+  if (sec < 60) return `${sec} s`;
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  return h ? `${h} h ${String(m).padStart(2, '0')}` : `${m} min`;
+};
+
 const fmtDate = (d) => {
   if (!d) return '—';
   const [y, m, day] = d.slice(0, 10).split('-').map(Number);
@@ -162,7 +170,7 @@ async function renderList() {
         'tr',
         { class: 'clickable', onclick: () => (location.hash = `#/video/${v.id}`) },
         h('td', {}, v.thumbnail_url ? h('img', { src: v.thumbnail_url, alt: '', loading: 'lazy' }) : null),
-        h('td', {}, h('div', { class: 't' }, v.title || v.youtube_id), h('div', { class: 'status' }, v.channel)),
+        h('td', {}, h('div', { class: 't' }, v.title || v.youtube_id), h('div', { class: 'status' }, [v.channel, fmtDuration(v.duration_s)].filter(Boolean).join(' · '))),
         h('td', {}, fmtDate(v.published_at)),
         h('td', {}, String(v.segment_count)),
         h(
@@ -312,12 +320,14 @@ async function renderSync() {
         : 'Aucun Short à supprimer : la chaîne est propre.';
     }
     const text = [
-      `${p.total} Short${plural(p.total, '', 's')} à supprimer : ${p.with_transcript} déjà transcrit${plural(p.with_transcript, '', 's')} (crédits Supadata déjà dépensés) et ${p.pending} en attente.`,
+      `${p.total} Short${plural(p.total, '', 's')} (ou vidéo${plural(p.total, '', 's')} trop courte${plural(p.total, '', 's')}) à supprimer : ${p.with_transcript} déjà transcrit${plural(p.with_transcript, '', 's')} (crédits Supadata déjà dépensés) et ${p.pending} en attente.`,
       p.detection === 'playlist'
-        ? 'Détection : liste des Shorts de YouTube + durée de 60 s ou moins.'
-        : 'Détection par la durée seule (60 s ou moins) : les Shorts plus longs ne seront pas repérés.',
+        ? `Détection : liste des Shorts de YouTube + durée de 60 s ou moins${c.min_duration_s ? ` + durée inférieure à ${c.min_duration_s} s` : ''}.`
+        : c.min_duration_s
+          ? `Détection par la durée seule (60 s ou moins, ou inférieure à ${c.min_duration_s} s).`
+          : 'Détection par la durée seule (60 s ou moins) : les Shorts plus longs ne seront pas repérés. Utilise « Durée minimale… » (181 s) pour les écarter tous.',
       p.protected ? `${p.protected} corrigé${plural(p.protected, '', 's')} à la main : conservé${plural(p.protected, '', 's')}.` : '',
-      `Exemples :\n${p.examples.map((e) => `• ${e.title} (${e.duration_s ?? '?'} s)`).join('\n')}`,
+      `Exemples :\n${p.examples.map((e) => `• ${e.title} (${fmtDuration(e.duration_s) || '?'})`).join('\n')}`,
       'Les vidéos ajoutées à la main ne sont jamais touchées. Les Shorts supprimés ne reviendront pas. Cette action est définitive. Continuer ?',
     ].filter(Boolean).join('\n\n');
     if (!confirm(text)) return null;
@@ -417,6 +427,23 @@ async function renderSync() {
         { class: 'actions' },
         h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(async () => { const r = await api('POST', `/sync/channels/${c.id}/discover`, {}); return `${r.added} nouvelle${r.added > 1 ? 's' : ''} vidéo${r.added > 1 ? 's' : ''}.`; }) }, 'Chercher maintenant'),
         h('button', { class: 'btn small', type: 'button', title: 'Supprime les Shorts déjà importés (aperçu et confirmation avant)', onclick: () => act(() => purgeShortsFlow(c)) }, 'Retirer les Shorts…'),
+        h(
+          'button',
+          {
+            class: 'btn secondary small',
+            type: 'button',
+            title: 'Les vidéos plus courtes ne sont pas importées, et « Retirer les Shorts… » supprime celles déjà importées',
+            onclick: () => act(async () => {
+              const v = prompt('Durée minimale des vidéos, en secondes (0 = aucune).\n\nAstuce : 181 écarte tous les Shorts, même ceux de 1 à 3 minutes (les vidéos de moins de 3 minutes ne sont alors plus importées).\n\nPuis clique sur « Retirer les Shorts… » pour supprimer celles déjà importées.', String(c.min_duration_s || 0));
+              if (v === null) return null;
+              const n = Number(v);
+              if (!Number.isFinite(n) || n < 0) throw new Error('Durée invalide.');
+              await api('PATCH', `/sync/channels/${c.id}`, { min_duration_s: Math.round(n) });
+              return n ? `Durée minimale : ${Math.round(n)} s. Clique sur « Retirer les Shorts… » pour supprimer celles déjà importées.` : 'Plus de durée minimale.';
+            }),
+          },
+          'Durée minimale…',
+        ),
         c.exclude_shorts ? null : h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/sync/channels/${c.id}`, { exclude_shorts: true }), 'Les Shorts sont désormais exclus.') }, 'Exclure les Shorts'),
         h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/sync/channels/${c.id}`, { enabled: !c.enabled })) }, c.enabled ? 'Suspendre' : 'Reprendre'),
         h('button', { class: 'btn danger small', type: 'button', onclick: () => confirm('Ne plus suivre cette chaîne ? Les vidéos déjà importées sont conservées.') && act(() => api('DELETE', `/sync/channels/${c.id}`)) }, 'Retirer la chaîne'),
