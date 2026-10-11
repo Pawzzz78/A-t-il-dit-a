@@ -156,25 +156,76 @@ $('share').addEventListener('click', async (e) => {
   }
 });
 
-// mots les plus prononcés
+// mots les plus prononcés : podium (3 premiers), barres (suivants), pastilles (le reste)
+const PODIUM = 3;
+const BARS = 12;
+const cap = (w) => w.charAt(0).toUpperCase() + w.slice(1);
+
+function pickWord(word) {
+  $('q').value = word;
+  metric = 'count';
+  load(word);
+  scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function wordButton(cls, word, children, w) {
+  const btn = h('button', { type: 'button', class: cls, title: `Voir l'évolution de « ${word} » (${int.format(w.mentions)} mentions dans ${int.format(w.videos)} vidéos)` }, children);
+  btn.addEventListener('click', () => pickWord(word));
+  return btn;
+}
+
+function renderWords(words) {
+  const top = words[0].mentions;
+  const mentions = (w) => `${int.format(w.mentions)} mention${plural(w.mentions, '', 's')}`;
+  const podium = words.slice(0, PODIUM).map((w, i) =>
+    wordButton(
+      'podium-tile',
+      w.word,
+      [
+        h('span', { class: 'rank', 'aria-hidden': 'true' }, String(i + 1)),
+        h('span', { class: 'podium-word' }, w.word),
+        h('span', { class: 'podium-count' }, `${mentions(w)} · ${int.format(w.videos)} vidéo${plural(w.videos, '', 's')}`),
+      ],
+      w,
+    ),
+  );
+  const bars = words.slice(PODIUM, PODIUM + BARS).map((w, i) =>
+    h(
+      'li',
+      {},
+      wordButton(
+        'bar-row',
+        w.word,
+        [
+          h('span', { class: 'bar-rank', 'aria-hidden': 'true' }, String(PODIUM + i + 1).padStart(2, '0')),
+          h('span', { class: 'bar-word' }, cap(w.word)),
+          h('span', { class: 'bar-track', 'aria-hidden': 'true' }, h('i', { style: `width:${Math.max(4, (w.mentions / top) * 100).toFixed(1)}%` })),
+          h('span', { class: 'bar-count' }, int.format(w.mentions)),
+        ],
+        w,
+      ),
+    ),
+  );
+  const rest = words.slice(PODIUM + BARS);
+  $('word-list').replaceChildren(
+    h('div', { class: 'podium' }, podium),
+    bars.length ? h('ol', { class: 'bar-list', start: String(PODIUM + 1) }, bars) : null,
+    rest.length
+      ? h(
+          'div',
+          { class: 'more-words' },
+          h('p', { class: 'more-words-title' }, 'Et aussi'),
+          h('ul', {}, rest.map((w) => h('li', {}, wordButton('chip', w.word, [w.word, h('span', {}, int.format(w.mentions))], w)))),
+        )
+      : null,
+  );
+}
+
 fetch('/api/trends/words')
   .then((r) => r.json())
   .then(({ words }) => {
     if (!words?.length) return;
-    const top = words[0].mentions;
-    $('word-list').replaceChildren(
-      ...words.map((w) => {
-        const size = 0.85 + 0.75 * Math.sqrt(w.mentions / top);
-        const btn = h('button', { type: 'button', style: `font-size:${size.toFixed(2)}rem`, title: `${int.format(w.mentions)} mentions dans ${int.format(w.videos)} vidéos` }, w.word);
-        btn.addEventListener('click', () => {
-          input.value = w.word;
-          metric = 'count';
-          load(w.word);
-          scrollTo({ top: 0, behavior: 'smooth' });
-        });
-        return h('li', {}, btn);
-      }),
-    );
+    renderWords(words);
     $('words').hidden = false;
   })
   .catch(() => {});

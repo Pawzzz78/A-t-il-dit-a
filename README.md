@@ -77,7 +77,10 @@ d'historique).
   plutôt qu'un faux zéro, donc la courbe peut être coupée). L'adresse garde le choix (`?m=rate` pour la fréquence).
 - **Détail par mot** : total, nombre de vidéos, première et dernière apparition, mois record, les 8 vidéos où il revient le plus
   (liens YouTube) et un lien « Voir les extraits » vers la recherche.
-- **Mots les plus prononcés** (hors mots-outils), affichés avec leurs accents d'origine, comme point de départ.
+- **Classement « Ses mots les plus prononcés »**, comme point de départ : podium des 3 premiers, barres pour les 12 suivants, puis
+  les autres en pastilles ; un clic ouvre la courbe du mot. Les mots creux (adverbes, verbes courants, « et cetera »,
+  « ailleurs », « aujourd'hui »…) sont écartés grâce à la liste `src/trend-stopwords.js` : si un mot inutile apparaît, il suffit de
+  l'y ajouter. Les mots s'affichent avec leurs accents d'origine.
 - Le graphique (SVG sans bibliothèque) a un curseur avec infobulle (souris, doigt ou flèches du clavier), un tableau des chiffres
   et des couleurs vérifiées pour le daltonisme (`--chart-1` à `--chart-4` dans `theme.css`).
 - L'API (`GET /api/trends?q=…`, `GET /api/trends/words`) met ses résultats en cache 5 minutes (invalidés dès qu'une vidéo change) et

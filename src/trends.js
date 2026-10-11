@@ -13,6 +13,7 @@ import { SHORT_MAX_S } from './constants.js';
 import { pool } from './db.js';
 import { HttpError } from './http-error.js';
 import { normalize } from './normalize.js';
+import { isStopWord } from './trend-stopwords.js';
 
 export const MAX_TERMS = 4;
 const MAX_TERM_CHARS = 60;
@@ -196,26 +197,6 @@ export async function getTrends(q, { ip = 'local' } = {}) {
 
 // --- mots les plus prononcés ---------------------------------------------------------
 
-// Mots-outils, tournures de l'oral et verbes très courants (formes de 5 lettres et plus) : sans intérêt pour un palmarès.
-const STOP = new Set(
-  (
-    'alors aussi ainsi avant avoir avons avez avait avais auront aurait avec bien cela celle celles celui ceux chaque comme ' +
-    'comment contre dans depuis donc dont encore entre elles fait faire faut fois leur leurs lors mais meme mieux moins ' +
-    'notre nous nombre parce partie pendant peut peuvent pour pourquoi pourrait quand quel quelle quelles quels quelque ' +
-    'quoi sans selon sera seront serait ses sont sous sur tant tous tout toute toutes tres trop votre vous voir voila ' +
-    'veux vous etait etais etaient etre ete etes sommes suis serons soit ceci cette cettes ici deja jamais toujours ' +
-    'souvent peu beaucoup autre autres avoir fais faisons faites font vais vont allons allez aller dire disons dites dit ' +
-    'disent disait cest voila bon ben euh enfin voici alors puis ensuite apres avant durant cependant pourtant toutefois ' +
-    'parfois quelqu un une plus moins aussi autant tellement vraiment simplement notamment justement evidemment ' +
-    'effectivement exactement certainement probablement peutetre quasiment presque seulement uniquement lisnard david ' +
-    'monsieur madame merci bonjour bonsoir quoique lorsque puisque tandis pourvu quant chez vers pres loin dessus dessous ' +
-    'oui non rien quelque chose choses gens monde temps annee annees jour jours moment fait faits cas sens type genre ' +
-    'chacun chacune plusieurs certains certaines meme memes comme comment combien pouvoir peux pouvons pouvez veut voulons ' +
-    'voulez vouloir devoir doit doivent devons devez faudrait faudra falloir savoir sais sait savons savez avons ont ' +
-    'avez eues eux elle elles lui moi toi soi aux ceux celle celles cela ceci ca'
-  ).split(/\s+/),
-);
-
 /** Mots les plus prononcés (hors mots-outils) : [{ word, mentions, videos }]. */
 export async function getTopWords({ ip = 'local', limit = 36 } = {}) {
   const version = await dataVersion();
@@ -226,12 +207,12 @@ export async function getTopWords({ ip = 'local', limit = 36 } = {}) {
       `SELECT w AS word, count(*)::int AS mentions, count(DISTINCT id)::int AS videos
        FROM (SELECT id, regexp_split_to_table(norm_text, ' ') AS w FROM videos WHERE ${ELIGIBLE}) t
        WHERE length(w) >= 5 AND w !~ '^[0-9]+$'
-       GROUP BY w ORDER BY mentions DESC LIMIT 600`,
+       GROUP BY w ORDER BY mentions DESC LIMIT 1500`,
     );
     // « idée » et « idées » comptent ensemble : on garde la forme la plus fréquente
     const merged = new Map();
     for (const r of rows) {
-      if (STOP.has(r.word)) continue;
+      if (isStopWord(r.word)) continue;
       const root = r.word.replace(/[sx]$/, '');
       const cur = merged.get(root);
       if (!cur) merged.set(root, { ...r });

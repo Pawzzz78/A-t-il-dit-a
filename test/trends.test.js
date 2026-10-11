@@ -139,14 +139,24 @@ test('tendances : erreurs claires et limite par visiteur', { skip: !enabled }, a
   assert.ok(served);
 });
 
+test('mots creux : écartés du palmarès, mots de fond conservés', async () => {
+  const { isStopWord } = await import('../src/trend-stopwords.js');
+  for (const w of ['cetera', 'ailleurs', 'aujourd', 'passe', 'parle', 'pense', 'compte', 'grand', 'grandes', 'heure', 'heures', 'question', 'questions', 'toujours', 'faudrait']) {
+    assert.ok(isStopWord(w), `${w} doit être écarté`);
+  }
+  for (const w of ['politique', 'energie', 'liberte', 'ecole', 'impots', 'milliards', 'securite', 'immigration', 'maire', 'france', 'francais', 'droite', 'gauche', 'entreprises', 'depense']) {
+    assert.ok(!isStopWord(w), `${w} doit rester`);
+  }
+});
+
 test('mots les plus prononcés : sans mots-outils, singulier et pluriel regroupés', { skip: !enabled }, async () => {
-  await add(1, { texts: [`${'zzqfavori '.repeat(50)} ${'zzqfavoris '.repeat(3)} ${'toujours '.repeat(90)} ${'Zzqéléphant '.repeat(60)}`] });
+  await add(1, { texts: [`${'zzqfavori '.repeat(50)} ${'zzqfavoris '.repeat(3)} ${'toujours '.repeat(90)} ${'Zzqéléphant '.repeat(60)} ${'et cetera '.repeat(80)} ${'aujourd\'hui '.repeat(80)} ${'ailleurs '.repeat(80)}`] });
   const words = await tr.getTopWords({ limit: 200 });
   assert.ok(words.some((x) => x.word === 'zzqéléphant'), 'les accents sont restitués à l\'affichage');
   const w = words.find((x) => x.word === 'zzqfavori');
   assert.ok(w, 'le mot favori est présent');
   assert.equal(w.mentions, 53);
-  assert.ok(!words.some((x) => x.word === 'toujours' || x.word === 'zzqfavoris'));
+  assert.ok(!words.some((x) => ['toujours', 'zzqfavoris', 'cetera', 'aujourd', 'ailleurs'].includes(x.word)));
 });
 
 test('API : /api/trends et /api/trends/words', { skip: !enabled }, async () => {
