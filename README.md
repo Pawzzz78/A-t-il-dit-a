@@ -40,6 +40,12 @@ plus c'est précis, mais lent sans carte graphique), `--srt-dir dossier --no-upl
 dans l'éditeur si tu préfères), `--cookies-from-browser chrome` (si YouTube refuse le téléchargement), `--prompt` (noms propres à bien
 orthographier : « David Lisnard, Cannes, Nouvelle Énergie… » par défaut).
 
+**Si le modèle ne se télécharge pas** (erreurs « connexion fermée » vers `huggingface.co`) : le modèle Whisper est hébergé sur
+Hugging Face, que certains réseaux, VPN, antivirus ou pare-feu bloquent. Le script le dit avant de télécharger la moindre vidéo.
+Réessaie plus tard ou depuis un autre réseau ; sinon télécharge les fichiers du modèle avec ton navigateur
+(<https://huggingface.co/Systran/faster-whisper-small/tree/main> : `config.json`, `preprocessor_config.json`, `model.bin`,
+`tokenizer.json`, `vocabulary.txt`) dans un dossier, puis ajoute `--model C:\whisper-small` (le chemin de ce dossier) à la commande.
+
 Garde-fous : une vidéo qui a déjà une transcription n'est **jamais** retouchée (sauf `--overwrite`, à éviter : il écraserait tes
 corrections) ; une transcription Whisper n'est pas marquée « corrigée » ; une vidéo en échec passe à « transcrite » ; une vidéo en échec
 n'empêche pas les suivantes. À lancer sur **ton ordinateur** et pas sur Railway (calcul lourd, et YouTube bloque les téléchargements depuis

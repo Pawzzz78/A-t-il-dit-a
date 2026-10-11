@@ -26,6 +26,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Windows sans mode développeur : le cache de Hugging Face avertit qu'il ne peut pas utiliser de liens (sans gravité).
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
 DEFAULT_PROMPT = "David Lisnard, Cannes, Nouvelle Énergie, Association des maires de France."
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
@@ -134,6 +137,26 @@ def download_audio(youtube_id: str, outdir: Path, cookies_from_browser: str | No
         return Path(ydl.prepare_filename(info))
 
 
+MODEL_HELP = """
+Impossible de charger le modèle Whisper « {model} » :
+  {error}
+
+Cause fréquente : ton réseau empêche d'atteindre huggingface.co, où le modèle est hébergé (VPN, antivirus ou pare-feu,
+réseau d'entreprise ou de résidence, panne passagère). Ce n'est pas un problème du script ni du site.
+
+Essaie, dans l'ordre :
+  1. Relancer la commande un peu plus tard.
+  2. Changer de réseau (par exemple le partage de connexion de ton téléphone), ou couper VPN / antivirus le temps du téléchargement.
+  3. Télécharger le modèle à la main avec ton navigateur :
+       - ouvre https://huggingface.co/Systran/faster-whisper-small/tree/main
+       - télécharge ces fichiers dans un même dossier (par exemple C:\\whisper-small) :
+           config.json, preprocessor_config.json, model.bin, tokenizer.json, vocabulary.txt
+         (ou vocabulary.json s'il n'y a pas de .txt ; pour un autre modèle, remplace « small » dans l'adresse)
+       - relance la même commande en ajoutant :  --model C:\\whisper-small
+Rien n'a été envoyé au site.
+"""
+
+
 def load_model(size: str):
     from faster_whisper import WhisperModel
 
@@ -171,7 +194,7 @@ def parse_args(argv=None):
     p.add_argument("--all-failed", action="store_true", help="toutes les vidéos « en échec » de la page Synchronisation")
     p.add_argument("--site", default=os.environ.get("SITE_URL"), help="adresse du site (ou variable SITE_URL)")
     p.add_argument("--password", default=os.environ.get("ADMIN_PASSWORD"), help="mot de passe admin (ou variable ADMIN_PASSWORD, ou demandé)")
-    p.add_argument("--model", default="small", help="taille du modèle : tiny, base, small (défaut), medium, large-v3, large-v3-turbo")
+    p.add_argument("--model", default="small", help="taille du modèle : tiny, base, small (défaut), medium, large-v3, large-v3-turbo ; ou dossier d'un modèle téléchargé à la main")
     p.add_argument("--language", default="fr", help="langue parlée (défaut : fr)")
     p.add_argument("--prompt", default=DEFAULT_PROMPT, help="mots à bien orthographier (noms propres) ; vide pour désactiver")
     p.add_argument("--overwrite", action="store_true", help="remplacer une transcription existante (à éviter : écrase les corrections)")
@@ -211,8 +234,14 @@ def main(argv=None, *, site_factory=Site, download=download_audio, transcribe=tr
         return 0
     log(f"{len(targets)} vidéo(s) à transcrire.")
 
-    # 2. transcription, une vidéo après l'autre
-    model = None
+    # 2. le modèle d'abord : s'il est introuvable, inutile de télécharger la moindre vidéo
+    try:
+        model = model_loader(args.model)
+    except Exception as e:
+        log(MODEL_HELP.format(model=args.model, error=str(e).strip().splitlines()[0][:300] if str(e).strip() else type(e).__name__))
+        return 2
+
+    # 3. transcription, une vidéo après l'autre
     done, failed = 0, 0
     srt_dir = Path(args.srt_dir) if args.srt_dir else None
     if srt_dir:
@@ -223,7 +252,6 @@ def main(argv=None, *, site_factory=Site, download=download_audio, transcribe=tr
             with tempfile.TemporaryDirectory(prefix="atildita-") as tmp:
                 log("  téléchargement de l'audio…")
                 audio = download(t["youtube_id"], Path(tmp), args.cookies_from_browser)
-                model = model or model_loader(args.model)
                 segments = transcribe(model, audio, args.language, args.prompt)
             if not segments:
                 raise RuntimeError("aucune parole détectée")

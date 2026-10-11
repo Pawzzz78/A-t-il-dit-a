@@ -106,6 +106,33 @@ class Flow(unittest.TestCase):
             self.assertEqual(site.uploads, [])
             self.assertIn("bonjour", (Path(d) / "AAAAAAAAAAA.srt").read_text(encoding="utf-8"))
 
+    def test_modele_introuvable_arrete_tout_avant_de_telecharger(self):
+        site = FakeSite(failed=[{"id": 1, "youtube_id": "AAAAAAAAAAA", "title": "A"}])
+        downloads = []
+
+        def failing_loader(size):
+            raise ConnectionError("[WinError 10054] Une connexion existante a dû être fermée par l'hôte distant")
+
+        import io
+        from contextlib import redirect_stdout
+
+        out = io.StringIO()
+        with redirect_stdout(out):
+            code = t.main(["--site", "http://x", "--password", "pw", "--all-failed"], site_factory=lambda b, p: site, download=lambda *a: downloads.append(a), transcribe=lambda *a: SEGMENTS, model_loader=failing_loader)
+        self.assertEqual(code, 2)
+        self.assertEqual(downloads, [])  # aucun téléchargement de vidéo tenté
+        self.assertEqual(site.uploads, [])
+        text = out.getvalue()
+        self.assertIn("huggingface.co", text)
+        self.assertIn("--model", text)
+        self.assertIn("WinError 10054", text)
+
+    def test_modele_dossier_local_transmis_tel_quel(self):
+        site = FakeSite(failed=[{"id": 1, "youtube_id": "AAAAAAAAAAA", "title": "A"}])
+        sizes = []
+        t.main(["--site", "http://x", "--password", "pw", "--all-failed", "--model", r"C:\whisper-small"], site_factory=lambda b, p: site, download=lambda yt, d, c: d / "a.m4a", transcribe=lambda *a: SEGMENTS, model_loader=lambda size: sizes.append(size) or object())
+        self.assertEqual(sizes, [r"C:\whisper-small"])
+
     def test_aucune_parole(self):
         site = FakeSite(failed=[{"id": 1, "youtube_id": "AAAAAAAAAAA", "title": "A"}])
         code, _ = self.run_main(["--all-failed"], site, transcribe=lambda *a: [])
