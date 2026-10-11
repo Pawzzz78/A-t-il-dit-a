@@ -193,3 +193,47 @@ test('OpenRouter + translateSegments : bout en bout avec un faux fetch', async (
     assert.deepEqual(out.map((s) => s.text), ['FR:segment 1', 'FR:segment 2', 'FR:segment 3']);
   });
 });
+
+test('OpenRouter : réponse vide faute de budget (modèle « à raisonnement ») → réessai avec plus de budget et raisonnement réduit', async () => {
+  await withKey(async () => {
+    const bodies = [];
+    const text = await completeWithOpenRouter({ ...args, maxTokens: 1000 }, opts(async (_url, init) => {
+      bodies.push(JSON.parse(init.body));
+      return bodies.length === 1 ? jsonResponse(200, { choices: [{ message: { content: '' }, finish_reason: 'length' }] }) : ok('[1] bonjour');
+    }));
+    assert.equal(text, '[1] bonjour');
+    assert.equal(bodies.length, 2);
+    assert.equal(bodies[0].max_tokens, 1000);
+    assert.equal(bodies[0].reasoning, undefined);
+    assert.equal(bodies[1].max_tokens, 4000);
+    assert.deepEqual(bodies[1].reasoning, { effort: 'low' });
+  });
+});
+
+test('OpenRouter : toujours vide malgré le réessai → erreur de configuration qui nomme le modèle', async () => {
+  await withKey(async () => {
+    let calls = 0;
+    const e = await completeWithOpenRouter(args, opts(async () => (calls++, jsonResponse(200, { choices: [{ message: { content: null }, finish_reason: 'length' }] })))).catch((x) => x);
+    assert.equal(e.code, 'config');
+    assert.match(e.message, /vendor\/cheap-model/);
+    assert.match(e.message, /raisonnement/);
+    assert.equal(calls, 2); // un essai + un essai boosté, pas d'acharnement
+  });
+});
+
+test('OpenRouter : réponse bloquée par un filtre de contenu → erreur explicite, sans réessai', async () => {
+  await withKey(async () => {
+    let calls = 0;
+    const e = await completeWithOpenRouter(args, opts(async () => (calls++, jsonResponse(200, { choices: [{ message: { content: '' }, finish_reason: 'content_filter' }] })))).catch((x) => x);
+    assert.match(e.message, /filtre/);
+    assert.match(e.message, /content_filter/);
+    assert.equal(calls, 1);
+  });
+});
+
+test('OpenRouter : contenu fourni en liste de parties', async () => {
+  await withKey(async () => {
+    const text = await completeWithOpenRouter(args, opts(async () => jsonResponse(200, { choices: [{ message: { content: [{ type: 'text', text: '[1] bon' }, { type: 'text', text: 'jour' }] } }] })));
+    assert.equal(text, '[1] bonjour');
+  });
+});

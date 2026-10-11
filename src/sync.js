@@ -12,6 +12,7 @@
  * (automatiquement ou corrigées à la main) ne sont ni relues ni modifiées.
  */
 import { pool, replaceSegments, withTransaction } from './db.js';
+import { getSetting, setSetting } from './settings.js';
 import { SHORT_MAX_S } from './constants.js';
 import { fetchLocalized } from './localize.js';
 import { TranscriptError, supadataConfigured } from './transcripts.js';
@@ -29,20 +30,9 @@ export const syncConfig = () => ({
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// --- réglages ----------------------------------------------------------------------
+// --- réglages (voir settings.js) ---------------------------------------------------
 
-export async function getSetting(key, fallback) {
-  const { rows } = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
-  return rows[0] ? rows[0].value : fallback;
-}
-
-export async function setSetting(key, value) {
-  await pool.query(
-    `INSERT INTO settings (key, value) VALUES ($1, $2::jsonb)
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-    [key, JSON.stringify(value)],
-  );
-}
+export { getSetting, setSetting };
 
 /** Par défaut le traitement est en pause : rien n'est facturé tant que tu n'as pas cliqué sur « Démarrer ». */
 export const isPaused = async () => (await getSetting('processing_paused', true)) !== false;
@@ -344,7 +334,7 @@ export function startScheduler() {
 // --- vue d'ensemble pour l'admin ---------------------------------------------------
 
 export async function overview() {
-  const [{ rows: channels }, { rows: counts }, { rows: failed }, paused, cooldown, lastError] = await Promise.all([
+  const [{ rows: channels }, { rows: counts }, { rows: failed }, paused, cooldown, lastError, llmError] = await Promise.all([
     pool.query(`SELECT c.*, (SELECT count(*)::int FROM videos v WHERE v.channel_id = c.youtube_channel_id) AS video_count
                 FROM channels c ORDER BY c.id`),
     pool.query(`SELECT coalesce(sync_status, 'manual') AS status, count(*)::int AS n FROM videos GROUP BY 1`),
@@ -353,6 +343,7 @@ export async function overview() {
     isPaused(),
     getSetting('cooldown_until', null),
     getSetting('last_error', null),
+    getSetting('llm_last_error', null),
   ]);
   const byStatus = Object.fromEntries(counts.map((r) => [r.status, r.n]));
   return {
@@ -360,6 +351,7 @@ export async function overview() {
     paused,
     cooldown_until: cooldown && new Date(cooldown) > new Date() ? cooldown : null,
     last_error: lastError,
+    llm_error: llmError,
     interval_hours: syncConfig().intervalHours,
     counts: { pending: byStatus.pending ?? 0, done: byStatus.done ?? 0, failed: byStatus.failed ?? 0, manual: byStatus.manual ?? 0 },
     channels,

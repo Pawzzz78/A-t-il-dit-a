@@ -156,7 +156,7 @@ export async function summarizeTranscript(segments, { complete = completeWithOpe
 
   let raw;
   if (text.length <= MAX_SINGLE_CHARS) {
-    raw = await call(finalSystem(timed), text, 2500);
+    raw = await call(finalSystem(timed), text, 4000);
   } else {
     const chunks = splitText(text);
     const notes = new Array(chunks.length);
@@ -164,11 +164,11 @@ export async function summarizeTranscript(segments, { complete = completeWithOpe
     const worker = async () => {
       while (next < chunks.length) {
         const i = next++;
-        notes[i] = await call(MAP_SYSTEM, chunks[i], 1500);
+        notes[i] = await call(MAP_SYSTEM, chunks[i], 2500);
       }
     };
     await Promise.all(Array.from({ length: Math.min(3, chunks.length) }, worker));
-    raw = await call(reduceSystem(timed), notes.map((n, i) => `Part ${i + 1}:\n${n.trim()}`).join('\n\n'), 2500);
+    raw = await call(reduceSystem(timed), notes.map((n, i) => `Part ${i + 1}:\n${n.trim()}`).join('\n\n'), 4000);
   }
   const markdown = sanitizeSummary(raw, { labels, timed });
   if (markdown.length < 40) throw new LlmError('Résumé vide ou inutilisable.');

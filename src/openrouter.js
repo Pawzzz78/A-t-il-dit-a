@@ -20,9 +20,34 @@ export class LlmError extends Error {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Texte d'un message : chaîne simple, ou liste de parties (certains fournisseurs). */
+const textOf = (content) =>
+  typeof content === 'string'
+    ? content
+    : Array.isArray(content)
+      ? content.map((p) => (typeof p === 'string' ? p : (p?.text ?? ''))).join('')
+      : '';
+
+/** Explique une réponse vide : le plus souvent un modèle « à raisonnement » à court de budget, ou un filtre de contenu. */
+function emptyResponseError(choice, model) {
+  const finish = choice?.finish_reason ?? choice?.native_finish_reason ?? 'inconnue';
+  if (choice?.message?.refusal || /content_filter|safety|blocked|prohibited/i.test(String(finish))) {
+    return new LlmError(`Réponse bloquée par le filtre du modèle « ${model} » (${choice?.message?.refusal ? 'refus' : finish}). Essaie un autre modèle.`);
+  }
+  if (finish === 'length') {
+    return new LlmError(
+      `Le modèle « ${model} » a épuisé son budget sans écrire de réponse (finish_reason=length) : typique d'un modèle « à raisonnement ». Choisis un modèle sans raisonnement.`,
+      'config',
+    );
+  }
+  return new LlmError(`Réponse vide du modèle « ${model} » (finish_reason=${finish}).`);
+}
+
 /**
  * Une requête de complétion vers OpenRouter. Renvoie le texte de la réponse.
  * Réessaie (1 s, 2 s, 4 s, jusqu'à `maxAttempts`) sur 429 et 5xx ; les autres erreurs sont classées pour la synchro.
+ * Réponse vide parce que le budget de mots a été épuisé (modèle « à raisonnement ») : un réessai immédiat avec 4× plus
+ * de budget et un raisonnement réduit. Réponse vide à cause d'un filtre de contenu : erreur explicite, sans réessai.
  */
 export async function completeWithOpenRouter(
   { model, system, user, maxTokens = 8000 },
@@ -30,16 +55,19 @@ export async function completeWithOpenRouter(
 ) {
   const key = process.env.OPENROUTER_API_KEY;
   if (!key) throw new LlmError("OPENROUTER_API_KEY n'est pas configurée.", 'config');
-  const body = JSON.stringify({
-    model,
-    temperature: 0, // traduction littérale, résultat reproductible
-    max_tokens: maxTokens,
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
-  });
+  const makeBody = (boosted) =>
+    JSON.stringify({
+      model,
+      temperature: 0, // résultat reproductible
+      max_tokens: boosted ? Math.min(maxTokens * 4, 32_000) : maxTokens,
+      ...(boosted ? { reasoning: { effort: 'low' } } : {}),
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+    });
 
+  let boosted = false;
   let lastError;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     if (attempt) await sleep(retryDelayMs * 2 ** (attempt - 1));
@@ -48,7 +76,7 @@ export async function completeWithOpenRouter(
       res = await fetchImpl(ENDPOINT, {
         method: 'POST',
         headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'A-t-il dit ça' },
-        body,
+        body: makeBody(boosted),
         signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
@@ -65,18 +93,25 @@ export async function completeWithOpenRouter(
       if (status === 402) throw new LlmError(`Crédits OpenRouter insuffisants (${detail}).`, 'quota');
       if (status === 400 || status === 404) {
         const code = /model/i.test(detail) ? 'config' : 'upstream';
-        throw new LlmError(code === 'config' ? `Modèle de traduction refusé : vérifie TRANSLATE_MODEL (${detail}).` : `Requête refusée (${detail}).`, code);
+        throw new LlmError(code === 'config' ? `Modèle refusé : vérifie TRANSLATE_MODEL / SEARCH_MODEL / SUMMARY_MODEL (${detail}).` : `Requête refusée (${detail}).`, code);
       }
       lastError = new LlmError(`OpenRouter : ${detail}`, status === 429 ? 'quota' : 'upstream');
       continue; // 429, 5xx, erreurs en amont : on réessaie
     }
     const choice = json.choices?.[0];
-    const text = choice?.message?.content;
-    if (typeof text !== 'string' || !text.trim()) {
-      lastError = new LlmError('Réponse OpenRouter vide.');
+    const text = textOf(choice?.message?.content);
+    if (!text.trim()) {
+      const err = emptyResponseError(choice, model);
+      if (choice?.finish_reason === 'length' && !boosted) {
+        boosted = true;
+        attempt--; // ce réessai ne compte pas : même tentative, avec plus de budget
+        continue;
+      }
+      if (/filtre/.test(err.message) || choice?.finish_reason === 'length') throw err; // inutile d'insister
+      lastError = err;
       continue;
     }
     return text;
   }
-  throw lastError ?? new LlmError('Traduction impossible.');
+  throw lastError ?? new LlmError('Réponse impossible.');
 }

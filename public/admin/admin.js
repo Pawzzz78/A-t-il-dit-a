@@ -365,6 +365,13 @@ async function renderSync() {
           `Traitement en pause. ${o.counts.pending} vidéo${o.counts.pending > 1 ? 's' : ''} en attente ≈ ${o.counts.pending} crédit${o.counts.pending > 1 ? 's' : ''} Supadata. La détection des nouvelles vidéos continue, mais aucune transcription n’est demandée tant que tu n’as pas démarré.`,
         )
       : h('p', { class: 'status ok' }, '▶ Traitement actif.'),
+    o.llm_error
+      ? h(
+          'p',
+          { class: 'notice' },
+          `Dernière erreur du modèle IA (${o.llm_error.feature}, ${when(o.llm_error.at)}) : ${o.llm_error.message}`,
+        )
+      : null,
     o.cooldown_until ? h('p', { class: 'status err' }, `Traitement suspendu jusqu’à ${when(o.cooldown_until)} : ${o.last_error ?? ''}`) : null,
     h(
       'div',

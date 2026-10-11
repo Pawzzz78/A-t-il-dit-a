@@ -8,6 +8,7 @@ import { createBudget } from './budget.js';
 import { pool } from './db.js';
 import { HttpError } from './http-error.js';
 import { LlmError, completeWithOpenRouter, llmConfigured } from './openrouter.js';
+import { recordLlmError } from './settings.js';
 import { summarizeTranscript, summaryModel } from './summarize.js';
 
 const budget = createBudget(() => ({
@@ -36,6 +37,7 @@ async function generate(video, { complete }) {
   } catch (e) {
     if (e instanceof LlmError) {
       console.warn(`Résumé impossible (${video.youtube_id}) : ${e.message}`);
+      await recordLlmError('résumé', model, e.message);
       throw new HttpError(502, 'Le résumé est momentanément indisponible, réessaie plus tard.');
     }
     throw e;

@@ -88,6 +88,11 @@ test('résumé : erreurs claires (inconnue, sans transcription, plafonds, modèl
   const down = async () => { throw new (await import('../src/openrouter.js')).LlmError('boom secret'); };
   const e = await err(svc.getSummary(id(1), { complete: down }));
   assert.equal(e.status, 502);
+  // la vraie raison est mémorisée pour l'admin (jamais montrée au public)
+  const { getSetting } = await import('../src/settings.js');
+  const last = await getSetting('llm_last_error', null);
+  assert.equal(last.feature, 'résumé');
+  assert.match(last.message, /boom secret/);
   assert.doesNotMatch(e.message, /boom|secret/);
   const { rows } = await db.pool.query('SELECT 1 FROM video_summaries vs JOIN videos v ON v.id = vs.video_id WHERE v.youtube_id = $1', [id(1)]);
   assert.equal(rows.length, 0);
