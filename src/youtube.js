@@ -165,3 +165,9 @@ export async function* iterateUploads({ playlistId, unknownIds }) {
     pageToken = page.nextPageToken;
   } while (pageToken);
 }
+
+/** Détails d'une vidéo via l'API YouTube (titre, chaîne, date de publication, durée), ou null. */
+export async function fetchVideoMeta(youtubeId) {
+  if (!youtubeApiConfigured()) return null;
+  return (await videoDetails([youtubeId]))[0] ?? null;
+}

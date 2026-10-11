@@ -437,6 +437,7 @@ async function renderSync() {
 
 async function renderEditor(id) {
   const { video, segments } = await api('GET', `/videos/${id}`);
+  const config = await api('GET', '/config');
   let segs = segments.map((s) => ({ ...s, orig: s.text, origStart: s.start_ms }));
   let dirty = false;
   let player = null;
@@ -503,6 +504,29 @@ async function renderEditor(id) {
         'Enregistrer les infos',
       ),
       infoMsg,
+      config.youtube
+        ? h(
+            'button',
+            {
+              class: 'btn secondary small',
+              type: 'button',
+              title: 'Remplace titre, chaîne, date de publication et miniature par ceux de YouTube',
+              onclick: async () => {
+                if (!confirm('Remplacer titre, chaîne et date de publication par ceux de YouTube ?')) return;
+                try {
+                  const v = await api('POST', `/videos/${id}/refresh-meta`, {});
+                  f.title.value = v.title;
+                  f.channel.value = v.channel;
+                  f.date.value = v.published_at?.slice(0, 10) ?? '';
+                  status(infoMsg, 'Mis à jour depuis YouTube', 'ok');
+                } catch (e) {
+                  status(infoMsg, e.message, 'err');
+                }
+              },
+            },
+            'Mettre à jour depuis YouTube',
+          )
+        : null,
       h('a', { href: `https://www.youtube.com/watch?v=${video.youtube_id}`, target: '_blank', rel: 'noopener' }, 'Ouvrir sur YouTube ↗'),
     ),
   );
@@ -688,7 +712,6 @@ async function renderEditor(id) {
   // --- source de la transcription
   const srcMsg = h('p', { class: 'status' });
   const pasteArea = h('textarea', { class: 'text', rows: '6', placeholder: 'SRT, VTT, « [00:12] texte »…' });
-  const config = await api('GET', '/config');
   const source = h(
     'section',
     { class: 'panel' },

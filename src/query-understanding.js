@@ -9,6 +9,7 @@
  * Coût maîtrisé : cache, plafond par visiteur et plafond quotidien global ; au-delà, ou si le modèle échoue,
  * on se rabat sur une extraction sans modèle (on retire les mots de liaison de la question).
  */
+import { createBudget } from './budget.js';
 import { normalize } from './normalize.js';
 import { DEFAULT_MODEL, completeWithOpenRouter, llmConfigured } from './openrouter.js';
 
@@ -100,36 +101,17 @@ Output: {"intent":"quote","keywords":[]}`;
 const CACHE_TTL_MS = 24 * 3600 * 1000;
 const CACHE_MAX = 500;
 const cache = new Map(); // question normalisée -> { value, expires }
-const perIp = new Map(); // ip -> { count, resetAt }
-const daily = { day: '', count: 0 };
-
-const limits = () => ({
+const budget = createBudget(() => ({
   perIpHourly: Number(process.env.SEARCH_LLM_PER_IP_HOURLY) || 30,
   dailyCap: Number(process.env.SEARCH_LLM_DAILY_CAP) || 300,
-});
-
-/** Réserve un appel au modèle si les plafonds le permettent. */
-function takeBudget(ip, now) {
-  const { perIpHourly, dailyCap } = limits();
-  const day = new Date(now).toISOString().slice(0, 10);
-  if (daily.day !== day) Object.assign(daily, { day, count: 0 });
-  if (daily.count >= dailyCap) return false;
-  const rec = perIp.get(ip);
-  if (rec && rec.resetAt > now && rec.count >= perIpHourly) return false;
-  if (!rec || rec.resetAt <= now) perIp.set(ip, { count: 1, resetAt: now + 3600 * 1000 });
-  else rec.count++;
-  daily.count++;
-  if (perIp.size > 5000) perIp.clear(); // borne mémoire
-  return true;
-}
+}));
 
 export const searchModel = () => process.env.SEARCH_MODEL ?? process.env.TRANSLATE_MODEL ?? DEFAULT_MODEL;
 
 /** Remet à zéro cache et compteurs (tests). */
 export function resetUnderstandingState() {
   cache.clear();
-  perIp.clear();
-  Object.assign(daily, { day: '', count: 0 });
+  budget.reset();
 }
 
 /**
@@ -142,7 +124,7 @@ export async function interpretQuery(q, { ip = 'anon', complete = completeWithOp
   if (hit && hit.expires > now) return hit.value;
 
   const fallback = rulesInterpretation(q);
-  if ((complete === completeWithOpenRouter && !llmConfigured()) || !takeBudget(ip, now)) return fallback;
+  if ((complete === completeWithOpenRouter && !llmConfigured()) || !budget.take(ip, now)) return fallback;
 
   let value = fallback;
   try {

@@ -15,7 +15,7 @@ import { YouTubeApiError } from '../youtube.js';
 import { fetchLocalized } from '../localize.js';
 import { TranscriptError, parseTranscriptText, supadataConfigured } from '../transcripts.js';
 import { TranslationError, baseLang, translateConfigured, translateSegments } from '../translate.js';
-import { fetchMetadata, parseYoutubeId } from '../youtube.js';
+import { fetchMetadata, fetchVideoMeta, parseYoutubeId, youtubeApiConfigured } from '../youtube.js';
 
 export const adminRouter = Router();
 
@@ -49,7 +49,7 @@ adminRouter.get('/me', (req, res) => res.json({ authenticated: isAuthenticated(r
 adminRouter.use(requireAdmin);
 
 adminRouter.get('/config', (_req, res) =>
-  res.json({ supadata: supadataConfigured(), translate: translateConfigured() }),
+  res.json({ supadata: supadataConfigured(), translate: translateConfigured(), youtube: youtubeApiConfigured() }),
 );
 
 adminRouter.use('/sync', syncRouter);
@@ -136,21 +136,26 @@ adminRouter.post(
       throw new HttpError(400, 'Mode inconnu.');
     }
 
-    const meta = (await fetchMetadata(youtubeId)) ?? {};
+    // Avec la clé YouTube : titre, chaîne, date de publication et durée exacts (la date place la vidéo
+    // au bon endroit dans « Dernières vidéos »). Sinon : oEmbed (sans date).
+    const apiMeta = await fetchVideoMeta(youtubeId).catch(() => null);
+    const meta = apiMeta ?? (await fetchMetadata(youtubeId)) ?? {};
     const id = await withTransaction(async (client) => {
       // Ajouter à la main une vidéo précédemment supprimée la sort de la liste d'exclusion.
       await client.query('DELETE FROM excluded_videos WHERE youtube_id = $1', [youtubeId]);
       const { rows } = await client.query(
-        `INSERT INTO videos (youtube_id, title, channel, published_at, thumbnail_url, lang, source)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+        `INSERT INTO videos (youtube_id, title, channel, published_at, thumbnail_url, lang, source, channel_id, duration_s)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
         [
           youtubeId,
           String(title || meta.title || youtubeId).slice(0, 300),
           String(channel || meta.channel || '').slice(0, 200),
-          published_at || null,
+          published_at || meta.published_at || null,
           meta.thumbnail_url ?? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`,
           usedLang,
           source,
+          meta.channel_id ?? null,
+          meta.duration_s ?? null,
         ],
       );
       await replaceSegments(client, rows[0].id, segments, {
@@ -184,6 +189,26 @@ adminRouter.patch(
         published_at || null,
         lang == null ? null : String(lang).slice(0, 10),
       ],
+    );
+    res.json(await getVideo(id));
+  }),
+);
+
+/** Remplace titre, chaîne, date de publication, miniature et durée par les données de YouTube. */
+adminRouter.post(
+  '/videos/:id/refresh-meta',
+  ah(async (req, res) => {
+    const id = videoId(req);
+    const video = await getVideo(id);
+    if (!youtubeApiConfigured()) throw new HttpError(503, "YOUTUBE_API_KEY n'est pas configurée.");
+    const meta = await fetchVideoMeta(video.youtube_id);
+    if (!meta) throw new HttpError(404, 'Vidéo introuvable sur YouTube (privée ou supprimée ?).');
+    await pool.query(
+      `UPDATE videos SET title = $2, channel = $3, published_at = COALESCE($4, published_at),
+         thumbnail_url = COALESCE($5, thumbnail_url), duration_s = COALESCE($6, duration_s),
+         channel_id = COALESCE($7, channel_id), updated_at = now()
+       WHERE id = $1`,
+      [id, meta.title.slice(0, 300), meta.channel.slice(0, 200), meta.published_at, meta.thumbnail_url, meta.duration_s, meta.channel_id],
     );
     res.json(await getVideo(id));
   }),

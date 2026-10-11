@@ -3,7 +3,9 @@ import { pool } from '../db.js';
 import { normalize } from '../normalize.js';
 import { interpretQuery, isQuestionLike } from '../query-understanding.js';
 import { LIMITS, buildExcerpt, findApprox, findExact, maxSpanFor, queryTokens } from '../search.js';
-import { watchUrl } from '../youtube.js';
+import { HttpError } from '../http-error.js';
+import { getSummary, summariesEnabled } from '../summaries.js';
+import { parseYoutubeId, watchUrl } from '../youtube.js';
 
 export const publicRouter = Router();
 
@@ -187,6 +189,33 @@ publicRouter.get(
   }),
 );
 
+/** Dernières vidéos par date de publication (chaînes suivies ET vidéos ajoutées à la main), avec transcription. */
+publicRouter.get(
+  '/latest',
+  ah(async (req, res) => {
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 5, 1), 12);
+    const { rows } = await pool.query(
+      `SELECT youtube_id, title, channel, published_at, thumbnail_url, duration_s, translated, original_lang, lang
+       FROM videos WHERE norm_text <> ''
+       ORDER BY published_at DESC NULLS LAST, id DESC LIMIT $1`,
+      [limit],
+    );
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json({ videos: rows, summaries_enabled: summariesEnabled() });
+  }),
+);
+
+/** Résumé IA d'une vidéo (POST : peut déclencher une génération payante, jamais par simple préchargement). */
+publicRouter.post(
+  '/summary/:youtubeId',
+  ah(async (req, res) => {
+    const id = parseYoutubeId(req.params.youtubeId);
+    if (!id) throw new HttpError(404, 'Vidéo introuvable.');
+    res.set('Cache-Control', 'no-store');
+    res.json(await getSummary(id, { ip: req.ip }));
+  }),
+);
+
 publicRouter.get(
   '/stats',
   ah(async (_req, res) => {
@@ -205,3 +234,10 @@ publicRouter.get(
     res.json({ ok: true });
   }),
 );
+
+// eslint-disable-next-line no-unused-vars
+publicRouter.use((err, _req, res, _next) => {
+  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, ...err.extra });
+  console.error(err);
+  res.status(500).json({ error: 'Erreur interne.' });
+});

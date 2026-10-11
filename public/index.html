@@ -34,7 +34,7 @@
     <div class="card search-card">
       <form id="form" role="search">
         <label class="sr-only" for="q">Phrase, expression ou question à vérifier</label>
-        <input id="q" name="q" type="search" placeholder="Une phrase, une expression ou une question…" autocomplete="off" maxlength="300" required minlength="3">
+        <input id="q" name="q" type="search" placeholder="Une phrase ou une question…" autocomplete="off" maxlength="300" required minlength="3">
         <button class="btn" type="submit">Vérifier</button>
       </form>
       <p class="hint" id="stats"></p>
@@ -43,6 +43,12 @@
 
   <main class="wrap" aria-live="polite">
     <div id="out"></div>
+
+    <section id="latest" class="latest" hidden aria-labelledby="latest-title">
+      <p class="eyebrow">À la une</p>
+      <h2 id="latest-title" class="section-title">Dernières vidéos</h2>
+      <div id="latest-list"></div>
+    </section>
 
     <section id="methode" class="disclaimer card">
       <p class="eyebrow">Comment ça marche</p>

@@ -16,6 +16,24 @@ surligné et un lien vers la vidéo au bon timestamp.
   - corriger la transcription segment par segment (lecteur YouTube intégré, couper / fusionner / insérer / supprimer, chercher-remplacer, Ctrl+S) ;
   - modifier titre, chaîne, date ; supprimer une vidéo.
 
+## Dernières vidéos et résumés
+
+L'accueil affiche les **5 dernières vidéos par date de publication** : celles des chaînes suivies **et** celles ajoutées à la
+main dans l'admin (seules celles qui ont une transcription apparaissent). Avec `YOUTUBE_API_KEY`, une vidéo ajoutée à la main
+récupère sa date de publication toute seule ; sinon, renseigne la date dans l'éditeur (bouton « Mettre à jour depuis YouTube »
+pour les vidéos existantes).
+
+Le bouton **Résumer** demande à un modèle (OpenRouter) de résumer la transcription : un « En bref », puis des sections avec
+repères de temps cliquables, des puces et les mots importants en gras.
+
+- Le résumé est **généré une seule fois** par vidéo puis stocké ; il n'est régénéré que si la transcription change. Plusieurs
+  clics simultanés ne déclenchent qu'un seul appel.
+- Fidélité : le modèle ne doit utiliser que le texte ; les repères de temps inexistants sont supprimés, le HTML retiré, la
+  taille bornée. Une mention rappelle que le résumé est généré par IA et peut contenir des erreurs.
+- Vidéos très longues : notes par partie, puis synthèse.
+- Coût plafonné : 10 générations/heure/visiteur et 100/jour au total (`SUMMARY_PER_IP_HOURLY`, `SUMMARY_DAILY_CAP`) ; les
+  résumés déjà stockés restent toujours lisibles. Modèle : `SUMMARY_MODEL`, sinon `SEARCH_MODEL`, sinon `TRANSLATE_MODEL`.
+
 ## Recherche par question
 
 On peut saisir une phrase qui circule (« on va tout casser… ») **ou une question** (« est-ce que Lisnard a déjà parlé
@@ -107,7 +125,10 @@ src/
   normalize.js       normalisation du texte (indexation et requêtes)
   search.js          recherche exacte / approchée, extraits et surlignage
   transcripts.js     Supadata + parseurs SRT/VTT/texte
-  openrouter.js      client OpenRouter minimal (traduction et recherche par question)
+  openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
+  summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
+  summaries.js       résumés stockés en base, plafonds, anti-doublons
+  budget.js          plafonds d'appels par visiteur / par jour
   query-understanding.js  extrait les mots-clés d'une question, plafonds de coût, repli sans modèle
   translate.js       traduction des segments via OpenRouter
   localize.js        récupère la transcription dans la langue demandée (traduit si besoin)

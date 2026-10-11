@@ -68,3 +68,12 @@ CREATE TABLE IF NOT EXISTS settings (
 ALTER TABLE videos   ADD COLUMN IF NOT EXISTS original_lang TEXT;
 ALTER TABLE videos   ADD COLUMN IF NOT EXISTS translated    BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE segments ADD COLUMN IF NOT EXISTS text_original TEXT;
+
+-- Résumés générés par IA (un par vidéo, régénéré si la transcription change) -------------
+CREATE TABLE IF NOT EXISTS video_summaries (
+  video_id    INTEGER PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+  content     TEXT NOT NULL,
+  model       TEXT NOT NULL,
+  source_hash TEXT NOT NULL,                 -- md5 du texte indexé au moment de la génération
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
