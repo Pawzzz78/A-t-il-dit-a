@@ -14,7 +14,8 @@ const int = new Intl.NumberFormat('fr-FR');
 const plural = (n, one, many) => (n > 1 ? many : one);
 const watchUrl = (id) => `https://www.youtube.com/watch?v=${id}`;
 
-let metric = new URLSearchParams(location.search).get('m') === 'count' ? 'count' : 'rate';
+// Par défaut : « Mentions » (courbe continue). « Fréquence » laisse un trou pour chaque mois sans vidéo.
+let metric = new URLSearchParams(location.search).get('m') === 'rate' ? 'rate' : 'count';
 let data = null;
 let unmount = null;
 let ticket = 0; // ignore les réponses devenues obsolètes
@@ -28,7 +29,7 @@ function setStatus(message, isError = false) {
 function syncUrl(q) {
   const params = new URLSearchParams();
   if (q) params.set('q', q);
-  if (metric === 'count') params.set('m', 'count');
+  if (metric === 'rate') params.set('m', 'rate');
   const qs = params.toString();
   history.replaceState(null, '', qs ? `?${qs}` : location.pathname);
 }
@@ -126,10 +127,12 @@ async function load(q) {
 form.addEventListener('submit', (e) => {
   e.preventDefault();
   const q = input.value.trim();
-  if (q.length >= 2) load(q);
+  if (q.length < 2) return;
+  metric = 'count'; // chaque nouvelle recherche repart sur « Mentions »
+  load(q);
 });
 
-for (const [btn, value] of [[btnRate, 'rate'], [btnCount, 'count']]) {
+for (const [btn, value] of [[btnCount, 'count'], [btnRate, 'rate']]) {
   btn.addEventListener('click', () => {
     if (metric === value || !data) return;
     metric = value;
@@ -165,6 +168,7 @@ fetch('/api/trends/words')
         const btn = h('button', { type: 'button', style: `font-size:${size.toFixed(2)}rem`, title: `${int.format(w.mentions)} mentions dans ${int.format(w.videos)} vidéos` }, w.word);
         btn.addEventListener('click', () => {
           input.value = w.word;
+          metric = 'count';
           load(w.word);
           scrollTo({ top: 0, behavior: 'smooth' });
         });

@@ -72,8 +72,9 @@ d'historique).
   sous le graphique.
 - **Comptage** : mots entiers, sans accents ni casse, avec le pluriel en « s » ou « x » (« migrant » compte aussi « migrants »,
   mais pas « migrantes » ni « immigration »). Une expression (« dette publique ») est comptée telle quelle, mots dans l'ordre.
-- **Deux mesures** : *Fréquence* (mentions pour 10 000 mots prononcés ce mois-là, comparable d'un mois à l'autre même si le nombre de
-  vidéos varie ; une période sans vidéo n'a pas de point plutôt qu'un faux zéro) et *Mentions* (nombre brut).
+- **Deux mesures** : *Mentions* (nombre brut ; c'est la vue par défaut à chaque nouvelle recherche, courbe continue) et *Fréquence* (mentions pour 10 000 mots
+  prononcés ce mois-là, comparable d'un mois à l'autre même si le nombre de vidéos varie ; une période sans vidéo n'a pas de point
+  plutôt qu'un faux zéro, donc la courbe peut être coupée). L'adresse garde le choix (`?m=rate` pour la fréquence).
 - **Détail par mot** : total, nombre de vidéos, première et dernière apparition, mois record, les 8 vidéos où il revient le plus
   (liens YouTube) et un lien « Voir les extraits » vers la recherche.
 - **Mots les plus prononcés** (hors mots-outils), affichés avec leurs accents d'origine, comme point de départ.
