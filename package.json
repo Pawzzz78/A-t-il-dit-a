@@ -1,0 +1,17 @@
+{
+  "name": "a-t-il-dit-a",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vérifier si David Lisnard a déjà dit une phrase dans ses interviews YouTube.",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "pg": "^8.13.1"
+  }
+}

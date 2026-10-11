@@ -1,0 +1,33 @@
+/*
+ * THÈME — seul fichier à modifier pour changer la charte graphique.
+ *
+ * ⚠️ Valeurs PROVISOIRES : la charte de https://www.unenouvelleenergie.fr/ n'a pas
+ * pu être lue (domaine bloqué dans l'environnement de développement).
+ * Remplacer les couleurs, polices et le logo ci-dessous par ceux du site officiel.
+ */
+:root {
+  /* Couleurs */
+  --color-primary: #0b2a6f;       /* TODO charte : couleur principale (titres, header) */
+  --color-primary-contrast: #ffffff;
+  --color-accent: #f28c00;        /* TODO charte : couleur d'accent (boutons, surlignage) */
+  --color-accent-contrast: #101828;
+  --color-bg: #f6f7fb;
+  --color-surface: #ffffff;
+  --color-text: #101828;
+  --color-muted: #5b6475;
+  --color-border: #dfe3ee;
+  --color-highlight: #ffe08a;     /* surlignage des mots trouvés */
+  --color-success: #0f7b4a;
+  --color-warning: #a35a00;
+  --color-danger: #b42318;
+
+  /* Typographie — TODO charte : remplacer par les polices du site (Google Fonts, @font-face…) */
+  --font-display: "Helvetica Neue", Arial, system-ui, sans-serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-weight-display: 800;
+
+  /* Formes */
+  --radius: 14px;
+  --radius-pill: 999px;
+  --shadow: 0 8px 28px rgba(11, 42, 111, 0.1);
+}

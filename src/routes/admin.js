@@ -1,0 +1,233 @@
+import { Router } from 'express';
+import {
+  checkPassword,
+  endSession,
+  isAuthenticated,
+  loginAllowed,
+  recordLogin,
+  requireAdmin,
+  startSession,
+} from '../auth.js';
+import { pool, replaceSegments, withTransaction } from '../db.js';
+import { TranscriptError, fetchTranscript, parseTranscriptText, supadataConfigured } from '../transcripts.js';
+import { fetchMetadata, parseYoutubeId } from '../youtube.js';
+
+export const adminRouter = Router();
+
+const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
+
+class HttpError extends Error {
+  constructor(status, message, extra = {}) {
+    super(message);
+    this.status = status;
+    this.extra = extra;
+  }
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// --- session ---------------------------------------------------------------
+
+adminRouter.post('/login', (req, res) => {
+  if (!process.env.ADMIN_PASSWORD || (process.env.SESSION_SECRET ?? '').length < 16) {
+    return res.status(503).json({ error: "L'admin n'est pas configurée (ADMIN_PASSWORD / SESSION_SECRET)." });
+  }
+  if (!loginAllowed(req.ip)) return res.status(429).json({ error: 'Trop de tentatives, réessaie dans 15 minutes.' });
+  const ok = checkPassword(req.body?.password ?? '');
+  recordLogin(req.ip, ok);
+  if (!ok) return res.status(401).json({ error: 'Mot de passe incorrect.' });
+  startSession(req, res);
+  res.json({ ok: true });
+});
+
+adminRouter.post('/logout', (_req, res) => {
+  endSession(res);
+  res.json({ ok: true });
+});
+
+adminRouter.get('/me', (req, res) => res.json({ authenticated: isAuthenticated(req) }));
+
+// Tout ce qui suit demande une session valide.
+adminRouter.use(requireAdmin);
+
+adminRouter.get('/config', (_req, res) => res.json({ supadata: supadataConfigured() }));
+
+// --- vidéos ----------------------------------------------------------------
+
+const LIST_SQL = `
+  SELECT v.id, v.youtube_id, v.title, v.channel, v.published_at, v.thumbnail_url,
+         v.source, v.edited, v.updated_at, count(s.id)::int AS segment_count
+  FROM videos v LEFT JOIN segments s ON s.video_id = v.id`;
+
+adminRouter.get(
+  '/videos',
+  ah(async (_req, res) => {
+    const { rows } = await pool.query(
+      `${LIST_SQL} GROUP BY v.id ORDER BY v.published_at DESC NULLS LAST, v.id DESC`,
+    );
+    res.json(rows);
+  }),
+);
+
+async function getVideo(id) {
+  const { rows } = await pool.query(
+    `SELECT id, youtube_id, title, channel, published_at, thumbnail_url, lang, source, edited, updated_at
+     FROM videos WHERE id = $1`,
+    [id],
+  );
+  if (!rows[0]) throw new HttpError(404, 'Vidéo introuvable.');
+  return rows[0];
+}
+
+const videoId = (req) => {
+  const id = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) throw new HttpError(404, 'Vidéo introuvable.');
+  return id;
+};
+
+adminRouter.get(
+  '/videos/:id',
+  ah(async (req, res) => {
+    const video = await getVideo(videoId(req));
+    const { rows } = await pool.query(
+      'SELECT start_ms, duration_ms, text FROM segments WHERE video_id = $1 ORDER BY position',
+      [video.id],
+    );
+    res.json({ video, segments: rows });
+  }),
+);
+
+/**
+ * Ajout d'une vidéo.
+ * body: { input, lang?, mode: 'supadata' | 'paste' | 'empty', transcript?, title?, channel?, published_at? }
+ */
+adminRouter.post(
+  '/videos',
+  ah(async (req, res) => {
+    const { input, lang = 'fr', mode = 'supadata', transcript, title, channel, published_at } = req.body ?? {};
+    const youtubeId = parseYoutubeId(input);
+    if (!youtubeId) throw new HttpError(400, "Ce n'est pas une URL ou un identifiant YouTube valide.");
+    if (published_at && !DATE_RE.test(published_at)) throw new HttpError(400, 'Date invalide (AAAA-MM-JJ).');
+
+    const existing = await pool.query('SELECT id FROM videos WHERE youtube_id = $1', [youtubeId]);
+    if (existing.rows[0]) {
+      throw new HttpError(409, 'Cette vidéo est déjà dans la base.', { id: existing.rows[0].id });
+    }
+
+    let segments = [];
+    let source = 'manual';
+    let usedLang = lang;
+    if (mode === 'supadata') {
+      const t = await fetchTranscript(youtubeId, lang);
+      segments = t.segments;
+      source = 'supadata';
+      usedLang = t.lang;
+    } else if (mode === 'paste') {
+      segments = parseTranscriptText(transcript);
+      if (!segments.length) throw new HttpError(400, 'Aucune ligne de transcription reconnue.');
+    } else if (mode !== 'empty') {
+      throw new HttpError(400, 'Mode inconnu.');
+    }
+
+    const meta = (await fetchMetadata(youtubeId)) ?? {};
+    const id = await withTransaction(async (client) => {
+      const { rows } = await client.query(
+        `INSERT INTO videos (youtube_id, title, channel, published_at, thumbnail_url, lang, source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+        [
+          youtubeId,
+          String(title || meta.title || youtubeId).slice(0, 300),
+          String(channel || meta.channel || '').slice(0, 200),
+          published_at || null,
+          meta.thumbnail_url ?? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`,
+          usedLang,
+          source,
+        ],
+      );
+      await replaceSegments(client, rows[0].id, segments);
+      return rows[0].id;
+    });
+    res.status(201).json({ id });
+  }),
+);
+
+adminRouter.patch(
+  '/videos/:id',
+  ah(async (req, res) => {
+    const id = videoId(req);
+    await getVideo(id);
+    const { title, channel, published_at, lang } = req.body ?? {};
+    if (published_at && !DATE_RE.test(published_at)) throw new HttpError(400, 'Date invalide (AAAA-MM-JJ).');
+    await pool.query(
+      `UPDATE videos SET
+         title = COALESCE($2, title), channel = COALESCE($3, channel),
+         published_at = CASE WHEN $4::boolean THEN $5::date ELSE published_at END,
+         lang = COALESCE($6, lang), updated_at = now()
+       WHERE id = $1`,
+      [
+        id,
+        title == null ? null : String(title).slice(0, 300),
+        channel == null ? null : String(channel).slice(0, 200),
+        published_at !== undefined,
+        published_at || null,
+        lang == null ? null : String(lang).slice(0, 10),
+      ],
+    );
+    res.json(await getVideo(id));
+  }),
+);
+
+adminRouter.put(
+  '/videos/:id/segments',
+  ah(async (req, res) => {
+    const id = videoId(req);
+    await getVideo(id);
+    const segments = req.body?.segments;
+    if (!Array.isArray(segments) || segments.length > 20000) throw new HttpError(400, 'Segments invalides.');
+    const count = await withTransaction((client) => replaceSegments(client, id, segments, { edited: true }));
+    res.json({ ok: true, segment_count: count });
+  }),
+);
+
+adminRouter.post(
+  '/videos/:id/refetch',
+  ah(async (req, res) => {
+    const id = videoId(req);
+    const video = await getVideo(id);
+    const t = await fetchTranscript(video.youtube_id, req.body?.lang || video.lang || 'fr');
+    await withTransaction(async (client) => {
+      await replaceSegments(client, id, t.segments, { edited: false, source: 'supadata' });
+      await client.query('UPDATE videos SET lang = $2 WHERE id = $1', [id, t.lang]);
+    });
+    res.json({ ok: true, segment_count: t.segments.length });
+  }),
+);
+
+adminRouter.post(
+  '/videos/:id/import',
+  ah(async (req, res) => {
+    const id = videoId(req);
+    await getVideo(id);
+    const segments = parseTranscriptText(req.body?.transcript);
+    if (!segments.length) throw new HttpError(400, 'Aucune ligne de transcription reconnue.');
+    await withTransaction((client) => replaceSegments(client, id, segments, { edited: true, source: 'manual' }));
+    res.json({ ok: true, segment_count: segments.length });
+  }),
+);
+
+adminRouter.delete(
+  '/videos/:id',
+  ah(async (req, res) => {
+    const { rowCount } = await pool.query('DELETE FROM videos WHERE id = $1', [videoId(req)]);
+    if (!rowCount) throw new HttpError(404, 'Vidéo introuvable.');
+    res.json({ ok: true });
+  }),
+);
+
+// eslint-disable-next-line no-unused-vars
+adminRouter.use((err, _req, res, _next) => {
+  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, ...err.extra });
+  if (err instanceof TranscriptError) return res.status(err.status).json({ error: err.message });
+  console.error(err);
+  res.status(500).json({ error: 'Erreur interne.' });
+});
