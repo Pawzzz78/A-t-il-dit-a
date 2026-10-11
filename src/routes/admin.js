@@ -245,6 +245,40 @@ adminRouter.post(
   }),
 );
 
+const TRANSCRIPT_SOURCES = new Set(['whisper', 'supadata', 'manual']);
+
+/**
+ * Reçoit une transcription déjà prête sous forme de segments (script local Whisper, outil externe).
+ * N'écrase JAMAIS une transcription existante, sauf `overwrite: true`. Le texte n'est pas marqué « corrigé ».
+ * Une vidéo en attente ou en échec de la synchro passe à « transcrite ».
+ */
+adminRouter.post(
+  '/videos/:id/transcript',
+  ah(async (req, res) => {
+    const id = videoId(req);
+    await getVideo(id);
+    const { segments, source = 'whisper', lang, overwrite = false } = req.body ?? {};
+    if (!Array.isArray(segments) || !segments.length || segments.length > 20000) throw new HttpError(400, 'Segments invalides.');
+    if (!segments.every((s) => s && typeof s.text === 'string' && Number.isFinite(Number(s.start_ms)))) {
+      throw new HttpError(400, 'Chaque segment doit avoir un texte et un début (start_ms).');
+    }
+    if (!TRANSCRIPT_SOURCES.has(source)) throw new HttpError(400, 'Source inconnue.');
+    if (lang !== undefined && !/^[a-z]{2,3}(-[A-Za-z]{2})?$/.test(String(lang))) throw new HttpError(400, 'Langue invalide.');
+    const count = await withTransaction(async (client) => {
+      const { rows } = await client.query(
+        'SELECT (SELECT count(*) FROM segments WHERE video_id = $1)::int AS n FROM videos WHERE id = $1 FOR UPDATE',
+        [id],
+      );
+      if (rows[0].n > 0 && !overwrite) throw new HttpError(409, 'Cette vidéo a déjà une transcription (overwrite: true pour la remplacer).');
+      const n = await replaceSegments(client, id, segments, { edited: false, source, translated: false, originalLang: null });
+      if (lang) await client.query('UPDATE videos SET lang = $2 WHERE id = $1', [id, lang]);
+      return n;
+    });
+    if (!count) throw new HttpError(400, 'Aucun segment non vide.');
+    res.json({ ok: true, segment_count: count });
+  }),
+);
+
 adminRouter.post(
   '/videos/:id/import',
   ah(async (req, res) => {

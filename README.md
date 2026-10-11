@@ -16,6 +16,37 @@ surligné et un lien vers la vidéo au bon timestamp.
   - corriger la transcription segment par segment (lecteur YouTube intégré, couper / fusionner / insérer / supprimer, chercher-remplacer, Ctrl+S) ;
   - modifier titre, chaîne, date ; supprimer une vidéo.
 
+## Vidéos sans sous-titres : transcription locale gratuite (Whisper)
+
+Quand YouTube n'a aucun sous-titre pour une vidéo (« Pas de sous-titres disponibles »), Supadata ne peut rien renvoyer. Pour une
+vidéo **récente**, la synchro réessaie toute seule (les sous-titres automatiques arrivent parfois après quelques heures). Pour une
+vidéo plus ancienne, `tools/transcribe.py` la transcrit **gratuitement sur ton ordinateur** : `yt-dlp` télécharge l'audio,
+**Whisper** (via `faster-whisper`, libre) le transcrit en local, et le résultat est envoyé à l'admin du site. Aucun crédit
+n'est dépensé, et ça fonctionne même sur des vidéos sans aucun sous-titre.
+
+```bash
+pip install -r tools/requirements.txt          # Python 3.10+ ; aucun ffmpeg à installer
+
+# toutes les vidéos « en échec » de la page Synchronisation
+python tools/transcribe.py --site https://TON-SITE.up.railway.app --all-failed
+
+# une vidéo précise (ajoutée au site si elle n'y est pas)
+python tools/transcribe.py --site https://TON-SITE.up.railway.app https://www.youtube.com/watch?v=XXXXXXXXXXX
+```
+
+Le mot de passe de l'admin est lu dans `ADMIN_PASSWORD`, sinon demandé (ne l'écris dans aucun fichier du dépôt).
+Options utiles : `--model` (`tiny`, `base`, **`small`** par défaut, `medium`, `large-v3`, `large-v3-turbo` : plus le modèle est gros,
+plus c'est précis, mais lent sans carte graphique), `--srt-dir dossier --no-upload` (écrit des fichiers `.srt` sans rien envoyer, à coller
+dans l'éditeur si tu préfères), `--cookies-from-browser chrome` (si YouTube refuse le téléchargement), `--prompt` (noms propres à bien
+orthographier : « David Lisnard, Cannes, Nouvelle Énergie… » par défaut).
+
+Garde-fous : une vidéo qui a déjà une transcription n'est **jamais** retouchée (sauf `--overwrite`, à éviter : il écraserait tes
+corrections) ; une transcription Whisper n'est pas marquée « corrigée » ; une vidéo en échec passe à « transcrite » ; une vidéo en échec
+n'empêche pas les suivantes. À lancer sur **ton ordinateur** et pas sur Railway (calcul lourd, et YouTube bloque les téléchargements depuis
+les serveurs). Comme les sous-titres automatiques, la transcription peut contenir des erreurs (noms propres) : corrige-les dans l'éditeur.
+Note : télécharger des vidéos YouTube sort du cadre des conditions d'utilisation de la plateforme ; c'est ici un usage personnel pour
+vérifier des propos publics, à ta charge.
+
 ## Dernières vidéos et résumés
 
 L'accueil affiche les **5 dernières vidéos par date de publication** : celles des chaînes suivies **et** celles ajoutées à la
@@ -134,6 +165,7 @@ src/
   normalize.js       normalisation du texte (indexation et requêtes)
   search.js          recherche exacte / approchée, extraits et surlignage
   transcripts.js     Supadata + parseurs SRT/VTT/texte
+tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéos sans sous-titres, envoyée au site
   openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
   summaries.js       résumés stockés en base, plafonds, anti-doublons

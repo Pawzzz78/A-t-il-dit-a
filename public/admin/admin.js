@@ -181,7 +181,7 @@ async function renderList() {
           v.sync_status === 'pending' ? h('span', { class: 'badge' }, 'en attente') : null,
           v.sync_status === 'failed' ? h('span', { class: 'badge warn', title: v.sync_error ?? '' }, 'échec') : null,
           v.segment_count === 0 && !v.sync_status ? h('span', { class: 'badge' }, 'vide') : null,
-          v.edited ? h('span', { class: 'badge ok' }, 'corrigée') : h('span', { class: 'badge' }, v.source === 'supadata' ? 'auto' : 'manuelle'),
+          v.edited ? h('span', { class: 'badge ok' }, 'corrigée') : h('span', { class: 'badge' }, { supadata: 'auto', whisper: 'whisper' }[v.source] ?? 'manuelle'),
         ),
       ),
     );
@@ -473,7 +473,7 @@ async function renderSync() {
         'section',
         { class: 'panel' },
         h('h2', {}, `Vidéos en échec (${o.counts.failed})`),
-        h('p', { class: 'status' }, 'Souvent : pas de sous-titres disponibles. Tu peux relancer, ou ouvrir la vidéo pour coller une transcription à la main.'),
+        h('p', { class: 'status' }, 'Souvent : pas de sous-titres disponibles. Pour une vidéo récente, la synchro réessaie toute seule (les sous-titres automatiques arrivent parfois après quelques heures). Sinon : transcris-la gratuitement sur ton ordinateur avec le script tools/transcribe.py (Whisper, voir le README), ou ouvre la vidéo pour coller une transcription à la main.'),
         h(
           'div',
           { class: 'chan-list' },

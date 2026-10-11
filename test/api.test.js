@@ -95,6 +95,47 @@ test('admin protégée, connexion, ajout, recherche, correction', { skip: !enabl
   assert.equal((await call('GET', `/api/admin/videos/${id}`)).status, 404);
 });
 
+test('transcription envoyée par un script (Whisper) : acceptée sans écraser l\'existant', { skip: !enabled }, async () => {
+  const YT2 = 'TESTtest_02';
+  await pool.query('DELETE FROM videos WHERE youtube_id = $1', [YT2]);
+  try {
+    assert.equal((await call('POST', '/api/admin/login', { password: 'pw-test' })).status, 200);
+    const created = await call('POST', '/api/admin/videos', { input: YT2, mode: 'empty', title: 'Sans sous-titres' });
+    const id = created.body.id;
+    // vidéo en échec dans la synchro (pas de sous-titres)
+    await pool.query(`UPDATE videos SET sync_status = 'failed', sync_error = 'Pas de sous-titres' WHERE id = $1`, [id]);
+
+    const segs = [
+      { start_ms: 0, duration_ms: 4000, text: 'bonjour à tous' },
+      { start_ms: 4000, duration_ms: 3000, text: 'parlons de la réémigration' },
+      { start_ms: 7000, text: '   ' },
+    ];
+    for (const bad of [{}, { segments: [] }, { segments: [{ text: 'x' }] }, { segments: segs, source: 'inconnue' }, { segments: segs, lang: 'français !' }]) {
+      assert.equal((await call('POST', `/api/admin/videos/${id}/transcript`, bad)).status, 400, JSON.stringify(bad).slice(0, 50));
+    }
+    const ok = await call('POST', `/api/admin/videos/${id}/transcript`, { segments: segs, source: 'whisper', lang: 'fr' });
+    assert.equal(ok.status, 200);
+    assert.equal(ok.body.segment_count, 2); // le segment vide est écarté
+
+    const { rows } = await pool.query('SELECT source, edited, lang, sync_status, sync_error, norm_text FROM videos WHERE id = $1', [id]);
+    assert.deepEqual([rows[0].source, rows[0].edited, rows[0].lang, rows[0].sync_status, rows[0].sync_error], ['whisper', false, 'fr', 'done', null]);
+    assert.match(rows[0].norm_text, /parlons de la reemigration/);
+    assert.ok((await call('GET', '/api/search?q=' + encodeURIComponent('parlons de la réémigration'))).body.results.some((r) => r.video.youtube_id === YT2));
+
+    // pas d'écrasement par erreur (corrections manuelles) ; seulement avec overwrite: true
+    assert.equal((await call('POST', `/api/admin/videos/${id}/transcript`, { segments: segs })).status, 409);
+    assert.equal((await call('POST', `/api/admin/videos/${id}/transcript`, { segments: [{ start_ms: 0, text: 'autre' }], overwrite: true })).status, 200);
+    assert.equal((await call('GET', `/api/admin/videos/${id}`)).body.segments.length, 1);
+
+    // protégé par la session
+    cookie = '';
+    assert.equal((await call('POST', `/api/admin/videos/${id}/transcript`, { segments: segs })).status, 401);
+  } finally {
+    await pool.query('DELETE FROM videos WHERE youtube_id = $1', [YT2]);
+    await pool.query('DELETE FROM excluded_videos WHERE youtube_id = $1', [YT2]);
+  }
+});
+
 test('recherche : requête trop courte refusée', { skip: !enabled }, async () => {
   assert.equal((await call('GET', '/api/search?q=ab')).status, 400);
 });
