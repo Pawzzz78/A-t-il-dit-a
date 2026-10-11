@@ -180,8 +180,14 @@ Il faut un Postgres accessible via `DATABASE_URL` (les tables sont créées au d
    | `OPENROUTER_API_KEY` | clé OpenRouter (traduction automatique des transcriptions, optionnelle) |
    | `TRANSLATE_MODEL` | modèle de traduction OpenRouter (optionnel) |
    | `YOUTUBE_API_KEY` | clé YouTube Data API v3 (pour la synchronisation automatique des chaînes) |
+   | `LEGAL_PUBLISHER`, `LEGAL_DIRECTOR`, `LEGAL_CONTACT_EMAIL`, `LEGAL_ADDRESS` | coordonnées affichées sur `/mentions-legales/` (voir ci-dessous) |
 
 3. Générer un domaine public (Settings → Networking). Le healthcheck est `/api/health`.
+
+Le site public ne contient aucun lien vers l'admin : accède-y directement par `/admin/` (mets l'adresse en favori).
+La page **/mentions-legales/** (lien dans le pied de page) affiche « Non renseigné » pour l'éditeur et le contact tant que les
+variables `LEGAL_*` ne sont pas définies. Le reste du texte (hébergeur, données personnelles, sources) est rédigé d'après le
+fonctionnement réel du site ; à faire relire si le site devient plus qu'un projet personnel.
 
 ## Charte graphique
 
@@ -212,6 +218,6 @@ tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéo
   youtube.js         extraction d'ID, métadonnées oEmbed
   auth.js            session admin (cookie signé HMAC), limiteur de tentatives
   routes/            API publique (/api/search…) et admin (/api/admin/…)
-public/              site (index.html) et admin (admin/)
+public/              site (index.html, videos/, mentions-legales/) et admin (admin/)
 test/                tests unitaires + test d'intégration (si DATABASE_URL défini)
 ```

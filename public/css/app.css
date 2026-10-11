@@ -174,3 +174,17 @@ mark { background: var(--color-highlight); color: var(--ne-blue-dark); font-weig
   .search select { width: 100%; }
   .search .btn { width: 100%; }
 }
+
+/* --- mentions légales ------------------------------------------------------ */
+.legal { display: grid; gap: 1.2rem; padding-top: 2rem; }
+.legal .card { padding: 1.5rem 1.7rem; }
+.legal h2 { margin: 0 0 .7rem; font-family: var(--font-display); font-weight: var(--font-weight-display); font-size: 1.1rem; text-transform: uppercase; letter-spacing: var(--tracking-title); color: var(--color-primary); }
+.legal p, .legal li { line-height: 1.6; }
+.legal p { margin: 0 0 .7rem; }
+.legal ul { margin: 0; padding-left: 1.2rem; }
+.legal li { margin: .45rem 0; }
+.legal dl { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1.2rem; margin: 1rem 0 0; }
+.legal dt { font-weight: 700; color: var(--color-primary); }
+.legal dd { margin: 0; overflow-wrap: anywhere; }
+.legal dd[hidden], .legal dt[hidden] { display: none; }
+@media (max-width: 560px) { .legal dl { grid-template-columns: 1fr; gap: .1rem; } .legal dd { margin-bottom: .5rem; } }

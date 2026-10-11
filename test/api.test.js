@@ -139,3 +139,28 @@ test('transcription envoyée par un script (Whisper) : acceptée sans écraser l
 test('recherche : requête trop courte refusée', { skip: !enabled }, async () => {
   assert.equal((await call('GET', '/api/search?q=ab')).status, 400);
 });
+
+test('mentions légales : coordonnées de l\'éditeur lues dans l\'environnement, pages sans lien vers l\'admin', { skip: !enabled }, async () => {
+  const saved = { ...process.env };
+  try {
+    delete process.env.LEGAL_PUBLISHER;
+    delete process.env.LEGAL_DIRECTOR;
+    delete process.env.LEGAL_ADDRESS;
+    delete process.env.LEGAL_CONTACT_EMAIL;
+    assert.deepEqual((await call('GET', '/api/legal')).body, { publisher: null, director: null, address: null, email: null });
+    process.env.LEGAL_PUBLISHER = '  Jean Exemple ';
+    process.env.LEGAL_CONTACT_EMAIL = 'contact@exemple.fr';
+    const r = (await call('GET', '/api/legal')).body;
+    assert.deepEqual([r.publisher, r.director, r.email], ['Jean Exemple', 'Jean Exemple', 'contact@exemple.fr']);
+  } finally {
+    for (const k of ['LEGAL_PUBLISHER', 'LEGAL_DIRECTOR', 'LEGAL_ADDRESS', 'LEGAL_CONTACT_EMAIL']) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+  for (const path of ['/', '/videos/', '/mentions-legales/']) {
+    const html = await (await fetch(base + path)).text();
+    assert.doesNotMatch(html, /href="\/admin/, `${path} ne doit pas lier vers l'admin`);
+    assert.match(html, /href="\/mentions-legales\/"/);
+  }
+});
