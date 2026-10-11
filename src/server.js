@@ -49,7 +49,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.warn('ADMIN_PASSWORD / SESSION_SECRET (16+ caractères) manquants : l\'admin est désactivée.');
   }
   const port = Number(process.env.PORT) || 3000;
-  createApp().listen(port, () => console.log(`A-t-il dit ça ? → http://localhost:${port}`));
+  createApp().listen(port, () => console.log(`Lisnard Facts → http://localhost:${port}`));
   startScheduler();
   startSummaryScheduler();
 }

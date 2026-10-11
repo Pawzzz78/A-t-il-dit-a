@@ -1,4 +1,4 @@
-# A-t-il dit ça ?
+# Lisnard Facts
 
 Site de fact-checking : on saisit une phrase ou une expression, et le site indique si
 David Lisnard l'a prononcée dans l'une de ses interviews YouTube, avec l'extrait
@@ -186,7 +186,8 @@ Il faut un Postgres accessible via `DATABASE_URL` (les tables sont créées au d
 ## Charte graphique
 
 Reprise de https://www.unenouvelleenergie.fr/ : bleu `#1d257a`, chamois `#b0ad85`, rose `#d0165f`,
-police Montserrat (fichiers dans `public/fonts/`). Le logo officiel n'est volontairement pas utilisé.
+police Montserrat (fichiers dans `public/fonts/`). Le logo officiel n'est volontairement pas utilisé : le site a son propre logotype « Lisnard
+*Facts* » (police Fraunces, fichiers dans `public/fonts/`, licence OFL ; « Lisnard » en bleu, « Facts » en rose italique).
 Tout est dans [`public/css/theme.css`](public/css/theme.css) ; `app.css` et `admin.css` n'utilisent que ces variables.
 
 ## Structure

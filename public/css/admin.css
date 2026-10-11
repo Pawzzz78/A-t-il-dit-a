@@ -1,7 +1,8 @@
 body.admin { background: var(--color-bg); }
 .admin .site-header .wrap { padding-block: .6rem; }
-.admin .brand { font-size: .95rem; }
-.admin .brand-mark { width: 2.2rem; height: 2.2rem; font-size: 1.2rem; }
+.admin .brand { gap: .8rem; }
+.admin .wordmark { font-size: 1.5rem; }
+.admin .brand-admin { font-family: var(--font-display); font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--color-muted); border: 1px solid var(--color-border); border-radius: var(--radius-pill); padding: .25rem .6rem; }
 .admin main { padding-top: 1.5rem; }
 .admin .wrap.wide { width: min(100% - 2rem, 78rem); }
 
@@ -99,7 +100,7 @@ td.actions { display: flex; gap: .4rem; flex-wrap: wrap; }
 @media (max-width: 700px) {
   .admin .site-header .wrap { padding-block: .5rem; }
   .admin .site-header nav { gap: .3rem 1rem; font-size: .68rem; }
-  .admin .brand span { font-size: .85rem; }
+  .admin .wordmark { font-size: 1.3rem; }
 }
 
 pre.cmd { margin: .5rem 0; padding: .7rem .9rem; background: var(--color-primary-dark); color: #fff; border-radius: var(--radius); font-size: .8rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }

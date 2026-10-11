@@ -75,7 +75,7 @@ export async function completeWithOpenRouter(
     try {
       res = await fetchImpl(ENDPOINT, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'A-t-il dit ça' },
+        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', 'X-Title': 'Lisnard Facts' },
         body: makeBody(boosted),
         signal: AbortSignal.timeout(timeoutMs),
       });
