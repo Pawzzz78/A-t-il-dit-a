@@ -14,6 +14,9 @@ const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 const escapeLike = (s) => s.replace(/[\\%_]/g, '\\$&');
 
+/** Vidéos « indexées » : avec une transcription, hors Shorts. Même critère pour le compteur, l'accueil et la liste complète. */
+const INDEXED = `norm_text <> '' AND (duration_s IS NULL OR duration_s > ${SHORT_MAX_S})`;
+
 const VIDEO_COLS = 'id, youtube_id, title, channel, published_at, thumbnail_url, translated, original_lang, norm_text';
 
 function presentVideo(v) {
@@ -130,7 +133,7 @@ async function topicSearch(interpreted, videoCount) {
 
 export async function runSearch(rawQuery, { interpret = interpretQuery, ip } = {}) {
   const nq = normalize(rawQuery);
-  const [{ n: videoCount }] = (await pool.query('SELECT count(*)::int AS n FROM videos WHERE norm_text <> $1', [''])).rows;
+  const [{ n: videoCount }] = (await pool.query(`SELECT count(*)::int AS n FROM videos WHERE ${INDEXED}`)).rows;
 
   // 1. Citation mot pour mot (cas d'une phrase qui circule) : aucun appel au modèle.
   const exactRows = (
@@ -197,12 +200,51 @@ publicRouter.get(
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 5, 1), 12);
     const { rows } = await pool.query(
       `SELECT youtube_id, title, channel, published_at, thumbnail_url, duration_s, translated, original_lang, lang
-       FROM videos WHERE norm_text <> '' AND (duration_s IS NULL OR duration_s > $2)
+       FROM videos WHERE ${INDEXED}
        ORDER BY published_at DESC NULLS LAST, id DESC LIMIT $1`,
-      [limit, SHORT_MAX_S],
+      [limit],
     );
+    const {
+      rows: [{ n: total }],
+    } = await pool.query(`SELECT count(*)::int AS n FROM videos WHERE ${INDEXED}`);
     res.set('Cache-Control', 'public, max-age=60');
-    res.json({ videos: rows, summaries_enabled: summariesEnabled() });
+    res.json({ videos: rows, total, summaries_enabled: summariesEnabled() });
+  }),
+);
+
+const PAGE_SIZE = 20;
+
+/**
+ * Toutes les vidéos indexées (celles qui ont une transcription), de la plus récente à la plus ancienne.
+ * `q` filtre par titre ou chaîne (sans tenir compte des accents ni de la casse, tous les mots doivent y être).
+ */
+publicRouter.get(
+  '/videos',
+  ah(async (req, res) => {
+    const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1);
+    const order = req.query.sort === 'old' ? 'ASC' : 'DESC';
+    const tokens = normalize(String(req.query.q ?? '').slice(0, 100)).split(' ').filter(Boolean);
+    const { rows } = await pool.query(
+      `SELECT youtube_id, title, channel, published_at, thumbnail_url, duration_s, translated, original_lang, lang
+       FROM videos WHERE ${INDEXED}
+       ORDER BY published_at ${order} NULLS LAST, id ${order}`,
+    );
+    const matching = tokens.length
+      ? rows.filter((v) => {
+          const hay = normalize(`${v.title} ${v.channel}`);
+          return tokens.every((t) => hay.includes(t));
+        })
+      : rows;
+    const pages = Math.max(Math.ceil(matching.length / PAGE_SIZE), 1);
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json({
+      videos: matching.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+      total: matching.length,
+      page,
+      pages,
+      has_more: page < pages,
+      summaries_enabled: summariesEnabled(),
+    });
   }),
 );
 
@@ -221,7 +263,7 @@ publicRouter.get(
   '/stats',
   ah(async (_req, res) => {
     const { rows } = await pool.query(
-      `SELECT (SELECT count(*)::int FROM videos WHERE norm_text <> '') AS videos,
+      `SELECT (SELECT count(*)::int FROM videos WHERE ${INDEXED}) AS videos,
               (SELECT count(*)::int FROM segments) AS segments`,
     );
     res.json(rows[0]);

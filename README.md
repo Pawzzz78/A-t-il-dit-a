@@ -53,6 +53,14 @@ les serveurs). Comme les sous-titres automatiques, la transcription peut conteni
 Note : télécharger des vidéos YouTube sort du cadre des conditions d'utilisation de la plateforme ; c'est ici un usage personnel pour
 vérifier des propos publics, à ta charge.
 
+## Toutes les vidéos
+
+Sous les dernières vidéos, le bouton **Voir toutes les vidéos (N)** ouvre `/videos/` : le catalogue complet des vidéos
+**indexées** (celles qui ont une transcription, hors Shorts), de la plus récente à la plus ancienne, avec filtre par titre ou
+chaîne (sans accents ni casse), tri, pagination « Voir plus » et le même bouton **Résumer**. « Indexée » veut dire « transcrite » :
+c'est le même critère pour le compteur de l'accueil, « Dernières vidéos » et ce catalogue, donc les nombres concordent. Une vidéo en
+attente de transcription (ou en échec) n'apparaît pas tant qu'elle n'est pas transcrite.
+
 ## Dernières vidéos et résumés
 
 L'accueil affiche les **5 dernières vidéos par date de publication** : celles des chaînes suivies **et** celles ajoutées à la

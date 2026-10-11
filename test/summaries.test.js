@@ -204,3 +204,54 @@ test('YouTube : fetchVideoMeta lit titre, chaîne, date et durée', async () => 
     else delete process.env.YOUTUBE_API_KEY;
   }
 });
+
+test('API : liste complète — pagination, filtre sans accents, tri, mêmes critères que le compteur', { skip: !enabled }, async () => {
+  // 25 vidéos transcrites (une moitié ajoutée à la main, l'autre issue d'une chaîne), plus des cas à exclure
+  for (let n = 1; n <= 25; n++) {
+    await addVideo(n, { published: `2098-01-${String(n).padStart(2, '0')}`, source: n % 2 ? 'manual' : 'supadata', duration: 1200 });
+  }
+  await db.pool.query(`UPDATE videos SET title = 'Débat zzqliste sur l''Économie n°' || youtube_id WHERE youtube_id LIKE '${P}%'`);
+  await addVideo(26, { published: '2098-02-01', texts: null, duration: 1200 }); // pas encore transcrite : absente
+  await addVideo(27, { published: '2098-02-02', duration: 40 }); // Short : absent
+  await db.pool.query(`UPDATE videos SET title = 'zzqliste caché' WHERE youtube_id IN ($1, $2)`, [id(26), id(27)]);
+
+  const { createApp } = await import('../src/server.js');
+  const server = createApp().listen(0);
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const get = async (qs) => (await fetch(`${base}/api/videos?${qs}`)).json();
+
+    const p1 = await get('q=zzqliste');
+    assert.equal(p1.total, 25); // ni la non-transcrite ni le Short
+    assert.equal(p1.videos.length, 20);
+    assert.deepEqual([p1.page, p1.pages, p1.has_more], [1, 2, true]);
+    assert.equal(p1.videos[0].youtube_id, id(25)); // la plus récente d'abord
+    assert.equal(p1.videos[0].published_at, '2098-01-25');
+    const p2 = await get('q=zzqliste&page=2');
+    assert.equal(p2.videos.length, 5);
+    assert.equal(p2.has_more, false);
+    assert.equal(p2.videos.at(-1).youtube_id, id(1));
+    assert.equal(new Set([...p1.videos, ...p2.videos].map((v) => v.youtube_id)).size, 25); // aucun doublon
+
+    // filtre : sans accents ni casse, tous les mots requis, titre OU chaîne
+    assert.equal((await get('q=' + encodeURIComponent('ECONOMIE zzqliste'))).total, 25);
+    assert.equal((await get('q=' + encodeURIComponent('économie inexistant'))).total, 0);
+    assert.equal((await get('q=' + encodeURIComponent('zzqliste chaine'))).total, 25); // la chaîne s'appelle « Chaîne »
+
+    // tri : les plus anciennes d'abord
+    const old = await get('q=zzqliste&sort=old');
+    assert.equal(old.videos[0].youtube_id, id(1));
+
+    // page hors limites : vide, sans erreur
+    assert.deepEqual((await get('q=zzqliste&page=9')).videos, []);
+
+    // même critère que le compteur de l'accueil et que « Dernières vidéos »
+    const all = await get('');
+    const latest = await (await fetch(`${base}/api/latest?limit=1`)).json();
+    const stats = await (await fetch(`${base}/api/stats`)).json();
+    assert.equal(all.total, latest.total);
+    assert.equal(all.total, stats.videos);
+  } finally {
+    server.close();
+  }
+});
