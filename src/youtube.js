@@ -45,3 +45,123 @@ export async function fetchMetadata(youtubeId) {
     return null;
   }
 }
+
+// --- API YouTube Data v3 (liste des vidéos d'une chaîne) -----------------------------
+// Quota gratuit : 10 000 unités/jour ; chaque page de 50 vidéos coûte ~2 unités.
+
+const API = 'https://www.googleapis.com/youtube/v3';
+
+export class YouTubeApiError extends Error {}
+
+export const youtubeApiConfigured = () => Boolean(process.env.YOUTUBE_API_KEY);
+
+async function api(resource, params) {
+  const key = process.env.YOUTUBE_API_KEY;
+  if (!key) throw new YouTubeApiError("YOUTUBE_API_KEY n'est pas configurée.");
+  const url = new URL(`${API}/${resource}`);
+  for (const [k, v] of Object.entries(params)) if (v != null) url.searchParams.set(k, v);
+  url.searchParams.set('key', key);
+  let res;
+  try {
+    res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+  } catch (e) {
+    throw new YouTubeApiError(`API YouTube injoignable : ${e.message}`);
+  }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const reason = body.error?.errors?.[0]?.reason ?? res.status;
+    const msg = reason === 'quotaExceeded' ? 'quota de l’API YouTube dépassé pour aujourd’hui'
+      : /keyInvalid|API_KEY_INVALID/.test(String(reason) + JSON.stringify(body)) ? 'clé API YouTube invalide'
+      : (body.error?.message ?? res.statusText);
+    throw new YouTubeApiError(`API YouTube : ${msg}`);
+  }
+  return body;
+}
+
+/** "PT1H2M3S" -> secondes */
+export function parseIsoDuration(iso) {
+  const m = String(iso ?? '').match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/);
+  if (!m) return null;
+  const [, d = 0, h = 0, mi = 0, s = 0] = m;
+  return Number(d) * 86400 + Number(h) * 3600 + Number(mi) * 60 + Number(s);
+}
+
+/**
+ * Retrouve une chaîne à partir d'une URL (/@nom, /channel/UC…, /user/nom), d'un @handle ou d'un id UC….
+ * Renvoie { youtube_channel_id, title, handle, uploads_playlist_id }.
+ */
+export async function resolveChannel(input) {
+  const raw = String(input ?? '').trim();
+  let params;
+  let m;
+  if (/^UC[\w-]{22}$/.test(raw)) params = { id: raw };
+  else if (/^@[\w.-]+$/.test(raw)) params = { forHandle: raw };
+  else {
+    let url;
+    try {
+      url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    } catch {
+      url = null;
+    }
+    const path = url?.hostname.endsWith('youtube.com') ? decodeURIComponent(url.pathname) : '';
+    if ((m = path.match(/^\/channel\/(UC[\w-]{22})/))) params = { id: m[1] };
+    else if ((m = path.match(/^\/(@[\w.-]+)/))) params = { forHandle: m[1] };
+    else if ((m = path.match(/^\/user\/([\w.-]+)/))) params = { forUsername: m[1] };
+  }
+  if (!params) {
+    throw new YouTubeApiError('Utilise une adresse de la forme youtube.com/@nom ou youtube.com/channel/UC…');
+  }
+  const body = await api('channels', { part: 'snippet,contentDetails', ...params });
+  const ch = body.items?.[0];
+  if (!ch) throw new YouTubeApiError('Chaîne introuvable.');
+  return {
+    youtube_channel_id: ch.id,
+    title: ch.snippet?.title ?? '',
+    handle: ch.snippet?.customUrl ?? null,
+    uploads_playlist_id: ch.contentDetails.relatedPlaylists.uploads,
+  };
+}
+
+async function videoDetails(ids) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const body = await api('videos', { part: 'snippet,contentDetails', id: ids.slice(i, i + 50).join(',') });
+    for (const v of body.items ?? []) {
+      out.push({
+        youtube_id: v.id,
+        title: v.snippet?.title ?? '',
+        channel: v.snippet?.channelTitle ?? '',
+        channel_id: v.snippet?.channelId ?? null,
+        published_at: (v.snippet?.publishedAt ?? '').slice(0, 10) || null,
+        thumbnail_url: v.snippet?.thumbnails?.high?.url ?? v.snippet?.thumbnails?.medium?.url ?? null,
+        duration_s: parseIsoDuration(v.contentDetails?.duration),
+        // 'live' / 'upcoming' : direct en cours ou à venir, pas encore de sous-titres exploitables.
+        live: ['live', 'upcoming'].includes(v.snippet?.liveBroadcastContent),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Parcourt la playlist des uploads, de la plus récente à la plus ancienne, page par page.
+ * `unknownIds(ids)` renvoie ceux qu'on ne connaît pas encore ; on ne demande les détails que pour eux.
+ * Le consommateur peut s'arrêter quand il veut (break).
+ */
+export async function* iterateUploads({ playlistId, unknownIds }) {
+  let pageToken;
+  do {
+    const page = await api('playlistItems', {
+      part: 'contentDetails,snippet',
+      playlistId,
+      maxResults: 50,
+      pageToken,
+    });
+    const ids = (page.items ?? [])
+      .filter((it) => !/^(Private|Deleted) video$/.test(it.snippet?.title ?? ''))
+      .map((it) => it.contentDetails.videoId);
+    const fresh = ids.length ? await unknownIds(ids) : [];
+    yield { details: fresh.length ? await videoDetails(fresh) : [] };
+    pageToken = page.nextPageToken;
+  } while (pageToken);
+}

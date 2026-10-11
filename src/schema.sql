@@ -23,3 +23,41 @@ CREATE TABLE IF NOT EXISTS segments (
   norm_start  INTEGER NOT NULL DEFAULT -1,
   UNIQUE (video_id, position)
 );
+
+-- Synchronisation automatique des chaînes YouTube ---------------------------------
+-- sync_status : NULL = vidéo ajoutée à la main (jamais touchée par la synchro),
+--               'pending' = en file d'attente, 'done' = transcrite, 'failed' = abandonnée.
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS sync_status   TEXT;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS sync_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS sync_next_at  TIMESTAMPTZ;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS sync_error    TEXT;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS channel_id    TEXT;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS duration_s    INTEGER;
+CREATE INDEX IF NOT EXISTS videos_sync_pending ON videos (sync_next_at) WHERE sync_status = 'pending';
+
+CREATE TABLE IF NOT EXISTS channels (
+  id                    SERIAL PRIMARY KEY,
+  youtube_channel_id    TEXT UNIQUE NOT NULL,
+  title                 TEXT NOT NULL DEFAULT '',
+  handle                TEXT,
+  uploads_playlist_id   TEXT NOT NULL,
+  enabled               BOOLEAN NOT NULL DEFAULT TRUE,
+  min_duration_s        INTEGER NOT NULL DEFAULT 0,
+  backfilled_at         TIMESTAMPTZ,              -- NULL tant que tout l'historique n'a pas été listé
+  discovery_due_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_discovery_at     TIMESTAMPTZ,
+  last_discovery_error  TEXT,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Vidéos que la synchro ne doit jamais (ré)ajouter : supprimées à la main, trop courtes…
+CREATE TABLE IF NOT EXISTS excluded_videos (
+  youtube_id TEXT PRIMARY KEY,
+  reason     TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value JSONB NOT NULL
+);

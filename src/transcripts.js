@@ -3,12 +3,16 @@
  * Un segment = { start_ms, duration_ms, text }.
  */
 
-const SUPADATA_URL = 'https://api.supadata.ai/v1/youtube/transcript';
+// mode=native : on ne récupère que les sous-titres existants (1 crédit). Le mode par défaut
+// (« auto ») générerait une transcription par IA, bien plus chère, pour les vidéos sans sous-titres.
+const SUPADATA_URL = 'https://api.supadata.ai/v1/transcript';
 
+/** code : 'unavailable' (pas de sous-titres) | 'quota' | 'auth' | 'config' | 'upstream' */
 export class TranscriptError extends Error {
-  constructor(message, status = 502) {
+  constructor(message, status = 502, code = 'upstream') {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -18,10 +22,11 @@ export function supadataConfigured() {
 
 export async function fetchTranscript(youtubeId, lang = 'fr') {
   const key = process.env.SUPADATA_API_KEY;
-  if (!key) throw new TranscriptError("SUPADATA_API_KEY n'est pas configurée.", 503);
+  if (!key) throw new TranscriptError("SUPADATA_API_KEY n'est pas configurée.", 503, 'config');
 
   const url = new URL(SUPADATA_URL);
-  url.searchParams.set('videoId', youtubeId);
+  url.searchParams.set('url', `https://www.youtube.com/watch?v=${youtubeId}`);
+  url.searchParams.set('mode', 'native');
   url.searchParams.set('text', 'false');
   if (lang) url.searchParams.set('lang', lang);
 
@@ -32,15 +37,20 @@ export async function fetchTranscript(youtubeId, lang = 'fr') {
     throw new TranscriptError(`Supadata injoignable : ${e.message}`);
   }
   const body = await res.json().catch(() => ({}));
+  const detail = body.message || body.details || body.error || res.statusText;
+  // Supadata répond 206 « transcript-unavailable » (et facture 1 crédit) quand il n'y a pas de sous-titres.
+  if (res.status === 206 || body.error === 'transcript-unavailable') {
+    throw new TranscriptError('Pas de sous-titres disponibles pour cette vidéo.', 404, 'unavailable');
+  }
+  if (res.status === 202) throw new TranscriptError('Réponse Supadata asynchrone inattendue.', 502, 'upstream');
   if (!res.ok) {
-    const detail = body.message || body.details || body.error || res.statusText;
-    if (res.status === 401 || res.status === 403) throw new TranscriptError(`Clé Supadata refusée (${detail}).`, 502);
-    if (res.status === 404) throw new TranscriptError(`Pas de transcription disponible pour cette vidéo (${detail}).`, 404);
-    if (res.status === 429) throw new TranscriptError('Quota Supadata dépassé.', 429);
-    throw new TranscriptError(`Supadata a répondu ${res.status} : ${detail}`);
+    if (res.status === 401 || res.status === 403) throw new TranscriptError(`Clé Supadata refusée (${detail}).`, 502, 'auth');
+    if (res.status === 402 || res.status === 429) throw new TranscriptError(`Quota ou crédits Supadata épuisés (${detail}).`, 429, 'quota');
+    if (res.status === 404) throw new TranscriptError(`Vidéo introuvable ou privée (${detail}).`, 404, 'unavailable');
+    throw new TranscriptError(`Supadata a répondu ${res.status} : ${detail}`, 502, 'upstream');
   }
   if (!Array.isArray(body.content)) {
-    throw new TranscriptError('Réponse Supadata inattendue (pas de segments).');
+    throw new TranscriptError('Réponse Supadata inattendue (pas de segments).', 502, 'upstream');
   }
   const segments = body.content
     .map((c) => ({
@@ -49,6 +59,7 @@ export async function fetchTranscript(youtubeId, lang = 'fr') {
       text: cleanText(c.text),
     }))
     .filter((s) => s.text);
+  if (!segments.length) throw new TranscriptError('Transcription vide.', 404, 'unavailable');
   return { segments, lang: body.lang ?? lang };
 }
 

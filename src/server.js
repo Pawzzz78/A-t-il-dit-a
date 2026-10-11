@@ -3,6 +3,7 @@ import { authConfigured } from './auth.js';
 import { initDb } from './db.js';
 import { adminRouter } from './routes/admin.js';
 import { publicRouter } from './routes/public.js';
+import { startScheduler } from './sync.js';
 
 export function createApp() {
   const app = express();
@@ -39,4 +40,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const port = Number(process.env.PORT) || 3000;
   createApp().listen(port, () => console.log(`A-t-il dit ça ? → http://localhost:${port}`));
+  startScheduler();
 }

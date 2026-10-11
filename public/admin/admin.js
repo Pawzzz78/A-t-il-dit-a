@@ -92,6 +92,7 @@ async function route() {
     renderNav();
     const m = location.hash.match(/^#\/video\/(\d+)/);
     if (m) await renderEditor(Number(m[1]));
+    else if (location.hash === '#/sync') await renderSync();
     else await renderList();
   } catch (e) {
     if (e instanceof AuthError) return renderLogin();
@@ -103,6 +104,8 @@ window.addEventListener('hashchange', route);
 function renderNav() {
   $nav.replaceChildren(
     h('a', { href: '#/' }, 'Vidéos'),
+    ' · ',
+    h('a', { href: '#/sync' }, 'Synchronisation'),
     ' · ',
     h('a', { href: '/' }, 'Voir le site'),
     ' · ',
@@ -168,7 +171,9 @@ async function renderList() {
         h(
           'td',
           {},
-          v.segment_count === 0 ? h('span', { class: 'badge' }, 'vide') : null,
+          v.sync_status === 'pending' ? h('span', { class: 'badge' }, 'en attente') : null,
+          v.sync_status === 'failed' ? h('span', { class: 'badge warn', title: v.sync_error ?? '' }, 'échec') : null,
+          v.segment_count === 0 && !v.sync_status ? h('span', { class: 'badge' }, 'vide') : null,
           v.edited ? h('span', { class: 'badge ok' }, 'corrigée') : h('span', { class: 'badge' }, v.source === 'supadata' ? 'auto' : 'manuelle'),
         ),
       ),
@@ -272,6 +277,158 @@ function addForm(config) {
   );
   pasteWrap.hidden = config.supadata;
   return form;
+}
+
+
+// ------------------------------------------------------------- synchronisation
+
+async function renderSync() {
+  const o = await api('GET', '/sync/overview');
+  const msg = h('p', { class: 'status' });
+  const act = async (fn, okMsg) => {
+    try {
+      await fn();
+      if (okMsg) status(msg, okMsg, 'ok');
+      await renderSync();
+    } catch (e) {
+      status(msg, e.message, 'err');
+    }
+  };
+  const when = (d) => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
+  const keyLine = (ok, name, help) =>
+    h('li', {}, ok ? '✅ ' : '❌ ', h('strong', {}, name), ok ? ' configurée' : ` manquante — ${help}`);
+
+  const stat = (n, label) => h('div', { class: 'stat' }, h('div', { class: 'n' }, String(n)), h('div', { class: 'l' }, label));
+
+  const state = h(
+    'section',
+    { class: 'panel' },
+    h('h2', {}, 'Synchronisation automatique'),
+    h(
+      'ul',
+      { class: 'checks' },
+      keyLine(o.keys.youtube, 'YOUTUBE_API_KEY', 'nécessaire pour lister les vidéos d’une chaîne (clé « YouTube Data API v3 », gratuite)'),
+      keyLine(o.keys.supadata, 'SUPADATA_API_KEY', 'nécessaire pour récupérer les transcriptions'),
+    ),
+    h('div', { class: 'stats' }, stat(o.counts.pending, 'en attente'), stat(o.counts.done, 'transcrites auto.'), stat(o.counts.failed, 'en échec'), stat(o.counts.manual, 'ajoutées à la main')),
+    h(
+      'p',
+      { class: 'status' },
+      `Chaque jour (toutes les ${o.interval_hours} h), les nouvelles vidéos des chaînes suivies sont détectées puis mises en file d’attente. `,
+      'Chaque vidéo coûte 1 crédit Supadata (sous-titres existants uniquement : aucune transcription générée par IA). ',
+      'Les vidéos déjà présentes ne sont jamais retraitées : leurs transcriptions, automatiques ou corrigées à la main, ne sont jamais modifiées.',
+    ),
+    o.paused
+      ? h(
+          'p',
+          { class: 'notice' },
+          `Traitement en pause. ${o.counts.pending} vidéo${o.counts.pending > 1 ? 's' : ''} en attente ≈ ${o.counts.pending} crédit${o.counts.pending > 1 ? 's' : ''} Supadata. La détection des nouvelles vidéos continue, mais aucune transcription n’est demandée tant que tu n’as pas démarré.`,
+        )
+      : h('p', { class: 'status ok' }, '▶ Traitement actif.'),
+    o.cooldown_until ? h('p', { class: 'status err' }, `Traitement suspendu jusqu’à ${when(o.cooldown_until)} : ${o.last_error ?? ''}`) : null,
+    h(
+      'div',
+      { class: 'actions' },
+      o.paused
+        ? h('button', { class: 'btn', type: 'button', disabled: !o.keys.supadata, onclick: () => act(() => api('POST', '/sync/resume', {}), 'Traitement démarré.') }, 'Démarrer le traitement')
+        : h('button', { class: 'btn secondary', type: 'button', onclick: () => act(() => api('POST', '/sync/pause', {}), 'Mis en pause.') }, 'Mettre en pause'),
+      !o.paused ? h('button', { class: 'btn secondary', type: 'button', onclick: () => act(() => api('POST', '/sync/run', {}), 'Passe lancée.') }, 'Lancer une passe maintenant') : null,
+      msg,
+    ),
+  );
+
+  // --- chaînes
+  const input = h('input', { type: 'text', placeholder: 'https://www.youtube.com/@nomdelachaine', required: true });
+  const minD = h('input', { type: 'number', min: '0', value: '0' });
+  const addMsg = h('p', { class: 'status' });
+  const addBtn = h('button', { class: 'btn', type: 'submit', disabled: !o.keys.youtube }, 'Ajouter et lister les vidéos');
+  const addForm = h(
+    'form',
+    {
+      onsubmit: async (e) => {
+        e.preventDefault();
+        addBtn.disabled = true;
+        status(addMsg, 'Recherche de la chaîne et liste des vidéos… (peut prendre quelques secondes)');
+        try {
+          const r = await api('POST', '/sync/channels', { input: input.value, min_duration_s: Number(minD.value) || 0 });
+          if (r.error) status(addMsg, `Chaîne ajoutée, mais la liste a échoué : ${r.error}`, 'err');
+          else {
+            await renderSync();
+            status(document.querySelector('#sync-msg'), `${r.added} vidéo${r.added > 1 ? 's' : ''} trouvée${r.added > 1 ? 's' : ''} et mise${r.added > 1 ? 's' : ''} en file d’attente.`, 'ok');
+          }
+        } catch (err) {
+          status(addMsg, err.message, 'err');
+          addBtn.disabled = !o.keys.youtube;
+        }
+      },
+    },
+    h('div', { class: 'row' }, h('label', { class: 'field' }, 'Chaîne YouTube (URL, @nom ou identifiant UC…)', input), h('label', { class: 'field' }, 'Durée minimale (secondes, 0 = tout, 61 = sans les Shorts)', minD)),
+    h('div', { class: 'actions' }, addBtn, addMsg),
+  );
+
+  const rows = o.channels.map((c) =>
+    h(
+      'tr',
+      {},
+      h('td', {}, h('div', { class: 't' }, c.title || c.youtube_channel_id), h('div', { class: 'status' }, c.handle ?? '')),
+      h('td', {}, String(c.video_count)),
+      h('td', {}, c.min_duration_s ? `${c.min_duration_s} s` : '—'),
+      h('td', {}, c.last_discovery_error ? h('span', { class: 'status err' }, c.last_discovery_error) : when(c.last_discovery_at)),
+      h(
+        'td',
+        { class: 'actions' },
+        h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(async () => { const r = await api('POST', `/sync/channels/${c.id}/discover`, {}); status(msg, `${r.added} nouvelle${r.added > 1 ? 's' : ''} vidéo${r.added > 1 ? 's' : ''}.`, 'ok'); }) }, 'Chercher maintenant'),
+        h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/sync/channels/${c.id}`, { enabled: !c.enabled })) }, c.enabled ? 'Suspendre' : 'Reprendre'),
+        h('button', { class: 'btn danger small', type: 'button', onclick: () => confirm('Ne plus suivre cette chaîne ? Les vidéos déjà importées sont conservées.') && act(() => api('DELETE', `/sync/channels/${c.id}`)) }, 'Retirer'),
+      ),
+    ),
+  );
+  const channels = h(
+    'section',
+    { class: 'panel' },
+    h('h2', {}, 'Chaînes suivies'),
+    h('p', { id: 'sync-msg', class: 'status' }),
+    rows.length
+      ? h('table', { class: 'videos' }, h('thead', {}, h('tr', {}, ...['Chaîne', 'Vidéos', 'Durée min.', 'Dernière vérif.', ''].map((t) => h('th', {}, t)))), h('tbody', {}, rows))
+      : h('p', { class: 'status' }, 'Aucune chaîne suivie.'),
+    h('h3', { style: 'margin-top:1.2rem' }, 'Ajouter une chaîne'),
+    addForm,
+  );
+
+  // --- échecs
+  const failed = o.failed.length
+    ? h(
+        'section',
+        { class: 'panel' },
+        h('h2', {}, `Vidéos en échec (${o.counts.failed})`),
+        h('p', { class: 'status' }, 'Souvent : pas de sous-titres disponibles. Tu peux relancer, ou ouvrir la vidéo pour coller une transcription à la main.'),
+        h(
+          'table',
+          { class: 'videos' },
+          h(
+            'tbody',
+            {},
+            o.failed.map((v) =>
+              h(
+                'tr',
+                {},
+                h('td', {}, h('div', { class: 't' }, v.title || v.youtube_id), h('div', { class: 'status err' }, v.sync_error ?? '')),
+                h(
+                  'td',
+                  { class: 'actions' },
+                  h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('POST', `/sync/videos/${v.id}/retry`, {}), 'Remise en file d’attente.') }, 'Réessayer'),
+                  h('a', { class: 'btn small', href: `#/video/${v.id}` }, 'Ouvrir'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      )
+    : null;
+
+  $app.replaceChildren(state, channels, failed);
+  const timer = setInterval(() => document.hidden || renderSync().catch(() => {}), 20000);
+  cleanup = () => clearInterval(timer);
 }
 
 // ---------------------------------------------------------------------- éditeur

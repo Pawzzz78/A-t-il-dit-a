@@ -63,9 +63,12 @@ export async function replaceSegments(client, videoId, segments, { edited, sourc
   }
   await client.query(
     `UPDATE videos SET norm_text = $2, updated_at = now(),
-       edited = COALESCE($3, edited), source = COALESCE($4, source)
+       edited = COALESCE($3, edited), source = COALESCE($4, source),
+       -- une vidéo qui a maintenant une transcription n'a plus rien à attendre de la synchro
+       sync_status = CASE WHEN $5 AND sync_status IN ('pending', 'failed') THEN 'done' ELSE sync_status END,
+       sync_error = CASE WHEN $5 THEN NULL ELSE sync_error END
      WHERE id = $1`,
-    [videoId, normText, edited ?? null, source ?? null],
+    [videoId, normText, edited ?? null, source ?? null, clean.length > 0],
   );
   return clean.length;
 }

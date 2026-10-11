@@ -9,6 +9,9 @@ import {
   startSession,
 } from '../auth.js';
 import { pool, replaceSegments, withTransaction } from '../db.js';
+import { HttpError } from '../http-error.js';
+import { syncRouter } from './sync-admin.js';
+import { YouTubeApiError } from '../youtube.js';
 import { TranscriptError, fetchTranscript, parseTranscriptText, supadataConfigured } from '../transcripts.js';
 import { fetchMetadata, parseYoutubeId } from '../youtube.js';
 
@@ -16,13 +19,6 @@ export const adminRouter = Router();
 
 const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
-class HttpError extends Error {
-  constructor(status, message, extra = {}) {
-    super(message);
-    this.status = status;
-    this.extra = extra;
-  }
-}
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -52,11 +48,13 @@ adminRouter.use(requireAdmin);
 
 adminRouter.get('/config', (_req, res) => res.json({ supadata: supadataConfigured() }));
 
+adminRouter.use('/sync', syncRouter);
+
 // --- vidéos ----------------------------------------------------------------
 
 const LIST_SQL = `
   SELECT v.id, v.youtube_id, v.title, v.channel, v.published_at, v.thumbnail_url,
-         v.source, v.edited, v.updated_at, count(s.id)::int AS segment_count
+         v.source, v.edited, v.updated_at, v.sync_status, v.sync_error, count(s.id)::int AS segment_count
   FROM videos v LEFT JOIN segments s ON s.video_id = v.id`;
 
 adminRouter.get(
@@ -131,6 +129,8 @@ adminRouter.post(
 
     const meta = (await fetchMetadata(youtubeId)) ?? {};
     const id = await withTransaction(async (client) => {
+      // Ajouter à la main une vidéo précédemment supprimée la sort de la liste d'exclusion.
+      await client.query('DELETE FROM excluded_videos WHERE youtube_id = $1', [youtubeId]);
       const { rows } = await client.query(
         `INSERT INTO videos (youtube_id, title, channel, published_at, thumbnail_url, lang, source)
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
@@ -218,8 +218,18 @@ adminRouter.post(
 adminRouter.delete(
   '/videos/:id',
   ah(async (req, res) => {
-    const { rowCount } = await pool.query('DELETE FROM videos WHERE id = $1', [videoId(req)]);
-    if (!rowCount) throw new HttpError(404, 'Vidéo introuvable.');
+    const id = videoId(req);
+    // On mémorise l'exclusion pour que la synchronisation ne la remette pas demain.
+    const found = await withTransaction(async (client) => {
+      const { rows } = await client.query('DELETE FROM videos WHERE id = $1 RETURNING youtube_id', [id]);
+      if (!rows[0]) return false;
+      await client.query(
+        `INSERT INTO excluded_videos (youtube_id, reason) VALUES ($1, 'deleted') ON CONFLICT DO NOTHING`,
+        [rows[0].youtube_id],
+      );
+      return true;
+    });
+    if (!found) throw new HttpError(404, 'Vidéo introuvable.');
     res.json({ ok: true });
   }),
 );
@@ -228,6 +238,7 @@ adminRouter.delete(
 adminRouter.use((err, _req, res, _next) => {
   if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, ...err.extra });
   if (err instanceof TranscriptError) return res.status(err.status).json({ error: err.message });
+  if (err instanceof YouTubeApiError) return res.status(502).json({ error: err.message });
   console.error(err);
   res.status(500).json({ error: 'Erreur interne.' });
 });
