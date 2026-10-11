@@ -71,6 +71,39 @@ function status(el, msg, kind = '') {
   el.className = `status ${kind}`;
 }
 
+
+const SCRIPT_URL = 'https://github.com/Pawzzz78/A-t-il-dit-a/tree/ccr-cd4ad929-84sbtv/tools';
+
+/** Commande à copier-coller, avec un bouton « Copier ». */
+function commandBox(command) {
+  const status = h('span', { class: 'status' });
+  const copy = h(
+    'button',
+    {
+      class: 'btn secondary small',
+      type: 'button',
+      onclick: async () => {
+        try {
+          await navigator.clipboard.writeText(command);
+          status.textContent = 'Copié';
+        } catch {
+          const range = document.createRange();
+          range.selectNodeContents(box);
+          getSelection().removeAllRanges();
+          getSelection().addRange(range);
+          status.textContent = 'Sélectionné : copie-le à la main';
+        }
+      },
+    },
+    'Copier la commande',
+  );
+  const box = h('pre', { class: 'cmd' }, command);
+  return h('div', {}, box, h('div', { class: 'actions' }, copy, status));
+}
+
+const whisperCommand = (youtubeId) =>
+  `python tools/transcribe.py --site ${location.origin} https://www.youtube.com/watch?v=${youtubeId}`;
+
 let cleanup = () => {};
 let dirtyGuard = () => false;
 
@@ -473,7 +506,9 @@ async function renderSync() {
         'section',
         { class: 'panel' },
         h('h2', {}, `Vidéos en échec (${o.counts.failed})`),
-        h('p', { class: 'status' }, 'Souvent : pas de sous-titres disponibles. Pour une vidéo récente, la synchro réessaie toute seule (les sous-titres automatiques arrivent parfois après quelques heures). Sinon : transcris-la gratuitement sur ton ordinateur avec le script tools/transcribe.py (Whisper, voir le README), ou ouvre la vidéo pour coller une transcription à la main.'),
+        h('p', { class: 'status' }, 'Souvent : pas de sous-titres disponibles. Pour une vidéo récente, la synchro réessaie toute seule (les sous-titres automatiques arrivent parfois après quelques heures). Sinon, transcris-les gratuitement avec Whisper sur ton ordinateur (une fois fini, la transcription est enregistrée pour tout le monde). Pour toutes les vidéos de cette liste d’un coup :'),
+        commandBox(`python tools/transcribe.py --site ${location.origin} --all-failed`),
+        h('p', { class: 'status' }, h('a', { href: SCRIPT_URL, target: '_blank', rel: 'noopener' }, 'Récupérer le dossier tools/ ↗'), ' · ou ouvre une vidéo pour la transcrire seule, ou coller une transcription à la main.'),
         h(
           'div',
           { class: 'chan-list' },
@@ -877,6 +912,39 @@ async function renderEditor(id) {
     ),
   );
 
+
+  // --- transcription locale (Whisper)
+  const hasTranscript = segs.length > 0;
+  const whisperPanel = h(
+    'section',
+    { class: 'panel' },
+    h(
+      'details',
+      { open: !hasTranscript },
+      h('summary', {}, hasTranscript ? 'Refaire la transcription (Whisper)' : 'Transcrire avec Whisper (gratuit)'),
+      h(
+        'p',
+        { class: 'status' },
+        hasTranscript
+          ? 'Cette vidéo a déjà une transcription : elle ne sera pas remplacée sauf si tu ajoutes --overwrite à la commande (attention, ça écrase tes corrections).'
+          : 'Whisper tourne sur ton ordinateur (il ne peut pas tourner dans ce navigateur) : il télécharge l’audio, le transcrit, puis envoie le texte ici. Dès que c’est fini, la transcription est enregistrée dans la base : elle est visible par tout le monde (recherche, résumés) sans rien d’autre à faire.',
+      ),
+      h(
+        'ol',
+        { class: 'steps' },
+        h('li', {}, 'Une seule fois : récupère le dossier ', h('a', { href: SCRIPT_URL, target: '_blank', rel: 'noopener' }, 'tools/ ↗'), ' puis ', h('code', {}, 'pip install -r tools/requirements.txt'), ' (Python 3.10+).'),
+        h('li', {}, 'Lance cette commande (le mot de passe de l’admin est demandé) :'),
+      ),
+      commandBox(whisperCommand(video.youtube_id)),
+      h(
+        'ol',
+        { class: 'steps', start: '3' },
+        h('li', {}, 'Une fois terminé, recharge cette page.'),
+      ),
+      h('button', { class: 'btn secondary small', type: 'button', onclick: () => route() }, 'Recharger la page'),
+    ),
+  );
+
   const danger = h(
     'section',
     { class: 'panel' },
@@ -930,7 +998,7 @@ async function renderEditor(id) {
   $app.replaceChildren(
     h('p', {}, h('a', { href: '#/' }, '← Toutes les vidéos')),
     info,
-    h('div', { class: 'editor' }, h('aside', { class: 'side' }, playerBox, translatePanel, tools, source, danger), list),
+    h('div', { class: 'editor' }, h('aside', { class: 'side' }, playerBox, whisperPanel, translatePanel, tools, source, danger), list),
     savebar,
   );
 

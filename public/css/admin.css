@@ -101,3 +101,8 @@ td.actions { display: flex; gap: .4rem; flex-wrap: wrap; }
   .admin .site-header nav { gap: .3rem 1rem; font-size: .68rem; }
   .admin .brand span { font-size: .85rem; }
 }
+
+pre.cmd { margin: .5rem 0; padding: .7rem .9rem; background: var(--color-primary-dark); color: #fff; border-radius: var(--radius); font-size: .8rem; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
+ol.steps { margin: .5rem 0; padding-left: 1.3rem; font-size: .88rem; }
+ol.steps li { margin: .3rem 0; }
+code { background: var(--color-surface-alt); padding: .05rem .35rem; border-radius: 5px; font-size: .85em; overflow-wrap: anywhere; }
