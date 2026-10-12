@@ -2,7 +2,7 @@
 // (la partie base de données nécessite Postgres via DATABASE_URL, sinon ignorée).
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { CLIP_LIMITS, buildClip, mergeClips, parseClipJson, prepareSegments, targetCount, windowsFor } from '../src/clip-suggestions.js';
+import { CLIP_LIMITS, buildClip, mergeClips, parseClipJson, prepareSegments, windowsFor } from '../src/clip-suggestions.js';
 import { LlmError } from '../src/openrouter.js';
 
 /** n segments de `step` secondes, texte « phrase i ». */
@@ -152,20 +152,14 @@ test('modèle des extraits : propre aux extraits, jamais celui des résumés / t
   }
 });
 
-test('nombre d\'extraits demandés : proportionnel à la durée, entre 3 et 8', () => {
-  assert.equal(targetCount(0, 2 * 60_000), 3); // interview très courte : 3 quand même
-  assert.equal(targetCount(0, 10 * 60_000), 4);
-  assert.equal(targetCount(0, 20 * 60_000), 8);
-  assert.equal(targetCount(0, 90 * 60_000), CLIP_LIMITS.maxSuggestions);
-});
-
-test('les extraits demandés au modèle suivent la durée de la tranche', async () => {
+test('le modèle est invité à proposer jusqu\'à 10 extraits par tranche', async () => {
   const { suggestClipsFor } = await import('../src/clip-suggestions.js');
+  assert.equal(CLIP_LIMITS.maxSuggestions, 10);
   const seen = [];
   const complete = async ({ system }) => {
-    seen.push(Number(/Propose (\d+) extraits/.exec(system)[1]));
+    seen.push(Number(/jusqu'à (\d+) extraits/.exec(system)[1]));
     return '{"clips":[]}';
   };
-  await suggestClipsFor(rows(240, 5), { complete, model: 'x' }); // 20 minutes
-  assert.deepEqual(seen, [8]);
+  await suggestClipsFor(rows(240, 5), { complete, model: 'x' });
+  assert.deepEqual(seen, [10]);
 });

@@ -22,7 +22,7 @@ export const clipModel = () => process.env.CLIP_MODEL || DEFAULT_CLIP_MODEL;
 export const CLIP_LIMITS = {
   minS: Number(process.env.CLIP_MIN_S) || 20,
   maxS: Number(process.env.CLIP_MAX_S) || 60,
-  maxSuggestions: 8,
+  maxSuggestions: Number(process.env.CLIP_MAX_SUGGESTIONS) || 10,
 };
 const WINDOW_CHARS = 50_000; // une demande par tranche de transcription de cette taille
 const WINDOW_OVERLAP = 12; // lignes reprises d'une tranche à l'autre
@@ -31,7 +31,7 @@ const FALLBACK_LAST_MS = 4000;
 const MAX_GAP_MS = 8000;
 
 const systemPrompt = (perWindow) => `Tu aides à choisir de courts extraits d'une interview de ${speakerName()} pour en faire des vidéos verticales (TikTok, Reels).
-Tu reçois la transcription découpée en lignes numérotées « [n] mm:ss texte ». Propose ${perWindow} extraits, classés du plus au moins intéressant. Ne descends sous ce nombre que si la transcription n'a vraiment pas assez de passages qui respectent les règles ci-dessous.
+Tu reçois la transcription découpée en lignes numérotées « [n] mm:ss texte ». Choisis jusqu'à ${perWindow} extraits, classés du plus au moins intéressant.
 
 Règles :
 - Un extrait est une suite de lignes consécutives, de la ligne "start" à la ligne "end" incluses, d'une durée de ${CLIP_LIMITS.minS} à ${CLIP_LIMITS.maxS} secondes d'après les repères de temps.
@@ -46,12 +46,6 @@ Règles :
 
 Réponds uniquement par un objet JSON, sans texte autour :
 {"clips":[{"start":12,"end":31,"title":"…","why":"…","score":8}]}`;
-
-/** Nombre d'extraits demandés pour une tranche : environ un tous les 2,5 minutes (un peu plus que nécessaire, car certains sont écartés ensuite). */
-export function targetCount(startMs, endMs) {
-  const minutes = Math.max(0, endMs - startMs) / 60000;
-  return Math.min(CLIP_LIMITS.maxSuggestions, Math.max(3, Math.ceil(minutes / 2.5)));
-}
 
 // --- préparation -----------------------------------------------------------------------
 
@@ -157,8 +151,7 @@ export async function suggestClipsFor(rows, { complete = completeWithOpenRouter,
   const worker = async () => {
     while (next < windows.length) {
       const win = windows[next++];
-      const wanted = targetCount(segs[win[0]].start_ms, segs[win[1]].end_ms);
-      const raw = await complete({ model, system: systemPrompt(wanted), user: linesFor(segs, win), maxTokens: 3000 }, { maxAttempts: 3, timeoutMs: 120_000 });
+      const raw = await complete({ model, system: systemPrompt(CLIP_LIMITS.maxSuggestions), user: linesFor(segs, win), maxTokens: 3000 }, { maxAttempts: 3, timeoutMs: 120_000 });
       for (const c of parseClipJson(raw)) {
         const clip = buildClip(c, segs, win);
         if (clip) found.push(clip);
