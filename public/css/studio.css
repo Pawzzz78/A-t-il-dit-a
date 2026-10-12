@@ -25,6 +25,7 @@
 /* aperçu 9:16 */
 .phone { width: 100%; max-width: 21rem; margin: 0 auto; display: grid; gap: .6rem; }
 .ph-screen { position: relative; aspect-ratio: 9 / 16; background: #111; border-radius: 1.4rem; overflow: hidden; box-shadow: var(--shadow-hover); border: 5px solid #0d0f2b; touch-action: pan-y; }
+.ph-stage { position: absolute; inset: 0; will-change: transform; }
 .ph-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #111; }
 .ph-video.panning { cursor: grab; touch-action: pan-y; }
 .ph-video.panning:active { cursor: grabbing; }
@@ -204,3 +205,35 @@
 .st-source { display: grid; gap: .5rem; justify-items: start; }
 .st-source-text { width: 100%; font: inherit; font-size: .9rem; line-height: 1.45; padding: .5rem .65rem; border: 1px solid var(--color-border); border-radius: .5rem; background: var(--color-surface-alt); color: var(--color-text); resize: none; }
 .st-stepchips button { padding: .5rem .7rem; }
+
+/* b-roll : image plein écran par-dessus la vidéo (le zoom ne la touche pas), sous les sous-titres */
+.ph-broll { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; transform-origin: center; will-change: transform, opacity; }
+.ph-broll[hidden] { display: none; }
+.ph-pick { position: absolute; inset: 0; z-index: 3; display: flex; align-items: flex-start; justify-content: center; padding-top: .8rem; cursor: crosshair; background: rgba(13, 15, 43, .25); touch-action: none; }
+.ph-pick[hidden], .ph-pickdot[hidden] { display: none; }
+.ph-pick span { background: rgba(13, 15, 43, .85); color: #fff; font-size: .78rem; font-weight: 700; padding: .35rem .7rem; border-radius: var(--radius-pill); pointer-events: none; text-align: center; }
+.ph-pickdot { position: absolute; z-index: 4; width: 1.6rem; height: 1.6rem; margin: -.8rem 0 0 -.8rem; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 2px var(--color-accent), 0 0 8px rgba(0,0,0,.5); pointer-events: none; }
+
+/* onglet B-roll */
+.st-fxbar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .7rem; margin: .6rem 0; }
+.st-help.inline { margin: 0; }
+.st-fxlist { list-style: none; margin: .6rem 0 0; padding: 0; display: grid; gap: .5rem; }
+.st-fxrow { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .5rem .6rem; border: 1px solid var(--color-hairline); border-radius: var(--radius); background: #fff; }
+.st-fxword { flex: 1 1 5rem; min-width: 0; font-weight: 700; color: var(--color-primary); overflow-wrap: anywhere; }
+.st-select { height: 2.2rem; padding: 0 .6rem; font: inherit; font-size: .85rem; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: #fff; color: var(--color-text); }
+.st-searchbar { display: flex; gap: .5rem; margin: .6rem 0; }
+.st-searchbar .st-search { flex: 1; min-width: 0; }
+.st-chips { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; margin: .2rem 0 .6rem; }
+.st-chips small { color: var(--color-muted); font-weight: 700; }
+.st-chip { font: inherit; font-size: .8rem; font-weight: 700; padding: .3rem .7rem; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: var(--color-surface-alt); color: var(--color-primary); cursor: pointer; }
+.st-chip:hover { background: var(--color-primary); color: #fff; }
+.st-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(5.4rem, 1fr)); gap: .4rem; margin: .5rem 0; }
+.st-photo { padding: 0; border: 2px solid transparent; background-clip: padding-box; border-radius: .5rem; overflow: hidden; aspect-ratio: 3 / 4; cursor: pointer; }
+.st-photo:hover, .st-photo:focus-visible { border-color: var(--color-accent); outline: none; }
+.st-photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.st-fxrow.broll { flex-wrap: nowrap; }
+.st-bthumb { width: 3.2rem; height: 4.2rem; object-fit: cover; border-radius: .4rem; flex: none; }
+.st-bfields { display: grid; gap: .3rem; flex: 1; min-width: 0; }
+.st-bfields label { display: flex; align-items: center; justify-content: space-between; gap: .5rem; font-size: .78rem; font-weight: 700; color: var(--color-muted); }
+.st-bfields .st-time { width: 5.4rem; height: 2rem; }
+@media (max-width: 480px) { .st-fxrow:not(.broll) .st-fxword { flex-basis: 100%; order: 5; } }

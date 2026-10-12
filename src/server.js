@@ -56,7 +56,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   createApp().listen(port, () => console.log(`Lisnard Facts → http://localhost:${port}`));
   ffmpegAvailable().then(async (ok) => {
     const cap = ok ? await studioCapabilities() : null;
-    console.log(`Studio de clips : ffmpeg ${ok ? 'disponible' : 'ABSENT (dépôt de vidéos impossible)'}${cap ? ` · sous-titres (libass) ${cap.ass ? 'oui' : 'NON'} · H.264 ${cap.x264 ? 'oui' : 'NON'} · AAC ${cap.aac ? 'oui' : 'NON'}` : ''} · stockage ${storageDir()}`);
+    console.log(`Studio de clips : ffmpeg ${ok ? 'disponible' : 'ABSENT (dépôt de vidéos impossible)'}${cap ? ` · sous-titres (libass) ${cap.ass ? 'oui' : 'NON'} · H.264 ${cap.x264 ? 'oui' : 'NON'} · AAC ${cap.aac ? 'oui' : 'NON'} · zooms et images ${cap.zoom ? 'oui' : 'NON'}` : ''} · stockage ${storageDir()}`);
   });
   startScheduler();
   startSummaryScheduler();

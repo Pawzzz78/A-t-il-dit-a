@@ -494,3 +494,166 @@ test('extrait précis : bornes à la milliseconde, mots gardés selon l\'horaire
   await fs.writeFile(file, Buffer.from(await (await fetch(`${base}/api/studio/render/${r.body.id}/file`)).arrayBuffer()));
   assert.ok(Math.abs(Number(probe(file).format.duration) - 3.65) < 0.15, `durée ${probe(file).format.duration}`);
 });
+
+// --- zooms et images b-roll -------------------------------------------------------------------------------------------------
+
+test('demande : zooms et images b-roll validés', { skip: !enabled }, () => {
+  const { normalizeRequest, normalizeBroll } = studio;
+  const video = { file_duration_s: 60 };
+  const base = { extracts: [{ start_ms: 0, end_ms: 10_000 }] };
+  assert.equal(normalizeRequest(base, video).zoom, null);
+  assert.deepEqual(normalizeRequest(base, video).broll, []);
+  const z = normalizeRequest({ ...base, zoom: { strength: 1.3, focus: { x: 0.4, y: 0.4 }, events: [{ t: 8, kind: 'out' }, { t: 2, kind: 'in' }, { t: 99, kind: 'in' }] } }, video).zoom;
+  assert.deepEqual(z.events, [{ t: 2, kind: 'in' }, { t: 8, kind: 'out' }]); // trié, hors clip écarté
+  assert.equal(normalizeRequest({ ...base, zoom: { events: [] } }, video).zoom, null);
+  assert.equal(normalizeRequest({ ...base, zoom: 'oui' }, video).zoom, null);
+  const bad = (input, re) => assert.throws(() => normalizeBroll(input, 10), (e) => e.status === 400 && re.test(e.message), JSON.stringify(input)?.slice(0, 60));
+  assert.deepEqual(normalizeBroll([{ id: '123', start: 4, dur: 2 }, { id: 5, start: 1, dur: 0.2 }], 10), [{ id: '5', start: 1, dur: 1 }, { id: '123', start: 4, dur: 2 }]); // trié, durée minimale 1 s
+  assert.equal(normalizeBroll([{ id: '1', start: 8, dur: 8 }], 10)[0].dur, 2); // ne dépasse pas la fin du clip
+  assert.equal(normalizeBroll([{ id: '1', start: 0, dur: 99 }], 20)[0].dur, 8); // 8 s au plus
+  bad('x', /invalides/);
+  bad([{ id: 'abc', start: 1, dur: 2 }], /invalide/);
+  bad([{ id: '../../etc/passwd', start: 1, dur: 2 }], /invalide/);
+  bad([{ id: 'https://exemple.test/a.jpg', start: 1, dur: 2 }], /invalide/); // jamais d'adresse : seulement un numéro
+  bad([{ id: '1', start: -1, dur: 2 }], /pendant le clip/);
+  bad([{ id: '1', start: 10, dur: 2 }], /pendant le clip/);
+  bad([{ id: '1', start: 1, dur: 3 }, { id: '2', start: 3, dur: 2 }], /chevaucher/);
+  bad(Array.from({ length: 9 }, (_, i) => ({ id: String(i + 1), start: i, dur: 1 })), /8 images/);
+});
+
+test('commande ffmpeg : zoom avant les images avant les sous-titres, entrées dans le bon ordre, rien dans l\'aperçu', { skip: !enabled }, () => {
+  const { normalizeRequest, buildFfmpegArgs } = studio;
+  const req = normalizeRequest({ extracts: [{ start_ms: 0, end_ms: 10_000 }], music: { id: 'lofi-doux', volume: 0.3 }, zoom: { events: [{ t: 2, kind: 'in' }, { t: 5, kind: 'out' }] }, broll: [{ id: '11', start: 6, dur: 2 }, { id: '22', start: 8, dur: 1.5 }] }, { file_duration_s: 60 });
+  const run = (kind) => buildFfmpegArgs({ file: '/x/in.mp4', req, hasAudio: true, assPath: '/x/a.ass', out: '/x/o.mp4', kind, images: { 11: '/s/11.jpg', 22: '/s/22.jpg' } });
+  const a = run('final');
+  const g = a[a.indexOf('-filter_complex') + 1];
+  const inputs = a.reduce((acc, v, i) => (v === '-i' ? [...acc, a[i + 1]] : acc), []);
+  assert.deepEqual([inputs[0], inputs[2], inputs[3]].map((p) => p.split('/').pop()), ['in.mp4', '11.jpg', '22.jpg']); // vidéo, musique (n° 1), puis les images
+  assert.match(inputs[1], /music/);
+  // images : boucle à 30 i/s, durée bornée ; le flux 2 (1re image) puis 3 ; la musique garde son numéro
+  assert.ok(a.join(' ').includes('-loop 1 -framerate 30 -t 2 -i /s/11.jpg -loop 1 -framerate 30 -t 1.5 -i /s/22.jpg'));
+  assert.match(g, /\[1:a\]aresample/); // musique = entrée 1
+  assert.match(g, /\[2:v\]scale=1080:1920.*perspective=.*fade=t=in.*setpts=PTS-STARTPTS\+6\/TB\[bk0\]/);
+  assert.match(g, /\[3:v\]scale=1080:1920.*setpts=PTS-STARTPTS\+8\/TB\[bk1\]/);
+  // ordre : image, puis zoom, puis images, puis sous-titres
+  const at = (re) => g.search(re);
+  assert.ok(at(/\[vc\]perspective=/) >= 0 && at(/\[vc\]perspective=/) < at(/\[vz\]\[bk0\]overlay=/) && at(/\[vb0\]\[bk1\]overlay=/) < at(/\[vb1\]ass=/));
+  assert.match(g, /\[vb1\]ass=.*\[vo\]/);
+  assert.doesNotMatch(g, /zoompan/);
+  // aperçu : ni zoom ni images (le navigateur les dessine)
+  const p = run('preview');
+  const pg = p[p.indexOf('-filter_complex') + 1];
+  assert.doesNotMatch(pg, /perspective|overlay=eof|-loop/);
+  assert.ok(!p.includes('-loop'));
+  // sans effets : graphe d'origine
+  const plain = normalizeRequest({ extracts: [{ start_ms: 0, end_ms: 10_000 }] }, { file_duration_s: 60 });
+  const pl = buildFfmpegArgs({ file: '/x/in.mp4', req: plain, hasAudio: true, assPath: '/x/a.ass', out: '/x/o.mp4' });
+  assert.match(pl[pl.indexOf('-filter_complex') + 1], /\[vc\]ass=/);
+});
+
+test('zoom : mouvement lisse mesuré sur de vraies images, fidèle à la courbe de l\'aperçu (aucune saccade)', { skip: !enabled }, () => {
+  const { zoomPlan, zoomAt, zoomRect, zoomFilter, sanitizeZoom } = core;
+  const W = 540;
+  const H = 960;
+  const N = 150;
+  const z = sanitizeZoom({ strength: 1.32, focus: { x: 0.8, y: 0.3 }, events: [{ t: 0.5, kind: 'in' }, { t: 2.2, kind: 'out' }, { t: 3.3, kind: 'in' }, { t: 4.0, kind: 'out' }] }, 5);
+  const plan = zoomPlan(z.events, z.strength);
+  // image fixe : une ligne verticale et une ligne horizontale ; leur position dans chaque image donne l'échelle et le décalage réels
+  const src = `color=black:s=${W}x${H}:r=30:d=5,drawbox=x=350:y=0:w=4:h=${H}:color=white:t=fill,drawbox=x=0:y=250:w=${W}:h=4:color=white:t=fill,format=yuv420p`;
+  const raw = execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', src, '-vf', zoomFilter(plan, z.focus, 5), '-frames:v', String(N), '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { maxBuffer: 1 << 30 });
+  const centroid = (frame, line, axis) => {
+    let s = 0;
+    let w = 0;
+    const n = axis === 'x' ? W : H;
+    for (let i = 0; i < n; i++) {
+      const v = axis === 'x' ? frame[line * W + i] : frame[i * W + line];
+      s += v * (i + 0.5);
+      w += v;
+    }
+    return w ? s / w : NaN;
+  };
+  const xs = [];
+  const ideal = [];
+  let worst = 0;
+  for (let n = 0; n < N; n++) {
+    const f = raw.subarray(n * W * H, (n + 1) * W * H);
+    const r = zoomRect(zoomAt(plan, n / 30), z.focus);
+    const px = ((352 - r.x0 * W) / ((r.x1 - r.x0) * W)) * W;
+    const cx = centroid(f, 50, 'x');
+    if (px > 4 && px < W - 4) {
+      assert.ok(Number.isFinite(cx), `image ${n} : ligne introuvable`);
+      worst = Math.max(worst, Math.abs(cx - px));
+      xs.push(cx);
+      ideal.push(px);
+    }
+  }
+  assert.ok(xs.length > 100);
+  assert.ok(worst < 0.5, `écart avec la courbe idéale : ${worst.toFixed(3)} px`); // moins d'un demi-pixel
+  // pas de saccade : la variation de vitesse d'une image à l'autre suit celle de la courbe idéale (zoompan : plusieurs pixels d'écart)
+  let jitter = 0;
+  for (let i = 2; i < xs.length; i++) jitter = Math.max(jitter, Math.abs(xs[i] - 2 * xs[i - 1] + xs[i - 2] - (ideal[i] - 2 * ideal[i - 1] + ideal[i - 2])));
+  assert.ok(jitter < 0.6, `irrégularité du mouvement : ${jitter.toFixed(3)} px par image²`);
+});
+
+test('rendu avec zoom et image b-roll : image visible au bon moment, zoom sans toucher le reste, durée exacte', { skip: !enabled }, async () => {
+  const stockDir = path.join(process.env.STORAGE_DIR, 'stock');
+  await fs.mkdir(stockDir, { recursive: true });
+  const jpg = path.join(stockDir, '777-f.jpg');
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0xE01010:s=1253x1880', '-frames:v', '1', jpg]);
+  const frame = async (id, t) => {
+    const file = path.join(dir, `fx-${id}.mp4`);
+    await fs.writeFile(file, Buffer.from(await (await fetch(`${base}/api/studio/render/${id}/file`)).arrayBuffer()));
+    const png = path.join(dir, `fx-${id}-${t}.png`);
+    execFileSync('ffmpeg', ['-v', 'error', '-y', '-ss', String(t), '-i', file, '-frames:v', '1', png]);
+    return { file, png };
+  };
+  const render = async (extra) => {
+    const r = await api('POST', '/api/studio/render', REQ({ extracts: [{ start_ms: 1000, end_ms: 6000 }], music: null, layout: { fit: 'crop', cropX: 0.5, quality: 'fast' }, style: { preset: 'classique' }, ...extra }));
+    assert.equal(r.status, 202, JSON.stringify(r.body));
+    await waitFor(r.body.id, (s) => s.status === 'done');
+    return r.body.id;
+  };
+  const plainId = await render({});
+  const fxId = await render({ zoom: { strength: 1.3, events: [{ t: 0.4, kind: 'in' }, { t: 2.0, kind: 'out' }] }, broll: [{ id: '777', start: 3.4, dur: 1.4 }] });
+  assert.ok(Math.abs(Number(probe((await frame(fxId, 0.1)).file).format.duration) - 5) < 0.2);
+  const ssim = (a, b) => {
+    const r = spawnSync('ffmpeg', ['-v', 'info', '-i', a, '-i', b, '-lavfi', 'ssim', '-f', 'null', '-'], { encoding: 'utf8' });
+    return Number(/All:([0-9.]+)/.exec(r.stderr)?.[1]);
+  };
+  const [p0, f0] = [await frame(plainId, 0.2), await frame(fxId, 0.2)];
+  assert.ok(ssim(p0.png, f0.png) > 0.985, 'avant le zoom : image inchangée'); // le filtre n'agit que pendant le zoom
+  const [p1, f1] = [await frame(plainId, 1.4), await frame(fxId, 1.4)];
+  assert.ok(ssim(p1.png, f1.png) < 0.9, 'pendant le zoom : image agrandie');
+  const [p2, f2] = [await frame(plainId, 3.0), await frame(fxId, 3.0)];
+  assert.ok(ssim(p2.png, f2.png) > 0.97, 'après le retour du zoom : image identique (aux différences de compression près)');
+  // image b-roll : plein écran rouge au milieu de sa durée, absente avant et après
+  const red = (png) => {
+    const px = execFileSync('ffmpeg', ['-v', 'error', '-i', png, '-vf', 'crop=1:1:360:640', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 1 << 20 });
+    return { r: px[0], g: px[1], b: px[2] };
+  };
+  const mid = red((await frame(fxId, 4.1)).png);
+  assert.ok(mid.r > 190 && mid.g < 60 && mid.b < 60, `image b-roll attendue : ${JSON.stringify(mid)}`);
+  const before = red((await frame(fxId, 3.0)).png);
+  assert.ok(!(before.r > 190 && before.g < 60), 'pas encore d\'image');
+  const after = red((await frame(fxId, 4.9)).png);
+  assert.ok(!(after.r > 190 && after.g < 60), 'plus d\'image');
+});
+
+test('routes des images : recherche et image refusent proprement, état indiqué dans les éléments de l\'éditeur', { skip: !enabled }, async () => {
+  const keep = process.env.PEXELS_API_KEY;
+  delete process.env.PEXELS_API_KEY;
+  try {
+    assert.equal((await api('GET', '/api/studio/assets')).body.stock.enabled, false);
+    const s = await api('GET', '/api/studio/stock/search?q=mairie');
+    assert.equal(s.status, 503);
+    assert.match(s.body.error, /pas configurée/);
+    assert.equal((await api('GET', '/api/studio/stock/image/abc')).status, 400);
+    assert.equal((await api('GET', '/api/studio/stock/image/..%2F..%2Fetc%2Fpasswd')).status, 400);
+    process.env.PEXELS_API_KEY = 'x';
+    assert.equal((await api('GET', '/api/studio/assets')).body.stock.enabled, true);
+    assert.equal((await api('GET', '/api/studio/stock/search?q=a')).status, 400); // trop court : refusé avant tout appel
+  } finally {
+    if (keep === undefined) delete process.env.PEXELS_API_KEY;
+    else process.env.PEXELS_API_KEY = keep;
+  }
+});

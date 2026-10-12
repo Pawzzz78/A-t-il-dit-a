@@ -8,7 +8,21 @@ import {
   assColor,
   assEscape,
   assTime,
+  BROLL,
+  ZOOM,
   boxPath,
+  brollOpacity,
+  kenBurnsAt,
+  kenBurnsFilter,
+  sanitizeZoom,
+  suggestZoomPoints,
+  wordNear,
+  zoomAt,
+  zoomFilter,
+  zoomOrigin,
+  zoomPlan,
+  zoomRect,
+  zoomWindows,
   sourceText,
   buildAss,
   fitScale,
@@ -284,4 +298,130 @@ test('ASS fond arrondi : forme dessinée sous le texte, même pop, plus de recta
   // pas de fond : aucun événement de fond
   const plain = build({ preset: 'classique' }).ass;
   assert.equal(plain.split('\n').filter((l) => l.startsWith('Dialogue: 0,')).length, 0);
+});
+
+// --- zooms et b-roll -------------------------------------------------------------------------------------------------------
+
+test('zooms : réglages bornés, événements triés, écart minimal, entrées invalides écartées', () => {
+  const z = sanitizeZoom({ strength: 9, focus: { x: -1, y: 5 }, events: [{ t: 4, kind: 'out' }, { t: 1, kind: 'in' }, { t: 1.2, kind: 'in' }, { t: -3, kind: 'in' }, { t: 99, kind: 'in' }, { t: 2, kind: 'saut' }, null, { t: 'x', kind: 'in' }] }, 10);
+  assert.equal(z.strength, 1.5);
+  assert.deepEqual(z.focus, { x: 0.1, y: 0.9 });
+  assert.deepEqual(z.events, [{ t: 1, kind: 'in' }, { t: 4, kind: 'out' }]); // trié ; 1,2 trop près de 1 ; hors clip, type inconnu et valeurs illisibles écartés
+  assert.equal(sanitizeZoom({ strength: 1.01 }).strength, 1.05);
+  assert.deepEqual(sanitizeZoom(undefined).events, []);
+  assert.equal(sanitizeZoom({ events: Array.from({ length: 80 }, (_, i) => ({ t: i, kind: i % 2 ? 'out' : 'in' })) }).events.length, ZOOM.maxEvents);
+});
+
+test('zoom : mouvement en S, continu, vitesse nulle au départ et à l\'arrivée, même en enchaînant', () => {
+  const ev = [{ t: 1, kind: 'in' }, { t: 2.6, kind: 'out' }, { t: 3.1, kind: 'in' }, { t: 4.4, kind: 'out' }]; // un zoom commence avant la fin du retour précédent
+  const plan = zoomPlan(ev, 1.25);
+  assert.equal(zoomAt(plan, 0), 1);
+  assert.equal(zoomAt(plan, 0.99), 1);
+  close(zoomAt(plan, 1 + ZOOM.rampIn), 1.25);
+  close(zoomAt(plan, 2.5), 1.25); // maintenu
+  close(zoomAt(zoomPlan(ev.slice(0, 2), 1.25), 2.6 + ZOOM.rampOut), 1); // le retour aboutit à 1
+  // continuité : aucune marche entre deux images à 30 i/s, et jamais de zoom négatif ou excessif
+  let prev = zoomAt(plan, 0);
+  let maxStep = 0;
+  for (let n = 1; n <= 30 * 6; n++) {
+    const z = zoomAt(plan, n / 30);
+    maxStep = Math.max(maxStep, Math.abs(z - prev));
+    assert.ok(z >= 1 - 1e-12 && z <= 1.25 + 1e-12, `z = ${z}`);
+    prev = z;
+  }
+  // pente maximale d'une courbe en S : 1,5 × (écart / durée) ; ici 0,25 sur 0,5 s, soit 0,025 par image à 30 i/s
+  assert.ok(maxStep < 1.6 * (0.25 / ZOOM.rampIn) / 30, `pas maximal ${maxStep}`);
+  // vitesse nulle au départ : le mouvement démarre en douceur (pas d'à-coup)
+  assert.ok(zoomAt(plan, 1 + 1 / 30) - 1 < 0.005);
+  // un zoom commencé en cours de route part du niveau atteint, sans saut
+  const mid = zoomAt(plan, 3.1);
+  assert.ok(mid > 1 && mid < 1.25, `niveau au départ du 3e événement : ${mid}`);
+  close(zoomAt(plan, 3.1 + 1e-9), mid, 1e-6);
+});
+
+test('zoom : périodes actives (le reste du clip n\'est pas retraité) et fenêtre source', () => {
+  const plan = zoomPlan([{ t: 1, kind: 'in' }, { t: 3, kind: 'out' }, { t: 6, kind: 'in' }], 1.2);
+  const w = zoomWindows(plan, 10);
+  assert.equal(w.length, 2);
+  close(w[0][0], 1);
+  close(w[0][1], 3 + ZOOM.rampOut); // jusqu'au retour à 1
+  close(w[1][0], 6);
+  close(w[1][1], 10); // jamais revenu : jusqu'à la fin
+  assert.deepEqual(zoomWindows([], 10), []);
+  // fenêtre source : taille 1/z, point de zoom suivi, jamais hors de l'image
+  const r = zoomRect(1.25, { x: 0.5, y: 0.5 });
+  close(r.x1 - r.x0, 0.8);
+  close((r.x0 + r.x1) / 2, 0.5);
+  const edge = zoomRect(1.25, { x: 0.9, y: 0.1 });
+  assert.ok(edge.x1 <= 1 + 1e-12 && edge.y0 >= -1e-12);
+  // origine CSS : la fenêtre source remplit l'écran (bords gauche et droit de la fenêtre -> 0 et 1)
+  for (const [z, f] of [[1.2, { x: 0.5, y: 0.42 }], [1.32, { x: 0.8, y: 0.3 }], [1.1, { x: 0.12, y: 0.9 }]]) {
+    const o = zoomOrigin(z, f);
+    const rect = zoomRect(z, f);
+    close(o.x + z * (rect.x0 - o.x), 0, 1e-9);
+    close(o.x + z * (rect.x1 - o.x), 1, 1e-9);
+    close(o.y + z * (rect.y0 - o.y), 0, 1e-9);
+    close(o.y + z * (rect.y1 - o.y), 1, 1e-9);
+  }
+  assert.deepEqual(zoomOrigin(1, { x: 0.2, y: 0.2 }), { x: 0.5, y: 0.5 });
+});
+
+test('filtre de zoom : perspective à coins décimaux (pas zoompan), actif seulement pendant les zooms', () => {
+  const plan = zoomPlan([{ t: 1, kind: 'in' }, { t: 3, kind: 'out' }], 1.2);
+  const f = zoomFilter(plan, { x: 0.5, y: 0.42 }, 10);
+  assert.match(f, /^perspective=x0='/);
+  assert.match(f, /eval=frame/);
+  assert.match(f, /interpolation=linear/);
+  assert.doesNotMatch(f, /zoompan/);
+  assert.ok(f.includes(`enable='gt(between(t,1,${3 + ZOOM.rampOut}),0)'`), f.slice(-120));
+  assert.match(f, /\(in-1\)\/30/); // le temps vient du compteur d'images : aucune dérive
+  assert.equal(zoomFilter([], { x: 0.5, y: 0.5 }, 10), '');
+  assert.ok(f.length < 6000);
+  // quarante événements : la commande reste raisonnable
+  const many = zoomPlan(Array.from({ length: 40 }, (_, i) => ({ t: i * 1.5, kind: i % 2 ? 'out' : 'in' })), 1.2);
+  assert.ok(zoomFilter(many, { x: 0.5, y: 0.5 }, 100).length < 60_000);
+  // zoom lent des images b-roll
+  assert.match(kenBurnsFilter(2.5), /^perspective=x0='.*eval=frame/);
+  assert.ok(kenBurnsAt(0) === 1 && Math.abs(kenBurnsAt(1) - (1 + BROLL.kenBurns)) < 1e-12 && kenBurnsAt(0.5) > 1);
+});
+
+test('b-roll : fondu à l\'entrée et à la sortie, rien en dehors', () => {
+  const item = { start: 2, dur: 2 };
+  assert.equal(brollOpacity(item, 1.99), 0);
+  assert.equal(brollOpacity(item, 4.01), 0);
+  assert.equal(brollOpacity(item, 2), 0);
+  assert.ok(brollOpacity(item, 2 + BROLL.fade / 2) > 0.4 && brollOpacity(item, 2 + BROLL.fade / 2) < 0.6);
+  assert.equal(brollOpacity(item, 3), 1);
+  assert.ok(brollOpacity(item, 4 - BROLL.fade / 2) < 0.6);
+});
+
+test('zooms automatiques : mots importants, espacés, retour avant la fin, rien pour du blabla', () => {
+  const text = [
+    { start_ms: 0, end_ms: 5000, text: 'Nous devons réduire la dépense publique de trois milliards d’euros, jamais sans réforme.' },
+    { start_ms: 5000, end_ms: 10000, text: 'La décentralisation est la réponse, avec des moyens et de la confiance pour les communes.' },
+    { start_ms: 10000, end_ms: 16000, text: 'Sans transfert de charges, évidemment, les maires ne peuvent pas tout porter, la dette augmente.' },
+  ];
+  const { words, duration } = wordsForExtracts(text, [{ start_ms: 0, end_ms: 16000 }]);
+  const r = suggestZoomPoints(words, duration);
+  assert.deepEqual(r, suggestZoomPoints(words, duration)); // déterministe
+  assert.ok(r.hints.length >= 1 && r.hints.length <= 2); // au plus un zoom tous les 6 s
+  assert.equal(r.events.length, r.hints.length * 2);
+  assert.ok(r.hints.some((h) => /milliards|communes|décentralisation|dette/.test(h.word)), JSON.stringify(r.hints));
+  for (let i = 0; i < r.events.length; i += 2) {
+    assert.equal(r.events[i].kind, 'in');
+    assert.equal(r.events[i + 1].kind, 'out');
+    assert.ok(r.events[i + 1].t - r.events[i].t >= ZOOM.rampIn + ZOOM.holdAuto - 1e-9);
+    assert.ok(r.events[i + 1].t <= duration - 0.2);
+    if (i) assert.ok(r.events[i].t - r.events[i - 1].t >= ZOOM.minGap); // le zoom d'après commence après le retour
+  }
+  assert.deepEqual(sanitizeZoom({ events: r.events }, duration).events, r.events); // toujours valable pour le rendu
+  // un chiffre est toujours retenu ; les mots creux jamais
+  const num = wordsForExtracts([{ start_ms: 0, end_ms: 8000, text: 'Alors donc voilà en 2025 nous avons vraiment beaucoup de choses' }], [{ start_ms: 0, end_ms: 8000 }]);
+  assert.deepEqual(suggestZoomPoints(num.words, num.duration).hints.map((h) => h.word), ['2025']);
+  const blabla = wordsForExtracts([{ start_ms: 0, end_ms: 8000, text: 'Alors donc voilà comme on dit eh bien on va voir' }], [{ start_ms: 0, end_ms: 8000 }]);
+  assert.deepEqual(suggestZoomPoints(blabla.words, blabla.duration).events, []);
+  assert.deepEqual(suggestZoomPoints([], 10).events, []);
+  // rappel du mot sur lequel porte un zoom
+  assert.match(wordNear(words, r.hints[0].t + 0.15), /\p{L}/u);
+  assert.equal(wordNear(words, 500), '');
 });

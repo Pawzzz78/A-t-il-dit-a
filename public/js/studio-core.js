@@ -8,6 +8,8 @@
 // Repère unique des tailles (police, contour, position) : 1080 × 1920, quelle que soit la qualité de sortie.
 // La « taille » d'un style est la taille d'em du texte, comme une font-size CSS : libass, lui, dessine un texte de taille ASS N avec
 // une em de N × em_ratio (propre à chaque police, mesuré) : buildAss convertit, ce qui rend l'aperçu fidèle à la vidéo.
+import { isStopWord } from './stopwords.js';
+
 export const OUT = { w: 1080, h: 1920 };
 export const LIMITS = { maxExtracts: 4, minExtractS: 3, maxTotalS: 90 };
 export const MODES = ['words', 'one', 'phrase', 'karaoke'];
@@ -418,4 +420,223 @@ export function buildAss({ groups, style, font, boxes }) {
     }
   });
   return `${out.join('\n')}\n`;
+}
+
+// --- effets : zooms et images ---------------------------------------------------------------------------------------------
+//
+// Les zooms sont décrits par des événements « zoom avant » / « zoom arrière » : chacun fait glisser le niveau de zoom, en douceur
+// (courbe en S, vitesse nulle au départ et à l'arrivée), depuis le niveau atteint à cet instant vers le niveau cible. Le mouvement est
+// donc continu quoi qu'on enchaîne. Aperçu (navigateur) et rendu (ffmpeg) calculent exactement la même courbe : `zoomAt` ci-dessous
+// pour l'un, `zoomFilter` (même formule écrite en expression ffmpeg) pour l'autre.
+//
+// Pourquoi pas le filtre « zoompan » de ffmpeg : il déplace sa fenêtre par pas entiers de pixels, d'où les saccades bien connues.
+// Ici le filtre `perspective` place les coins de la fenêtre source en nombres décimaux (interpolation de l'image au sous-pixel) :
+// écart mesuré avec la courbe idéale inférieur à 0,2 px, sans à-coup.
+
+export const FPS = 30; // le rendu impose 30 images par seconde : les expressions ffmpeg comptent les images, pas les secondes
+export const ZOOM = {
+  strengths: { light: 1.1, medium: 1.2, strong: 1.32 },
+  rampIn: 0.5, // durée d'un zoom avant (s)
+  rampOut: 0.7, // durée d'un zoom arrière (s)
+  holdAuto: 1.3, // un zoom automatique reste en place ce temps avant de revenir (s)
+  minGap: 0.5, // écart minimal entre deux événements (s)
+  maxEvents: 40,
+  focus: { x: 0.5, y: 0.42 }, // point sur lequel on zoome (fractions de l'écran) : à hauteur de visage dans une interview
+};
+export const BROLL = { maxItems: 8, minS: 1, maxS: 8, defaultS: 2.5, fade: 0.18, kenBurns: 0.08 };
+
+const smooth = (p) => {
+  const c = Math.min(1, Math.max(0, p));
+  return c * c * (3 - 2 * c);
+};
+const r2 = (n) => Math.round(n * 100) / 100;
+
+/** Réglages de zoom sûrs : force bornée, point de zoom dans l'écran, événements triés, à écart minimal. */
+export function sanitizeZoom(input = {}, total = Infinity) {
+  const z = input && typeof input === 'object' ? input : {};
+  const strength = r2(clamp(z.strength, 1.05, 1.5, ZOOM.strengths.medium));
+  const focus = { x: r2(clamp(z.focus?.x, 0.1, 0.9, ZOOM.focus.x)), y: r2(clamp(z.focus?.y, 0.1, 0.9, ZOOM.focus.y)) };
+  const raw = Array.isArray(z.events) ? z.events : [];
+  const events = [];
+  for (const e of [...raw].sort((a, b) => Number(a?.t) - Number(b?.t))) {
+    const t = r2(Number(e?.t));
+    if (!Number.isFinite(t) || t < 0 || t > total) continue;
+    const kind = e.kind === 'out' ? 'out' : e.kind === 'in' ? 'in' : null;
+    if (!kind) continue;
+    if (events.length && t - events.at(-1).t < ZOOM.minGap - 1e-9) continue;
+    events.push({ t, kind });
+    if (events.length >= ZOOM.maxEvents) break;
+  }
+  return { strength, focus, events };
+}
+
+/** Plan des transitions : [{ t, from, to, dur }] où `from` est le niveau atteint à l'instant t par les transitions précédentes. */
+export function zoomPlan(events, strength) {
+  const plan = [];
+  for (const e of events) {
+    const seg = { t: e.t, from: 1, to: e.kind === 'in' ? strength : 1, dur: e.kind === 'in' ? ZOOM.rampIn : ZOOM.rampOut };
+    seg.from = zoomAt(plan, e.t);
+    plan.push(seg);
+  }
+  return plan;
+}
+
+/** Niveau de zoom (1 = aucun) à l'instant t (secondes du clip). */
+export function zoomAt(plan, t) {
+  let seg = null;
+  for (const s of plan) {
+    if (s.t <= t) seg = s;
+    else break;
+  }
+  return seg ? seg.from + (seg.to - seg.from) * smooth((t - seg.t) / seg.dur) : 1;
+}
+
+/** Fenêtre source (fractions de l'image) pour un niveau de zoom et un point de zoom : le point est suivi tant que la fenêtre reste dans l'image. */
+export function zoomRect(z, focus) {
+  const half = 0.5 / z;
+  const cx = Math.min(1 - half, Math.max(half, focus.x));
+  const cy = Math.min(1 - half, Math.max(half, focus.y));
+  return { x0: cx - half, x1: cx + half, y0: cy - half, y1: cy + half };
+}
+
+/** Origine de la mise à l'échelle CSS (fractions) qui donne la même image que `zoomRect` (aperçu du navigateur). */
+export function zoomOrigin(z, focus) {
+  if (z <= 1 + 1e-9) return { x: 0.5, y: 0.5 };
+  const { x0, y0 } = zoomRect(z, focus);
+  return { x: (-x0 * z) / (1 - z), y: (-y0 * z) / (1 - z) };
+}
+
+/** Périodes [début, fin] pendant lesquelles le zoom n'est pas à 1 (le filtre n'est actif que là : le reste du clip n'est pas retraité). */
+export function zoomWindows(plan, total) {
+  if (!plan.length) return [];
+  const marks = new Set([0, total]);
+  for (const s of plan) {
+    marks.add(s.t);
+    marks.add(Math.min(total, s.t + s.dur));
+  }
+  const pts = [...marks].filter((m) => m >= 0 && m <= total).sort((a, b) => a - b);
+  const wins = [];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const [a, b] = [pts[i], pts[i + 1]];
+    const mid = (a + b) / 2;
+    const moving = plan.some((s) => mid >= s.t && mid < s.t + s.dur && s.from !== s.to);
+    if (moving || zoomAt(plan, mid) > 1 + 1e-9) {
+      if (wins.length && Math.abs(wins.at(-1)[1] - a) < 1e-9) wins.at(-1)[1] = b;
+      else wins.push([a, b]);
+    }
+  }
+  return wins;
+}
+
+const num = (n) => String(Math.round(n * 1e6) / 1e6);
+
+/**
+ * Filtre ffmpeg `perspective` qui réalise le zoom, avec la même courbe que `zoomAt`. Le temps vient du compteur d'images (`in`,
+ * qui vaut 1 pour la première image) divisé par FPS, donc sans aucune dérive. Il n'est actif (`enable`) que pendant les périodes
+ * où l'image bouge ou reste zoomée : le reste du clip n'est pas retraité. Aucun zoom : chaîne vide.
+ */
+export function zoomFilter(plan, focus, total) {
+  const wins = zoomWindows(plan, total);
+  if (!wins.length) return '';
+  const T = `((in-1)/${FPS})`;
+  // niveau de zoom en fonction du temps : 1 avant le 1er événement, puis le segment du dernier événement commencé
+  let z = null;
+  for (let i = plan.length - 1; i >= 0; i--) {
+    const s = plan[i];
+    const seg = `(st(0,clip((${T}-${num(s.t)})/${num(s.dur)},0,1));${num(s.from)}+(${num(s.to - s.from)})*ld(0)*ld(0)*(3-2*ld(0)))`;
+    z = z === null ? seg : `if(lt(${T},${num(plan[i + 1].t)}),${seg},${z})`;
+  }
+  z = `if(lt(${T},${num(plan[0].t)}),1,${z})`;
+  const prep = `st(1,0.5/(${z}))`; // ld(1) : demi-largeur de la fenêtre source (fraction de l'image)
+  const center = (v) => `clip(${num(v)},ld(1),1-ld(1))`; // le point de zoom est suivi tant que la fenêtre reste dans l'image
+  const corner = (size, v, sign) => `'${prep};${size}*(${center(v)}${sign}ld(1))'`;
+  const x0 = corner('W', focus.x, '-');
+  const x1 = corner('W', focus.x, '+');
+  const y0 = corner('H', focus.y, '-');
+  const y2 = corner('H', focus.y, '+');
+  const enable = `'gt(${wins.map(([a, b]) => `between(t,${num(a)},${num(b)})`).join('+')},0)'`;
+  return `perspective=x0=${x0}:y0=${y0}:x1=${x1}:y1=${y0}:x2=${x0}:y2=${y2}:x3=${x1}:y3=${y2}:eval=frame:interpolation=linear:enable=${enable}`;
+}
+
+/** Léger zoom lent sur une image b-roll (même courbe en S) : niveau de zoom au point p (0 à 1) de sa durée. */
+export const kenBurnsAt = (p) => 1 + BROLL.kenBurns * smooth(p);
+
+/** Filtre ffmpeg `perspective` du zoom lent d'une image b-roll de `dur` secondes (flux propre à l'image : `in` repart de 1). */
+export function kenBurnsFilter(dur) {
+  const prep = `st(0,clip((in-1)/${num(FPS * dur)},0,1));st(1,0.5/(1+${BROLL.kenBurns}*ld(0)*ld(0)*(3-2*ld(0))))`;
+  const c = (size, sign) => `'${prep};${size}*(0.5${sign}ld(1))'`;
+  const [x0, x1, y0, y2] = [c('W', '-'), c('W', '+'), c('H', '-'), c('H', '+')];
+  return `perspective=x0=${x0}:y0=${y0}:x1=${x1}:y1=${y0}:x2=${x0}:y2=${y2}:x3=${x1}:y3=${y2}:eval=frame:interpolation=linear`;
+}
+
+/** Opacité d'une image b-roll à l'instant t : fondu à l'entrée et à la sortie. */
+export const brollOpacity = (item, t) => {
+  const into = t - item.start;
+  const left = item.start + item.dur - t;
+  if (into < 0 || left < 0) return 0;
+  return Math.min(1, into / BROLL.fade, left / BROLL.fade);
+};
+
+// --- zooms automatiques : repérage des mots importants ----------------------------------------------------------------------
+
+const plain = (w) =>
+  String(w ?? '')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+// mots qui portent l'insistance même s'ils sont courants (chiffres et ordres de grandeur, absolus)
+const EMPHASIS = new Set(
+  'jamais toujours aucun aucune absolument impossible urgence urgent priorite obligatoire interdit gratuit million millions milliard milliards pourcent cent mille'.split(' '),
+);
+
+/** Note d'un mot du clip : plus elle est haute, plus le mot mérite qu'on appuie dessus (chiffre, mot rare ou long, absolu, fin de phrase). */
+function wordScore(text, counts) {
+  const w = plain(text);
+  if (w.length < 3) return 0;
+  let score = 0;
+  if (/\d/.test(w)) score += 3;
+  else if (EMPHASIS.has(w) || EMPHASIS.has(w.replace(/[sx]$/, ''))) score += 2.5;
+  else if (isStopWord(w) || w.length < 5) return 0;
+  score += w.length >= 9 ? 2 : w.length >= 7 ? 1.5 : w.length >= 5 ? 0.8 : 0;
+  if (/[.!?…]["»”')\]]*$/.test(text)) score += 0.7;
+  score += Math.min(1.2, 0.6 * ((counts.get(w) ?? 1) - 1)); // un mot repris plusieurs fois est le sujet de l'extrait
+  return score;
+}
+
+/**
+ * Zooms automatiques : un zoom avant juste avant chaque mot important, un zoom arrière après ZOOM.holdAuto secondes.
+ * `words` : mots horodatés du clip (voir wordsForExtracts) ; `duration` : durée du clip (s). Les zooms sont espacés d'au moins
+ * `minSep` secondes et leur nombre dépend de la durée (un tous les 6 s au plus) : un zoom partout fatigue.
+ * Renvoie { events: [{ t, kind }], hints: [{ t, word }] }.
+ */
+export function suggestZoomPoints(words, duration, { minSep = 3.5, minScore = 1.5, max: maxCount = 10 } = {}) {
+  const counts = new Map();
+  for (const w of words) {
+    const k = plain(w.text);
+    counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  const scored = words.map((w) => ({ w, score: wordScore(w.text, counts) })).filter((x) => x.score >= minScore);
+  const max = minSep < 1 ? maxCount : Math.min(maxCount, Math.max(1, Math.floor(duration / 6)));
+  const chosen = [];
+  for (const c of scored.sort((a, b) => b.score - a.score || a.w.start - b.w.start)) {
+    const t = Math.max(0, r2(c.w.start - 0.15));
+    const out = r2(t + ZOOM.rampIn + ZOOM.holdAuto);
+    if (out > duration - 0.2) continue; // il faut pouvoir revenir avant la fin du clip
+    if (chosen.some((o) => Math.abs(o.t - t) < minSep)) continue;
+    chosen.push({ t, out, word: c.w.text.replace(/[^\p{L}\p{N}'’-]+$/gu, '') });
+    if (chosen.length >= max) break;
+  }
+  chosen.sort((a, b) => a.t - b.t);
+  return {
+    events: chosen.flatMap((c) => [{ t: c.t, kind: 'in' }, { t: c.out, kind: 'out' }]),
+    hints: chosen.map((c) => ({ t: c.t, word: c.word })),
+  };
+}
+
+/** Mot du clip le plus proche de l'instant t (pour rappeler à l'utilisateur sur quoi porte un zoom). */
+export function wordNear(words, t) {
+  let best = null;
+  for (const w of words) if (!best || Math.abs(w.start - t) < Math.abs(best.start - t)) best = w;
+  return best && Math.abs(best.start - t) < 1.5 ? best.text.replace(/[^\p{L}\p{N}'’-]+$/gu, '') : '';
 }

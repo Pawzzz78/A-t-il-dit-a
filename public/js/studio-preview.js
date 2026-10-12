@@ -1,7 +1,7 @@
 // Aperçu en direct du clip : cadre 9:16 avec la vidéo (cadrage seul, préparé par le serveur), les sous-titres dessinés par le
 // navigateur avec exactement les mêmes groupes, horaires, tailles et réductions que le rendu final (studio-core.js), la musique
 // synchronisée. Les sous-titres se déplacent au doigt ou à la souris. Aucun innerHTML : tout est posé en nœuds.
-import { OUT, activeAt, boxPad, boxPath, displayText, fitScale, usableWidth } from './studio-core.js';
+import { OUT, activeAt, boxPad, boxPath, brollOpacity, displayText, fitScale, kenBurnsAt, usableWidth, zoomAt, zoomOrigin } from './studio-core.js';
 
 /** Crée un élément (propriétés, style, événements « on… »). */
 export function el(tag, props = {}, ...children) {
@@ -44,8 +44,12 @@ export const rgba = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseIn
  * plein écran a été glissée pour recentrer le cadrage (0 = bord gauche de la vidéo, 1 = bord droit).
  * Renvoie l'élément racine et les commandes.
  */
-export function createPhone({ onMove, onCrop }) {
+export function createPhone({ onMove, onCrop, onPick }) {
   const video = el('video', { class: 'ph-video', playsinline: '', preload: 'auto', loop: true });
+  const stage = el('div', { class: 'ph-stage' }, video); // la vidéo seule zoome : images b-roll et sous-titres restent fixes
+  const brollImg = el('img', { class: 'ph-broll', alt: '', hidden: true });
+  const pickLayer = el('div', { class: 'ph-pick', hidden: true }, el('span', {}, 'Touche l’écran pour choisir le point de zoom'));
+  const pickDot = el('div', { class: 'ph-pickdot', hidden: true });
   const subText = el('div', { class: 'sub-text' });
   const subBox = el('div', { class: 'sub-box', title: 'Glisse pour déplacer les sous-titres' }, subText);
   const guides = el('div', { class: 'ph-guides', hidden: true }, el('span', { class: 'top' }, 'barre TikTok'), el('span', { class: 'bottom' }, 'légende, boutons et description TikTok'));
@@ -54,7 +58,7 @@ export function createPhone({ onMove, onCrop }) {
   const hint = el('div', { class: 'ph-hint', hidden: true }, '↔ Glisse la vidéo pour la recentrer');
   const busy = el('div', { class: 'ph-busy', hidden: true });
   const playBtn = el('button', { class: 'ph-play', type: 'button', 'aria-label': 'Lire l’aperçu' }, '▶');
-  const screen = el('div', { class: 'ph-screen' }, video, subBox, guideV, guideH, guides, hint, busy, playBtn);
+  const screen = el('div', { class: 'ph-screen' }, stage, brollImg, subBox, pickLayer, pickDot, guideV, guideH, guides, hint, busy, playBtn);
   const range = el('input', { class: 'ph-range', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': 'Position dans l’aperçu' });
   const time = el('span', { class: 'ph-time' }, '0:00 / 0:00');
   const guideToggle = el('label', { class: 'ph-toggle' }, el('input', { type: 'checkbox' }), 'Zones TikTok');
@@ -65,6 +69,7 @@ export function createPhone({ onMove, onCrop }) {
   music.preload = 'auto';
 
   let cfg = { groups: [], style: null, font: null };
+  let fx = { plan: [], focus: { x: 0.5, y: 0.42 }, broll: [], picking: false }; // zooms et images b-roll
   let framing = { fit: 'blur', cropX: 0.5, mirror: false };
   let hintTimer = 0;
   let playing = false;
@@ -178,7 +183,27 @@ export function createPhone({ onMove, onCrop }) {
     video.classList.toggle('panning', framing.fit === 'crop');
   }
 
+  /** Zoom de la vidéo et image b-roll à l'instant t : mêmes courbes que le rendu (studio-core.js), calculées à chaque image. */
+  function renderFx(t) {
+    const z = fx.picking ? 1 : zoomAt(fx.plan, t);
+    if (z > 1 + 1e-6) {
+      const o = zoomOrigin(z, fx.focus);
+      stage.style.transformOrigin = `${o.x * 100}% ${o.y * 100}%`;
+      stage.style.transform = `scale(${z})`;
+    } else if (stage.style.transform) stage.style.transform = '';
+    const item = fx.picking ? null : fx.broll.find((b) => t >= b.start && t < b.start + b.dur);
+    if (!item) {
+      if (!brollImg.hidden) brollImg.hidden = true;
+      return;
+    }
+    if (brollImg.getAttribute('src') !== item.url) brollImg.src = item.url;
+    brollImg.hidden = false;
+    brollImg.style.opacity = String(brollOpacity(item, t));
+    brollImg.style.transform = `scale(${kenBurnsAt((t - item.start) / item.dur)})`;
+  }
+
   function tick() {
+    renderFx(video.currentTime || 0);
     renderSub();
     const d = video.duration || 0;
     if (d) {
@@ -251,6 +276,22 @@ export function createPhone({ onMove, onCrop }) {
     applyStyle();
     renderSub();
   }).observe(screen);
+
+  // choix du point de zoom : un appui sur l'écran (la vidéo est alors montrée sans zoom)
+  const placeDot = () => {
+    pickDot.hidden = !fx.picking;
+    pickDot.style.left = `${fx.focus.x * 100}%`;
+    pickDot.style.top = `${fx.focus.y * 100}%`;
+  };
+  pickLayer.addEventListener('pointerdown', (e) => {
+    const r = screen.getBoundingClientRect();
+    const x = Math.round(Math.min(0.9, Math.max(0.1, (e.clientX - r.left) / r.width)) * 100) / 100;
+    const y = Math.round(Math.min(0.9, Math.max(0.1, (e.clientY - r.top) / r.height)) * 100) / 100;
+    fx.focus = { x, y };
+    placeDot();
+    onPick?.({ x, y });
+    e.preventDefault();
+  });
 
   // déplacement des sous-titres : le centre du bloc suit le doigt ou la souris ; il s'aimante au centre de l'écran
   // (repères pointillés, qui s'allument quand le bloc est exactement centré, comme dans Canva)
@@ -343,6 +384,17 @@ export function createPhone({ onMove, onCrop }) {
       music.volume = Math.min(1, Math.max(0, volume ?? 0.25));
       video.volume = Math.min(1, Math.max(0, voice ?? 1));
       if (url && !video.paused) music.play().catch(() => {});
+    },
+    /**
+     * Zooms et images b-roll : { plan (zoomPlan), focus, broll: [{ start, dur, url }], picking }. `picking` : on choisit le point de
+     * zoom, la vidéo est montrée sans zoom ni image.
+     */
+    setEffects(next) {
+      fx = { ...fx, ...next };
+      pickLayer.hidden = !fx.picking;
+      if (fx.picking) video.pause();
+      placeDot();
+      renderFx(video.currentTime || 0);
     },
     /** Place l'aperçu à l'instant t (secondes du clip) ; avec `play`, lit à partir de là. */
     seek(t, play = false) {

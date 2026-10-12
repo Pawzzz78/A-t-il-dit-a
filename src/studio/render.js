@@ -10,7 +10,8 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { LIMITS, OUT, buildAss, groupWords, roundedBox, sanitizeStyle, wordsForExtracts } from '../../public/js/studio-core.js';
+import { BROLL, FPS, LIMITS, OUT, buildAss, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
+import { ensureImage, stockDir, validPhotoId } from './stock.js';
 import { measureBoxes } from './box-probe.js';
 import { HttpError } from '../http-error.js';
 import { storageDir, videoFilePath } from '../media.js';
@@ -41,7 +42,7 @@ const SIZES = { hd: { w: 1080, h: 1920, crf: 21, preset: 'veryfast' }, fast: { w
 // --- capacités de ffmpeg ----------------------------------------------------------------------------
 
 let capabilities;
-/** Ce que le ffmpeg du serveur sait faire : incruster des sous-titres (libass) et encoder en H.264 / AAC. */
+/** Ce que le ffmpeg du serveur sait faire : incruster des sous-titres (libass), encoder en H.264 / AAC ; `zoom` : zooms et images b-roll (facultatif). */
 export async function studioCapabilities() {
   if (capabilities) return capabilities;
   const run = (args) =>
@@ -54,7 +55,7 @@ export async function studioCapabilities() {
     });
   const [filters, encoders] = await Promise.all([run(['-filters']), run(['-encoders'])]);
   const has = (text, re) => re.test(text);
-  capabilities = { ass: has(filters, /\bass\b/), x264: has(encoders, /libx264/), aac: has(encoders, /\baac\b/) };
+  capabilities = { ass: has(filters, /\bass\b/), x264: has(encoders, /libx264/), aac: has(encoders, /\baac\b/), zoom: has(filters, /\bperspective\b/) && has(filters, /\boverlay\b/) && has(filters, /\bfade\b/) };
   capabilities.ready = capabilities.ass && capabilities.x264 && capabilities.aac;
   return capabilities;
 }
@@ -121,7 +122,41 @@ export function normalizeRequest(body, video) {
     music = { id: b.music.id, volume: Math.round(Math.min(1, Math.max(0, Number.isFinite(Number(b.music.volume)) ? Number(b.music.volume) : 0.25)) * 100) / 100 };
   }
   const voice = Math.round(Math.min(1.5, Math.max(0, Number.isFinite(Number(b.voice)) ? Number(b.voice) : 1)) * 100) / 100;
-  return { extracts, layout, style, music, voice, edits: normalizeEdits(b.edits), total: Math.round(total * 1000) / 1000 };
+  const clipTotal = Math.round(total * 1000) / 1000;
+  const zoom = sanitizeZoom(b.zoom, clipTotal);
+  return {
+    extracts,
+    layout,
+    style,
+    music,
+    voice,
+    edits: normalizeEdits(b.edits),
+    zoom: zoom.events.length ? zoom : null,
+    broll: normalizeBroll(b.broll, clipTotal),
+    total: clipTotal,
+  };
+}
+
+/**
+ * Images b-roll : [{ id (numéro de photo Pexels), start, dur }] en secondes du clip. Le visiteur ne donne qu'un numéro : l'adresse
+ * est retrouvée par le serveur auprès de Pexels. Pas de chevauchement, durée 1 à 8 s, à l'intérieur du clip.
+ */
+export function normalizeBroll(input, total) {
+  if (input == null) return [];
+  if (!Array.isArray(input)) throw new HttpError(400, 'Images invalides.');
+  if (input.length > BROLL.maxItems) throw new HttpError(400, `${BROLL.maxItems} images au maximum.`);
+  const items = input.map((b) => {
+    const start = Math.round(Number(b?.start) * 100) / 100;
+    let dur = Math.round(Number(b?.dur) * 100) / 100;
+    if (!validPhotoId(b?.id) || !Number.isFinite(start) || !Number.isFinite(dur)) throw new HttpError(400, 'Image invalide.');
+    if (start < 0 || start >= total) throw new HttpError(400, "Une image doit apparaître pendant le clip.");
+    dur = Math.min(Math.max(dur, BROLL.minS), BROLL.maxS, Math.round((total - start) * 100) / 100);
+    if (dur < 0.5) throw new HttpError(400, 'Une image doit apparaître au moins une demi-seconde avant la fin du clip.');
+    return { id: String(b.id), start, dur };
+  });
+  items.sort((a, b) => a.start - b.start);
+  for (let i = 1; i < items.length; i++) if (items[i].start < items[i - 1].start + items[i - 1].dur - 1e-9) throw new HttpError(400, 'Deux images ne peuvent pas se chevaucher.');
+  return items;
 }
 
 // --- commande ffmpeg --------------------------------------------------------------------------------
@@ -151,13 +186,16 @@ function layoutChain(i, { w, h }, layout, kind) {
  * Arguments ffmpeg d'un rendu. `kind` : 'final' (sous-titres + musique) ou 'preview' (cadrage seul, petite définition).
  * Fonction pure : testable sans lancer ffmpeg.
  */
-export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'final' }) {
+export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'final', images = {} }) {
   const size = kind === 'preview' ? SIZES.preview : SIZES[req.layout.quality];
   const args = ['-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-y'];
   req.extracts.forEach((e) => args.push('-ss', String(e.start_ms / 1000), '-t', String((e.end_ms - e.start_ms) / 1000), '-i', file));
   const music = kind === 'final' && req.music ? musicById.get(req.music.id) : null;
   const musicIdx = req.extracts.length;
   if (music) args.push('-stream_loop', '-1', '-t', String(req.total), '-i', path.join(MUSIC_DIR, music.file));
+  const broll = kind === 'final' ? req.broll ?? [] : [];
+  const imageIdx = musicIdx + (music ? 1 : 0);
+  broll.forEach((b) => args.push('-loop', '1', '-framerate', String(FPS), '-t', String(b.dur), '-i', images[b.id] ?? path.join(stockDir(), `${b.id}-f.jpg`)));
 
   const f = [];
   req.extracts.forEach((e, i) => {
@@ -171,7 +209,23 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
   });
   const ins = req.extracts.map((_, i) => `[v${i}][a${i}]`).join('');
   f.push(`${ins}concat=n=${req.extracts.length}:v=1:a=1[vc][ac]`);
-  f.push(kind === 'final' ? `[vc]ass=${esc(assPath)}:fontsdir=${esc(FONTS_DIR)}[vo]` : '[vc]null[vo]');
+  // zoom (sous-titres et images b-roll ne zooment pas), puis images b-roll, puis sous-titres
+  let last = 'vc';
+  const zoom = kind === 'final' && req.zoom ? zoomFilter(zoomPlan(req.zoom.events, req.zoom.strength), req.zoom.focus, req.total) : '';
+  if (zoom) {
+    f.push(`[${last}]${zoom}[vz]`);
+    last = 'vz';
+  }
+  broll.forEach((b, k) => {
+    const fade = BROLL.fade;
+    f.push(
+      `[${imageIdx + k}:v]scale=${size.w}:${size.h}:force_original_aspect_ratio=increase,crop=${size.w}:${size.h},setsar=1,fps=${FPS},format=yuv420p,${kenBurnsFilter(b.dur)},` +
+        `format=yuva420p,fade=t=in:st=0:d=${fade}:alpha=1,fade=t=out:st=${Math.max(0, b.dur - fade)}:d=${fade}:alpha=1,setpts=PTS-STARTPTS+${b.start}/TB[bk${k}]`,
+    );
+    f.push(`[${last}][bk${k}]overlay=eof_action=pass:enable='between(t,${b.start},${b.start + b.dur})'[vb${k}]`);
+    last = `vb${k}`;
+  });
+  f.push(kind === 'final' ? `[${last}]ass=${esc(assPath)}:fontsdir=${esc(FONTS_DIR)}[vo]` : `[${last}]null[vo]`);
   if (music) {
     const fadeOut = Math.max(0, req.total - 1.8);
     f.push(`[ac]volume=${req.voice}[av]`);
@@ -210,11 +264,12 @@ export async function assForRequest({ req, lines }) {
 
 // --- exécution de ffmpeg ----------------------------------------------------------------------------
 
-const dirs = () => ({ renders: path.join(storageDir(), 'renders'), previews: path.join(storageDir(), 'previews') });
+const dirs = () => ({ renders: path.join(storageDir(), 'renders'), previews: path.join(storageDir(), 'previews'), stock: stockDir() });
 async function ensureDirs() {
   const d = dirs();
   await fs.mkdir(d.renders, { recursive: true });
   await fs.mkdir(d.previews, { recursive: true });
+  await fs.mkdir(d.stock, { recursive: true });
 }
 
 /** Lance ffmpeg ; `onProgress(0..1)` ; renvoie { cancel }. Rejette avec le dernier message d'erreur de ffmpeg. */
@@ -403,7 +458,10 @@ async function runJob(job) {
   try {
     await fs.writeFile(job.assPath, await assForRequest({ req: job.req, lines: job.lines })); // (mesure du fond arrondi comprise : dans la file, pas avant)
     if (job.status === 'cancelled') return; // annulé pendant la mesure du fond
-    const args = buildFfmpegArgs({ file: job.file, req: job.req, hasAudio: job.hasAudio, assPath: job.assPath, out: job.out, kind: 'final' });
+    const images = {};
+    for (const b of job.req.broll) images[b.id] = await ensureImage(b.id, 'full', { ip: job.ip });
+    if (job.status === 'cancelled') return;
+    const args = buildFfmpegArgs({ file: job.file, req: job.req, hasAudio: job.hasAudio, assPath: job.assPath, out: job.out, kind: 'final', images });
     const run = runFfmpeg(args, job.total, { onProgress: (p) => (job.progress = p), timeoutMs: config().timeoutMs });
     job.cancel = run.cancel;
     await run.promise;
@@ -415,7 +473,7 @@ async function runJob(job) {
       job.status = e.cancelled ? 'cancelled' : 'error';
       if (!e.cancelled) {
         console.error(`Rendu ${job.id} : ${e.message}`);
-        job.error = 'Le rendu de la vidéo a échoué. Réessaie, ou choisis un autre extrait.';
+        job.error = e instanceof HttpError ? e.message : 'Le rendu de la vidéo a échoué. Réessaie, ou choisis un autre extrait.'; // (image indisponible : message clair)
       }
     }
     await fs.rm(job.out, { force: true });

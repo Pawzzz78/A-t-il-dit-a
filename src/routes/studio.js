@@ -9,6 +9,7 @@ import { pool } from '../db.js';
 import { HttpError } from '../http-error.js';
 import { DEFAULT_STYLE, LIMITS, PRESETS } from '../../public/js/studio-core.js';
 import { cancelJob, createPreview, enqueueRender, FONTS, getJob, MUSIC, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
+import { ensureImage, searchPhotos, STOCK_PROVIDER, stockEnabled } from '../studio/stock.js';
 import { parseYoutubeId } from '../youtube.js';
 
 export const studioRouter = Router();
@@ -45,8 +46,27 @@ studioRouter.get('/assets', (_req, res) => {
     fonts: FONTS.map(({ id, label, category, file, em_ratio, cap_em }) => ({ id, label, category, file, em_ratio, cap_em })),
     music: MUSIC.map(({ id, title, mood, bpm, duration_s, file, license }) => ({ id, title, mood, bpm, duration_s, file, license })),
     limits: { ...LIMITS, suggestionMinS: CLIP_LIMITS.minS, suggestionMaxS: CLIP_LIMITS.maxS },
+    stock: { enabled: stockEnabled(), provider: STOCK_PROVIDER },
   });
 });
+
+/** Recherche d'images libres de droits (b-roll). La clé du fournisseur reste sur le serveur. */
+studioRouter.get(
+  '/stock/search',
+  ah(async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json(await searchPhotos(req.query.q, { page: req.query.page, ip: req.ip }));
+  }),
+);
+
+/** Image b-roll pour l'aperçu : téléchargée une fois par le serveur (jamais d'adresse donnée par le visiteur). */
+studioRouter.get(
+  '/stock/image/:id',
+  ah(async (req, res) => {
+    const file = await ensureImage(req.params.id, 'preview', { ip: req.ip });
+    res.sendFile(file, { headers: { 'Cache-Control': 'private, max-age=3600', 'Content-Type': 'image/jpeg' } });
+  }),
+);
 
 studioRouter.get(
   '/videos',

@@ -135,6 +135,30 @@ qu'à choisir les extraits.
   - **miroir** : retourne l'image gauche-droite. Il est appliqué après le cadrage et avant l'incrustation : les sous-titres
     ne sont jamais retournés (en revanche les textes visibles dans l'image le sont). Il ne change pas les droits sur la
     vidéo d'origine ;
+  - **b-roll** (onglet B-roll) :
+    - **zooms** sur les mots importants : un zoom avant juste avant chaque mot repéré (chiffres, mots longs ou rares, absolus comme
+      « jamais », mots repris), un zoom arrière un peu après ; au plus un zoom tous les 6 s, jamais deux collés. « Placer
+      automatiquement » les propose, et l'utilisateur les **choisit lui-même** : ajouter un zoom avant / arrière à l'instant de l'aperçu,
+      changer l'instant (champ à taper, `0:12,5`) ou le type, en supprimer, régler la force (léger 1,10 / moyen 1,20 / fort 1,32) et
+      cliquer sur l'aperçu pour choisir le **point de zoom** (par défaut à hauteur de visage). Les sous-titres et les images ne zooment pas ;
+    - **mouvement sans saccade** : le zoom est une courbe en S continue (vitesse nulle au départ et à l'arrivée) décrite par des événements
+      qui s'enchaînent toujours à partir du niveau atteint. Le rendu n'utilise **pas** le filtre `zoompan` de ffmpeg (il déplace sa
+      fenêtre par pas entiers de pixels : saccades connues) mais `perspective`, dont les coins de fenêtre sont des nombres décimaux
+      (interpolation au sous-pixel, 4 coins évalués à chaque image à partir du compteur d'images, sans dérive). Mesuré sur de vraies
+      images : écart avec la courbe idéale < 0,2 px, contre plusieurs pixels et une irrégularité 10 fois plus forte avec `zoompan`
+      (test `studio.test.js`). Le filtre n'est actif (`enable`) que pendant les zooms : le reste du clip n'est pas retraité (le filtre
+      coûte environ 0,4 s de calcul par seconde de vidéo 1080 × 1920) ;
+    - **aperçu identique** : le navigateur calcule la même courbe (`zoomAt` dans `studio-core.js`, partagé avec le rendu) et l'applique
+      en `transform` à la vidéo seule ; écart avec le MP4 final de 2 à 3 px mesuré ;
+    - **images** libres de droits (Pexels) : recherche (mots du clip proposés), un appui ajoute l'image à l'instant de l'aperçu
+      (2,5 s par défaut, 1 à 8 s, début et durée modifiables, 8 images au plus, sans chevauchement). Image plein écran par-dessus la
+      vidéo pendant que la voix continue, fondu de 0,18 s et très léger zoom lent (même technique). Les crédits des photographes sont
+      ajoutés au texte « Source à citer ». Il faut une clé gratuite `PEXELS_API_KEY` (sans elle, la section images est désactivée) :
+      elle reste sur le serveur, qui interroge Pexels ; le navigateur ne donne qu'un **numéro** de photo, jamais une adresse. Le serveur
+      retrouve l'adresse auprès de Pexels, vérifie qu'elle est en https sur `images.pexels.com` (sans suivre de redirection), contrôle
+      type et taille (15 Mo), garde le fichier dans `STORAGE_DIR/stock` (supprimé après une heure) ; recherches et téléchargements sont
+      limités par visiteur (`STOCK_SEARCHES_PER_HOUR`, `STOCK_DOWNLOADS_PER_HOUR`). Pexels plutôt que Pixabay : API simple, photos
+      verticales, licence gratuite y compris commerciale sans obligation de crédit ;
   - **aperçu en direct** : la vidéo (cadrage seul, 360 × 640) vient du serveur, les sous-titres sont dessinés par le navigateur avec
     le **même code** que le rendu (`public/js/studio-core.js`) : horaires des mots, groupes, tailles, réduction des mots trop
     longs. Vérifié image par image contre le MP4 final.
@@ -309,7 +333,7 @@ src/
 tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéos sans sous-titres, envoyée au site
   openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
-  studio/            studio public : rendu ffmpeg (render.js), mesure du fond des sous-titres (box-probe.js), polices (fonts.json), musiques (music.json)
+  studio/            studio public : rendu ffmpeg (render.js), mesure du fond des sous-titres (box-probe.js), images libres de droits (stock.js), polices (fonts.json), musiques (music.json)
   media.js           fichiers vidéo du studio : dépôt par morceaux, ffprobe, stockage
   clip-suggestions.js  extraits proposés par le LLM (numéros de lignes, horaires issus de la transcription)
   trends.js          tendances : comptage des mots par mois, mots les plus prononcés, cache et limites

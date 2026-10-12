@@ -1,6 +1,6 @@
 // Studio de clips : choix d'une interview, extraits (proposés par l'IA ou libres), sous-titres TikTok (style, police, couleurs,
 // contour, position, taille), musique, cadrage, puis création du MP4 sur le serveur. Aucun innerHTML : tout est posé en nœuds.
-import { LIMITS, PRESETS, SIMILARITY_WARNING, groupWords, lineSimilarity, sanitizeStyle, sourceText, wordsForExtracts } from './studio-core.js';
+import { BROLL, LIMITS, PRESETS, SIMILARITY_WARNING, ZOOM, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
 import { createPhone, el, outlineShadow, rgba } from './studio-preview.js';
 import { fmtDate } from './ui.js';
 
@@ -42,7 +42,7 @@ const loadPrefs = () => {
 };
 const savePrefs = (S) => {
   try {
-    localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror }, step: S.step }));
+    localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror }, step: S.step, zoom: { strength: S.zoom.strength, focus: S.zoom.focus } }));
   } catch {
     // stockage indisponible : sans importance
   }
@@ -101,6 +101,9 @@ async function openEditor(youtubeId) {
     music: { id: assets.music.some((m) => m.id === prefs.music?.id) ? prefs.music.id : null, volume: Number.isFinite(prefs.music?.volume) ? prefs.music.volume : 0.25 },
     voice: Number.isFinite(prefs.voice) ? prefs.voice : 1,
     layout: { fit: prefs.layout?.fit === 'crop' ? 'crop' : 'blur', cropX: 0.5, quality: prefs.layout?.quality === 'fast' ? 'fast' : 'hd', mirror: prefs.layout?.mirror === true },
+    zoom: { on: false, auto: true, ...sanitizeZoom({ strength: prefs.zoom?.strength, focus: prefs.zoom?.focus }), events: [], picking: false }, // zooms : événements { t, kind } en secondes du clip
+    broll: [], // images : { id, start, dur, thumb, photographer, page, alt }
+    stock: { q: '', photos: [], page: 0, next: false, busy: false, error: '' },
     ticket: 0,
     edits: new Map(), // corrections de texte : début de la ligne (ms) -> { orig, text }
   };
@@ -145,15 +148,21 @@ async function openEditor(youtubeId) {
   let cropSlider = null; // curseur « position du cadrage » de l'onglet Cadrage, tenu à jour quand on glisse la vidéo
   const phone = createPhone({
     onMove: ({ x, y }) => setStyle({ x, y }),
+    onPick: (focus) => {
+      S.zoom.focus = focus;
+      savePrefs(S);
+      renderEffects();
+    },
     onCrop: (cropX) => {
       S.layout.cropX = cropX;
       if (cropSlider) cropSlider.value = String(Math.round(cropX * 100));
     },
   });
   const pushFraming = () => phone.setFraming({ fit: S.layout.fit, cropX: S.layout.cropX, mirror: S.layout.mirror });
+  /** Mots horodatés du clip, corrections de texte comprises. */
+  const clipWords = () => wordsForExtracts(S.edits.size ? S.lines.map((l) => (S.edits.has(l.start_ms) ? { ...l, text: S.edits.get(l.start_ms).text } : l)) : S.lines, S.extracts.map(exMs)).words;
   function rebuildSubtitles() {
-    const lines = S.edits.size ? S.lines.map((l) => (S.edits.has(l.start_ms) ? { ...l, text: S.edits.get(l.start_ms).text } : l)) : S.lines;
-    const { words } = wordsForExtracts(lines, S.extracts.map(exMs));
+    const words = clipWords();
     phone.configure({ groups: groupWords(words, S.style), style: S.style, font: fontById.get(S.style.font) });
   }
   function applyAudio() {
@@ -198,6 +207,7 @@ async function openEditor(youtubeId) {
   }
   function extractsChanged() {
     rebuildSubtitles();
+    keepEffectsInClip();
     renderExtracts();
     renderTextEditor();
     schedulePreview();
@@ -610,6 +620,7 @@ async function openEditor(youtubeId) {
       el('li', {}, el('strong', {}, 'Sous-titres : '), `${PRESETS[S.style.preset].label}, ${fontById.get(S.style.font).label}`),
       el('li', {}, el('strong', {}, 'Musique : '), track ? track.title : 'aucune'),
       ...(editedInClip() ? [el('li', {}, el('strong', {}, 'Texte : '), `${editedInClip()} ligne${editedInClip() > 1 ? 's' : ''} de sous-titres corrigée${editedInClip() > 1 ? 's' : ''}`)] : []),
+      ...(S.zoom.on && S.zoom.events.some((e) => e.kind === 'in') || S.broll.length ? [el('li', {}, el('strong', {}, 'B-roll : '), [S.zoom.on && S.zoom.events.some((e) => e.kind === 'in') ? `${S.zoom.events.filter((e) => e.kind === 'in').length} zoom${S.zoom.events.filter((e) => e.kind === 'in').length > 1 ? 's' : ''}` : '', S.broll.length ? `${S.broll.length} image${S.broll.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(', '))] : []),
       el('li', {}, el('strong', {}, 'Cadrage : '), `${S.layout.fit === 'blur' ? 'vidéo entière sur fond flou' : 'plein écran'}${S.layout.mirror ? ', en miroir' : ''}`)));
     makeBtn.disabled = !S.extracts.length || !pledge.checked || Boolean(job && ['queued', 'running'].includes(job.status));
   }
@@ -686,6 +697,8 @@ async function openEditor(youtubeId) {
         style: S.style,
         music: S.music.id ? S.music : null,
         voice: S.voice,
+        zoom: S.zoom.on && S.zoom.events.length ? { strength: S.zoom.strength, focus: S.zoom.focus, events: S.zoom.events } : null,
+        broll: S.broll.map(({ id, start, dur }) => ({ id, start, dur })),
         edits: Object.fromEntries(clipLines().filter((r) => S.edits.has(r.line.start_ms)).map((r) => [r.line.start_ms, S.edits.get(r.line.start_ms).text])),
       });
       showJob();
@@ -696,8 +709,214 @@ async function openEditor(youtubeId) {
     }
   });
 
+  // ============================================================ onglet B-roll (zooms et images)
+  const panelFx = el('div', { class: 'st-panel' });
+  const fxNote = el('p', { class: 'st-msg' });
+  const fxAlert = (msg) => {
+    fxNote.className = 'st-msg err';
+    fxNote.textContent = msg;
+    setTimeout(() => (fxNote.textContent = ''), 4500);
+  };
+  const playhead = () => Math.round((phone.video.currentTime || 0) * 100) / 100;
+  const tMs = (t) => Math.round(t * 1000);
+
+  /** Envoie zooms et images à l'aperçu. */
+  function pushFx() {
+    phone.setEffects({
+      plan: S.zoom.on ? zoomPlan(S.zoom.events, S.zoom.strength) : [],
+      focus: S.zoom.focus,
+      picking: S.zoom.picking,
+      broll: S.broll.map((b) => ({ start: b.start, dur: b.dur, url: `/api/studio/stock/image/${b.id}` })),
+    });
+  }
+  function effectsChanged() {
+    S.zoom.events = sanitizeZoom({ ...S.zoom, events: S.zoom.events }).events;
+    pushFx();
+    renderEffects();
+    updateSource();
+    renderCreateSummary();
+  }
+  /** Zooms automatiques sur les mots importants du clip. */
+  function autoZoom() {
+    S.zoom.events = suggestZoomPoints(clipWords(), totalS()).events;
+    S.zoom.auto = true;
+  }
+  /** Le clip a changé : les zooms automatiques sont recalculés, les réglages manuels et les images sont gardés tant qu'ils restent dans le clip. */
+  function keepEffectsInClip() {
+    const total = totalS();
+    if (S.zoom.on && S.zoom.auto) autoZoom();
+    else S.zoom.events = S.zoom.events.filter((e) => e.t <= total);
+    S.broll = S.broll.filter((b) => b.start < total - 0.5).map((b) => ({ ...b, dur: Math.min(b.dur, Math.round((total - b.start) * 100) / 100) }));
+    pushFx();
+    renderEffects();
+    updateSource();
+  }
+  const setZoomEvents = (events, manual = true) => {
+    S.zoom.events = events;
+    if (manual) S.zoom.auto = false;
+    effectsChanged();
+  };
+  function addZoom(kind) {
+    const t = Math.min(totalS() - 0.1, playhead());
+    if (!S.extracts.length) return fxAlert('Ajoute d’abord un extrait.');
+    if (S.zoom.events.some((e) => Math.abs(e.t - t) < ZOOM.minGap)) return fxAlert(`Trop près d’un autre zoom (${String(ZOOM.minGap).replace('.', ',')} s au minimum).`);
+    if (S.zoom.events.length >= ZOOM.maxEvents) return fxAlert(`${ZOOM.maxEvents} zooms au maximum.`);
+    S.zoom.on = true;
+    setZoomEvents([...S.zoom.events, { t, kind }].sort((a, b) => a.t - b.t));
+  }
+
+  // --- images libres de droits
+  async function searchStock(more = false) {
+    const st = S.stock;
+    const q = st.q.trim();
+    if (q.length < 2 || st.busy) return;
+    st.busy = true;
+    st.error = '';
+    renderEffects();
+    try {
+      const page = more ? st.page + 1 : 1;
+      const r = await api('GET', `/stock/search?${new URLSearchParams({ q, page })}`);
+      st.photos = more ? [...st.photos, ...r.photos] : r.photos;
+      st.page = r.page;
+      st.next = r.next;
+      if (!r.photos.length && !more) st.error = 'Aucune image trouvée : essaie un autre mot.';
+    } catch (e) {
+      st.error = e.message;
+    }
+    st.busy = false;
+    renderEffects();
+  }
+  /** Première place libre (au moins `dur` secondes) à partir de `from`. */
+  function freeSlot(from, dur, ignore = null) {
+    const total = totalS();
+    const items = S.broll.filter((b) => b !== ignore).sort((a, b) => a.start - b.start);
+    let start = Math.max(0, from);
+    for (const b of items) {
+      if (start + dur <= b.start + 1e-9) break;
+      if (start < b.start + b.dur) start = b.start + b.dur;
+    }
+    return start + dur <= total + 1e-9 ? Math.round(start * 100) / 100 : null;
+  }
+  function addBroll(photo) {
+    const total = totalS();
+    if (!S.extracts.length) return fxAlert('Ajoute d’abord un extrait.');
+    if (S.broll.length >= BROLL.maxItems) return fxAlert(`${BROLL.maxItems} images au maximum.`);
+    const at = Math.min(playhead(), Math.max(0, total - BROLL.minS));
+    const dur = Math.min(BROLL.defaultS, total - at);
+    const start = freeSlot(at, dur) ?? freeSlot(0, Math.min(BROLL.defaultS, total));
+    if (start == null) return fxAlert('Il n’y a plus de place pour une image dans ce clip.');
+    S.broll.push({ id: photo.id, start, dur: Math.min(BROLL.defaultS, total - start), thumb: photo.thumb, photographer: photo.photographer, page: photo.page, alt: photo.alt });
+    S.broll.sort((a, b) => a.start - b.start);
+    effectsChanged();
+    phone.seek(start);
+  }
+  function updateBroll(b, patch) {
+    const next = { ...b, ...patch };
+    const total = totalS();
+    next.start = Math.round(next.start * 100) / 100;
+    next.dur = Math.round(Math.min(BROLL.maxS, Math.max(BROLL.minS, next.dur)) * 100) / 100;
+    if (next.start < 0 || next.start + next.dur > total + 1e-9) return fxAlert(`L’image doit rester dans le clip (${secs(total)}).`);
+    if (S.broll.some((o) => o !== b && next.start < o.start + o.dur && o.start < next.start + next.dur)) return fxAlert('Deux images ne peuvent pas se chevaucher.');
+    Object.assign(b, next);
+    S.broll.sort((x, y) => x.start - y.start);
+    effectsChanged();
+  }
+  /** Source à citer : l'interview, plus les photographes des images utilisées. */
+  function updateSource() {
+    const credits = [...new Set(S.broll.map((b) => b.photographer).filter(Boolean))];
+    sourceField.value =
+      `${sourceText(S.video.title, S.video.published_at)} — https://www.youtube.com/watch?v=${S.video.youtube_id}` +
+      (credits.length ? `\nImages : ${credits.join(', ')} (Pexels)` : '');
+    sourceField.rows = credits.length ? 3 : 2;
+  }
+
+  const timeField = (label, ms, onSet, extra = {}) => {
+    const input = el('input', { class: 'st-time', type: 'text', inputmode: 'decimal', value: fmtT(ms), 'aria-label': label, title: 'Tu peux taper un instant : 0:12,5', ...extra });
+    input.addEventListener('change', () => {
+      const v = parseT(input.value);
+      if (v == null) { input.value = fmtT(ms); return fxAlert('Instant illisible : écris par exemple 0:12,5 ou 12,5.'); }
+      onSet(v / 1000);
+    });
+    return input;
+  };
+
+  function renderEffects() {
+    const total = totalS();
+    const words = clipWords();
+    const strengthChips = el('div', { class: 'seg st-stepchips', role: 'group', 'aria-label': 'Force du zoom' },
+      [['light', 'Léger'], ['medium', 'Moyen'], ['strong', 'Fort']].map(([k, label]) =>
+        el('button', { type: 'button', 'aria-pressed': String(S.zoom.strength === ZOOM.strengths[k]), onclick: () => { S.zoom.strength = ZOOM.strengths[k]; savePrefs(S); effectsChanged(); } }, label)));
+    const zoomRows = S.zoom.events.map((e, i) =>
+      el('li', { class: 'st-fxrow' },
+        timeField(`Instant du zoom ${i + 1}`, tMs(e.t), (t) => {
+          if (t > total) return fxAlert('Cet instant est après la fin du clip.');
+          if (S.zoom.events.some((o, j) => j !== i && Math.abs(o.t - t) < ZOOM.minGap)) return fxAlert('Trop près d’un autre zoom.');
+          const events = S.zoom.events.map((o, j) => (j === i ? { ...o, t } : o)).sort((a, b) => a.t - b.t);
+          setZoomEvents(events);
+        }),
+        el('select', { class: 'st-select', 'aria-label': `Type du zoom ${i + 1}`, onchange: (ev) => setZoomEvents(S.zoom.events.map((o, j) => (j === i ? { ...o, kind: ev.target.value } : o))) },
+          el('option', { value: 'in', selected: e.kind === 'in' }, 'Zoom avant'), el('option', { value: 'out', selected: e.kind === 'out' }, 'Zoom arrière')),
+        el('span', { class: 'st-fxword' }, e.kind === 'in' ? wordNear(words, e.t + 0.15) : ''),
+        el('button', { type: 'button', class: 'st-mini', title: 'Voir ce moment', 'aria-label': 'Voir ce moment', onclick: () => phone.seek(Math.max(0, e.t - 0.6), true) }, '▶'),
+        el('button', { type: 'button', class: 'st-mini', title: 'Supprimer ce zoom', 'aria-label': 'Supprimer ce zoom', onclick: () => setZoomEvents(S.zoom.events.filter((_, j) => j !== i)) }, '×')));
+
+    const stockOn = assets.stock?.enabled;
+    const hints = suggestZoomPoints(words, total, { minSep: 0.01, max: 6 }).hints.map((h) => h.word).filter((w, i, a) => w && a.indexOf(w) === i);
+    const searchInput = el('input', { type: 'search', class: 'st-search', placeholder: 'Chercher une image (ex. mairie, argent, école)…', 'aria-label': 'Chercher une image', value: S.stock.q });
+    searchInput.addEventListener('input', () => { S.stock.q = searchInput.value; });
+    searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); searchStock(); } });
+    const brollRows = S.broll.map((b, i) =>
+      el('li', { class: 'st-fxrow broll' },
+        el('img', { class: 'st-bthumb', src: b.thumb, alt: b.alt || 'Image', loading: 'lazy' }),
+        el('div', { class: 'st-bfields' },
+          el('label', {}, 'Début', timeField(`Début de l’image ${i + 1}`, tMs(b.start), (t) => updateBroll(b, { start: t }))),
+          el('label', {}, 'Durée', timeField(`Durée de l’image ${i + 1}`, tMs(b.dur), (t) => updateBroll(b, { dur: t }), { title: 'Durée en secondes : 2,5' }))),
+        el('button', { type: 'button', class: 'st-mini', title: 'Voir cette image', 'aria-label': 'Voir cette image', onclick: () => phone.seek(Math.max(0, b.start - 0.4), true) }, '▶'),
+        el('button', { type: 'button', class: 'st-mini', title: 'Retirer cette image', 'aria-label': 'Retirer cette image', onclick: () => { S.broll = S.broll.filter((o) => o !== b); effectsChanged(); } }, '×')));
+
+    panelFx.replaceChildren(...[
+      el('h3', {}, 'Zooms'),
+      el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: S.zoom.on, onchange: (e) => { S.zoom.on = e.target.checked; if (S.zoom.on && !S.zoom.events.length) autoZoom(); effectsChanged(); } }), 'Zooms sur les mots importants'),
+      el('p', { class: 'st-help' }, 'Un zoom avant au moment d’un mot important, puis un zoom arrière. Le mouvement est lissé image par image : jamais de saccade. Les sous-titres et les images ne bougent pas.'),
+      ...(S.zoom.on
+        ? [
+            el('div', { class: 'st-row' }, el('label', {}, 'Force'), el('div', { class: 'st-row-ctl' }, strengthChips)),
+            el('div', { class: 'st-fxbar' },
+              el('button', { type: 'button', class: 'btn small', onclick: () => { if (!S.extracts.length) return fxAlert('Ajoute d’abord un extrait.'); autoZoom(); effectsChanged(); } }, 'Placer automatiquement'),
+              el('button', { type: 'button', class: 'btn secondary small', onclick: () => addZoom('in') }, 'Zoom avant ici'),
+              el('button', { type: 'button', class: 'btn secondary small', onclick: () => addZoom('out') }, 'Zoom arrière ici')),
+            el('p', { class: 'st-help' }, '« Ici » = l’instant où se trouve l’aperçu : mets l’aperçu en pause au bon endroit (curseur sous la vidéo), puis choisis.'),
+            el('div', { class: 'st-fxbar' },
+              el('button', { type: 'button', class: S.zoom.picking ? 'btn small' : 'btn secondary small', onclick: () => { S.zoom.picking = !S.zoom.picking; pushFx(); renderEffects(); } }, S.zoom.picking ? 'Terminé' : 'Choisir le point de zoom'),
+              el('span', { class: 'st-help inline' }, `Point de zoom : ${Math.round(S.zoom.focus.x * 100)} % à droite, ${Math.round(S.zoom.focus.y * 100)} % en bas`),
+              el('button', { type: 'button', class: 'st-link', onclick: () => { S.zoom.focus = { ...ZOOM.focus }; savePrefs(S); effectsChanged(); } }, 'Réinitialiser')),
+            zoomRows.length ? el('ol', { class: 'st-fxlist' }, zoomRows) : el('p', { class: 'st-help' }, 'Aucun zoom : « Placer automatiquement » ou ajoute-en à la main.'),
+          ]
+        : []),
+      el('h3', {}, 'Images'),
+      el('p', { class: 'st-help' }, 'Une image plein écran par-dessus la vidéo pendant que la voix continue (b-roll), avec un très léger zoom lent. Images libres de droits.'),
+      ...(stockOn
+        ? [
+            el('div', { class: 'st-searchbar' }, searchInput, el('button', { type: 'button', class: 'btn small', disabled: S.stock.busy, onclick: () => searchStock() }, S.stock.busy ? 'Recherche…' : 'Chercher')),
+            hints.length ? el('div', { class: 'st-chips' }, el('small', {}, 'Mots du clip :'), hints.map((w) => el('button', { type: 'button', class: 'st-chip', onclick: () => { S.stock.q = w; searchStock(); } }, w))) : null,
+            S.stock.error ? el('p', { class: 'st-msg err' }, S.stock.error) : null,
+            S.stock.photos.length
+              ? el('div', { class: 'st-photos' }, S.stock.photos.map((p) =>
+                  el('button', { type: 'button', class: 'st-photo', title: `Ajouter à l’instant de l’aperçu — ${p.photographer} / Pexels`, style: { background: p.color }, onclick: () => addBroll(p) },
+                    el('img', { src: p.thumb, alt: p.alt || 'Image', loading: 'lazy' }))))
+              : null,
+            S.stock.next ? el('button', { type: 'button', class: 'btn secondary small', disabled: S.stock.busy, onclick: () => searchStock(true) }, 'Plus d’images') : null,
+            S.stock.photos.length ? el('p', { class: 'st-help' }, 'Touche une image pour l’ajouter à l’instant où se trouve l’aperçu. Photos Pexels : les crédits sont ajoutés au texte « Source à citer ».') : null,
+            brollRows.length ? el('h4', {}, `Images du clip (${brollRows.length}/${BROLL.maxItems})`) : null,
+            brollRows.length ? el('ul', { class: 'st-fxlist' }, brollRows) : null,
+          ]
+        : [el('p', { class: 'st-help' }, 'La recherche d’images n’est pas encore activée sur ce site (clé Pexels manquante).')]),
+      fxNote,
+    ].filter(Boolean));
+  }
+
   // ============================================================ mise en page
-  const tabs = [['extraits', 'Extraits', panelExtracts], ['style', 'Sous-titres', panelStyle], ['musique', 'Musique', panelMusic], ['cadrage', 'Cadrage', panelFrame], ['creer', 'Créer', panelCreate]];
+  const tabs = [['extraits', 'Extraits', panelExtracts], ['style', 'Sous-titres', panelStyle], ['musique', 'Musique', panelMusic], ['fx', 'B-roll', panelFx], ['cadrage', 'Cadrage', panelFrame], ['creer', 'Créer', panelCreate]];
   const tabBar = el('div', { class: 'st-tabs', role: 'tablist' });
   const stage = el('div', { class: 'st-stage card' });
   function openTab(id) {
@@ -708,6 +927,8 @@ async function openEditor(youtubeId) {
     });
     if (id !== 'musique' && auditionId) { audition.pause(); auditionId = null; renderMusic(); }
     if (id === 'creer') renderCreateSummary();
+    if (id === 'fx') renderEffects();
+    if (id !== 'fx' && S.zoom.picking) { S.zoom.picking = false; pushFx(); } // on ne reste pas bloqué en choix du point de zoom
   }
   tabs.forEach(([id, label]) => tabBar.append(el('button', { type: 'button', role: 'tab', 'data-tab': id, onclick: () => openTab(id) }, label)));
   stage.append(tabBar, ...tabs.map(([, , p]) => p));
