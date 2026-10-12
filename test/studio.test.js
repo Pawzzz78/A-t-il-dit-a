@@ -475,3 +475,22 @@ test('fond arrondi : mesuré par libass puis dessiné — coins arrondis, bords 
   const [a, b] = [extent(rP), extent(sP)];
   for (let i = 0; i < 4; i++) assert.ok(Math.abs(a[i] - b[i]) <= 2, `bord ${i} : ${a[i]} vs ${b[i]}`);
 });
+
+test('extrait précis : bornes à la milliseconde, mots gardés selon l\'horaire, rendu de la durée exacte', { skip: !enabled }, async () => {
+  const { assForRequest, normalizeRequest } = studio;
+  const video = { file_duration_s: DURATION };
+  const lns = Array.from({ length: 12 }, (_, i) => ({ start_ms: i * 1000, end_ms: i * 1000 + 950, text: `un deux trois quatre cinq six sept huit` }));
+  const req = normalizeRequest({ extracts: [{ start_ms: 2480, end_ms: 6130 }], style: { preset: 'hormozi', mode: 'one' } }, video);
+  assert.deepEqual(req.extracts, [{ start_ms: 2480, end_ms: 6130 }]); // pas arrondi à la seconde
+  assert.equal(req.total, 3.65);
+  const ass = await assForRequest({ req, lines: lns });
+  const starts = ass.split('\n').filter((l) => l.startsWith('Dialogue: 1,')).map((l) => l.split(',')[1]);
+  assert.ok(starts.length > 20 && starts.length < 5 * 8, `${starts.length} mots affichés`); // 5 lignes touchées, mais seuls les mots dits dans l'extrait
+  assert.equal(starts[0] >= '0:00:00.00', true);
+  const r = await api('POST', '/api/studio/render', REQ({ extracts: [{ start_ms: 2480, end_ms: 6130 }], music: null, layout: { fit: 'blur', quality: 'fast' } }));
+  assert.equal(r.status, 202, JSON.stringify(r.body));
+  await waitFor(r.body.id, (s2) => s2.status === 'done');
+  const file = path.join(dir, 'precise.mp4');
+  await fs.writeFile(file, Buffer.from(await (await fetch(`${base}/api/studio/render/${r.body.id}/file`)).arrayBuffer()));
+  assert.ok(Math.abs(Number(probe(file).format.duration) - 3.65) < 0.15, `durée ${probe(file).format.duration}`);
+});

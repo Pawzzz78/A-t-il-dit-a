@@ -16,7 +16,23 @@ const api = async (method, path, body) => {
   return data;
 };
 const mmss = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`;
-const secs = (n) => `${Math.round(n)} s`;
+const secs = (n) => {
+  const r = Math.round(n * 10) / 10;
+  return `${String(r).replace('.', ',')} s`;
+};
+/** Instant d'une vidéo : 1:23,5 (dixièmes) ou 1:23,45 (centièmes si besoin). */
+const fmtT = (ms) => {
+  const t = Math.max(0, Math.round(ms / 10) * 10);
+  const cs = t % 1000;
+  const frac = cs % 100 === 0 ? String(cs / 100) : String(cs / 10).padStart(2, '0');
+  return `${Math.floor(t / 60000)}:${String(Math.floor((t % 60000) / 1000)).padStart(2, '0')},${frac}`;
+};
+/** « 1:23,5 », « 1:23.5 », « 83,5 » ou « 83 » -> millisecondes ; null si illisible. */
+const parseT = (text) => {
+  const m = /^\s*(?:(\d{1,3}):)?(\d{1,5})(?:[.,](\d{1,3}))?\s*$/.exec(String(text));
+  if (!m) return null;
+  return Math.round(((Number(m[1] ?? 0) * 60 + Number(m[2])) * 1000 + Number((m[3] ?? '').padEnd(3, '0'))) / 10) * 10;
+};
 const loadPrefs = () => {
   try {
     return JSON.parse(localStorage.getItem(PREF_KEY) ?? '{}');
@@ -26,7 +42,7 @@ const loadPrefs = () => {
 };
 const savePrefs = (S) => {
   try {
-    localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror } }));
+    localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror }, step: S.step }));
   } catch {
     // stockage indisponible : sans importance
   }
@@ -79,7 +95,8 @@ async function openEditor(youtubeId) {
     video: detail.video,
     lines: detail.lines.map(([start_ms, end_ms, text]) => ({ start_ms, end_ms, text })),
     suggestions: detail.suggestions,
-    extracts: [], // { a, b, title } : indices de lignes, bornes incluses
+    extracts: [], // { start_ms, end_ms, title, from } : bornes en millisecondes ; `from` : début de l'extrait proposé d'origine
+    step: prefs.step === 'line' ? 'line' : Number.isFinite(prefs.step) && prefs.step >= 10 && prefs.step <= 30000 ? prefs.step : 500, // pas de réglage : 'line' (limite de ligne) ou durée en ms
     style: sanitizeStyle(prefs.style, fontIds),
     music: { id: assets.music.some((m) => m.id === prefs.music?.id) ? prefs.music.id : null, volume: Number.isFinite(prefs.music?.volume) ? prefs.music.volume : 0.25 },
     voice: Number.isFinite(prefs.voice) ? prefs.voice : 1,
@@ -110,20 +127,19 @@ async function openEditor(youtubeId) {
   document.head.append(el('style', {}, fontCss));
 
   // --- outils sur les extraits
-  const line = (i) => S.lines[i];
-  const exMs = (ex) => ({ start_ms: line(ex.a).start_ms, end_ms: line(ex.b).end_ms });
-  const exDur = (ex) => (line(ex.b).end_ms - line(ex.a).start_ms) / 1000;
+  const exMs = (ex) => ({ start_ms: ex.start_ms, end_ms: ex.end_ms });
+  const exDur = (ex) => (ex.end_ms - ex.start_ms) / 1000;
   const totalS = () => S.extracts.reduce((n, ex) => n + exDur(ex), 0);
-  const lineAt = (ms) => {
-    let best = 0;
-    for (let i = 0; i < S.lines.length; i++) if (Math.abs(S.lines[i].start_ms - ms) < Math.abs(S.lines[best].start_ms - ms)) best = i;
+  /** Ligne de la transcription dite à l'instant `ms` (sinon la plus proche), pour rappeler où l'on en est. */
+  const lineAround = (ms) => {
+    let best = S.lines[0];
+    for (const l of S.lines) {
+      if (ms >= l.start_ms && ms < l.end_ms) return l;
+      if (Math.abs(l.start_ms - ms) < Math.abs(best.start_ms - ms)) best = l;
+    }
     return best;
   };
-  const lineEndingAt = (ms) => {
-    let best = 0;
-    for (let i = 0; i < S.lines.length; i++) if (Math.abs(S.lines[i].end_ms - ms) < Math.abs(S.lines[best].end_ms - ms)) best = i;
-    return best;
-  };
+  const videoEndMs = () => Math.floor(S.video.duration_s * 1000);
 
   // --- aperçu
   let cropSlider = null; // curseur « position du cadrage » de l'onglet Cadrage, tenu à jour quand on glisse la vidéo
@@ -173,9 +189,9 @@ async function openEditor(youtubeId) {
   const panelExtracts = el('div', { class: 'st-panel' });
   const minTotalNote = () => `${secs(totalS())} sur ${LIMITS.maxTotalS} s maximum`;
 
-  function addExtract(a, b, title) {
+  function addExtract(start_ms, end_ms, title, from) {
     if (S.extracts.length >= LIMITS.maxExtracts) return alertNote(`${LIMITS.maxExtracts} extraits au maximum.`);
-    const ex = { a, b, title };
+    const ex = { start_ms, end_ms: Math.min(end_ms, videoEndMs()), title, from };
     if (totalS() + exDur(ex) > LIMITS.maxTotalS) return alertNote(`Le clip ne peut pas dépasser ${LIMITS.maxTotalS} secondes.`);
     S.extracts.push(ex);
     extractsChanged();
@@ -194,14 +210,28 @@ async function openEditor(youtubeId) {
     setTimeout(() => (note.textContent = ''), 4000);
   };
 
-  function shift(ex, which, delta) {
-    const next = { ...ex };
-    next[which] += delta;
-    if (next.a < 0 || next.b >= S.lines.length || next.a > next.b) return;
+  /**
+   * Règle une borne de l'extrait (`which` : 'start_ms' ou 'end_ms') sur l'instant `ms`, au centième de seconde. Refuse un clip trop
+   * court, trop long ou hors de la vidéo, en le disant.
+   */
+  function setEdge(ex, which, ms) {
+    const next = { ...ex, [which]: Math.round(ms / 10) * 10 };
+    if (next.start_ms < 0 || next.end_ms > videoEndMs()) return alertNote(`L’extrait doit rester entre 0:00 et ${fmtT(videoEndMs())}.`);
     if (exDur(next) < LIMITS.minExtractS) return alertNote(`Un extrait doit durer au moins ${LIMITS.minExtractS} secondes.`);
     if (totalS() - exDur(ex) + exDur(next) > LIMITS.maxTotalS) return alertNote(`Le clip ne peut pas dépasser ${LIMITS.maxTotalS} secondes.`);
     Object.assign(ex, next);
     extractsChanged();
+  }
+  /** Avance (+1) ou recule (-1) une borne d'un pas : une durée, ou jusqu'à la limite de ligne suivante / précédente. */
+  function nudge(ex, which, dir) {
+    const cur = ex[which];
+    if (S.step === 'line') {
+      const key = which === 'start_ms' ? 'start_ms' : 'end_ms';
+      const marks = S.lines.map((l) => l[key]);
+      const target = dir > 0 ? marks.find((t) => t > cur + 20) : [...marks].reverse().find((t) => t < cur - 20);
+      return target == null ? alertNote('Il n’y a pas de ligne plus loin.') : setEdge(ex, which, target);
+    }
+    setEdge(ex, which, cur + dir * S.step);
   }
   const move = (i, d) => {
     const j = i + d;
@@ -211,15 +241,53 @@ async function openEditor(youtubeId) {
   };
   const excerpt = (t, n = 70) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
 
+  let focusKey = '';
   function extractRow(ex, i) {
-    const btn = (label, title, fn, disabled) => el('button', { class: 'st-mini', type: 'button', title, 'aria-label': title, disabled, onclick: fn }, label);
+    const btn = (label, title, fn, disabled, key) => el('button', { class: 'st-mini', type: 'button', title, 'aria-label': title, disabled, 'data-k': key, onclick: fn }, label);
+    const edge = (label, which, lessTitle, moreTitle) => {
+      const field = el('input', { class: 'st-time', type: 'text', inputmode: 'decimal', value: fmtT(ex[which]), 'aria-label': `${label} de l’extrait (minutes:secondes,dixièmes)`, title: 'Tu peux taper un instant : 1:23,5' });
+      field.addEventListener('change', () => {
+        const ms = parseT(field.value);
+        if (ms == null) { field.value = fmtT(ex[which]); return alertNote('Instant illisible : écris par exemple 1:23,5 ou 83,5.'); }
+        focusKey = `${i}:${which}:t`;
+        setEdge(ex, which, ms);
+        field.value = fmtT(ex[which]);
+      });
+      field.dataset.k = `${i}:${which}:t`;
+      const go = (dir) => { focusKey = `${i}:${which}:${dir}`; nudge(ex, which, dir); };
+      return el('div', { class: 'st-edge' },
+        el('div', { class: 'st-edge-ctl' }, el('span', { class: 'st-edge-label' }, label), btn('−', lessTitle, () => go(-1), false, `${i}:${which}:-1`), field, btn('+', moreTitle, () => go(1), false, `${i}:${which}:1`)),
+        el('span', { class: 'st-edge-text' }, `« ${excerpt(lineAround(ex[which]).text)} »`));
+    };
     return el('li', { class: 'st-ex' },
-      el('div', { class: 'st-ex-head' }, el('strong', {}, ex.title || 'Passage libre'), el('span', { class: 'badge' }, `${mmss(exMs(ex).start_ms)} → ${mmss(exMs(ex).end_ms)} · ${secs(exDur(ex))}`)),
-      el('div', { class: 'st-edge' }, el('span', {}, `Début : « ${excerpt(line(ex.a).text)} »`), el('span', { class: 'st-steps' }, btn('−', 'Commencer une ligne plus tôt', () => shift(ex, 'a', -1)), btn('+', 'Commencer une ligne plus tard', () => shift(ex, 'a', 1)))),
-      el('div', { class: 'st-edge' }, el('span', {}, `Fin : « ${excerpt(line(ex.b).text)} »`), el('span', { class: 'st-steps' }, btn('−', 'Finir une ligne plus tôt', () => shift(ex, 'b', -1)), btn('+', 'Finir une ligne plus tard', () => shift(ex, 'b', 1)))),
+      el('div', { class: 'st-ex-head' }, el('strong', {}, ex.title || 'Passage libre'), el('span', { class: 'badge' }, `${fmtT(ex.start_ms)} → ${fmtT(ex.end_ms)} · ${secs(exDur(ex))}`)),
+      edge('Début', 'start_ms', 'Commencer plus tôt (ajoute du temps avant)', 'Commencer plus tard (retire du temps au début)'),
+      edge('Fin', 'end_ms', 'Finir plus tôt (retire du temps à la fin)', 'Finir plus tard (ajoute du temps après)'),
       el('div', { class: 'st-ex-tools' }, btn('↑', 'Monter', () => move(i, -1), i === 0), btn('↓', 'Descendre', () => move(i, 1), i === S.extracts.length - 1),
         el('button', { class: 'st-link', type: 'button', onclick: () => { S.extracts.splice(i, 1); extractsChanged(); } }, 'Retirer')),
     );
+  }
+
+  /** Pas de réglage des bornes : quelques valeurs rapides, ou n'importe quelle durée (champ libre). */
+  function stepBar() {
+    const chips = [[100, '0,1 s'], [500, '0,5 s'], [1000, '1 s'], [2000, '2 s'], ['line', 'Ligne']];
+    const custom = el('input', { class: 'st-time short', type: 'text', inputmode: 'decimal', 'aria-label': 'Autre pas, en secondes', placeholder: 'autre' });
+    const group = el('div', { class: 'seg st-stepchips', role: 'group', 'aria-label': 'Pas de réglage' });
+    const sync = () => {
+      group.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(String(S.step) === b.dataset.step)));
+      custom.value = chips.some(([v]) => v === S.step) ? '' : String(S.step / 1000).replace('.', ',');
+      custom.classList.toggle('on', Boolean(custom.value));
+    };
+    for (const [v, label] of chips) group.append(el('button', { type: 'button', 'data-step': String(v), onclick: () => { S.step = v; savePrefs(S); sync(); } }, label));
+    custom.addEventListener('change', () => {
+      const ms = parseT(custom.value);
+      if (ms == null || ms < 10 || ms > 30000) { sync(); return alertNote('Pas libre : entre 0,01 et 30 secondes (par exemple 0,3).'); }
+      S.step = ms;
+      savePrefs(S);
+      sync();
+    });
+    sync();
+    return el('div', { class: 'st-stepbar' }, el('span', { class: 'st-step-label' }, 'Pas des boutons − / +'), group, el('span', { class: 'st-step-custom' }, custom, el('small', {}, 's')));
   }
 
   const search = el('input', { type: 'search', class: 'st-search', placeholder: 'Chercher un mot dans la transcription…', 'aria-label': 'Chercher dans la transcription' });
@@ -240,13 +308,14 @@ async function openEditor(youtubeId) {
   function startFree(i) {
     let b = i;
     while (b + 1 < S.lines.length && (S.lines[b].end_ms - S.lines[i].start_ms) / 1000 < 25) b++;
-    addExtract(i, b, null);
+    addExtract(S.lines[i].start_ms, S.lines[b].end_ms, null);
   }
 
   function renderExtracts() {
-    const taken = new Set(S.extracts.map((e) => exMs(e).start_ms));
+    const taken = new Set(S.extracts.map((e) => e.from).filter((v) => v != null));
     panelExtracts.replaceChildren(
       el('h3', {}, 'Mon clip'),
+      S.extracts.length ? stepBar() : null,
       S.extracts.length ? el('ol', { class: 'st-exlist' }, S.extracts.map(extractRow)) : el('p', { class: 'st-help' }, 'Ajoute un extrait ci-dessous : l’aperçu apparaît à gauche.'),
       el('p', { class: totalS() > LIMITS.maxTotalS ? 'st-total err' : 'st-total' }, S.extracts.length ? `Durée : ${minTotalNote()}` : ''),
       note,
@@ -259,17 +328,21 @@ async function openEditor(youtubeId) {
               el('p', { class: 'st-meta' }, `${mmss(sg.start_ms)} → ${mmss(sg.end_ms)} · ${secs(sg.duration_s)}`),
               el('details', {}, el('summary', {}, 'Lire l’extrait'), el('p', { class: 'st-text' }, sg.text)),
               taken.has(sg.start_ms)
-                ? el('button', { class: 'btn secondary small', type: 'button', onclick: () => { const k = S.extracts.findIndex((e) => exMs(e).start_ms === sg.start_ms); if (k >= 0) { S.extracts.splice(k, 1); extractsChanged(); } } }, 'Retirer de mon clip')
-                : el('button', { class: 'btn small', type: 'button', onclick: () => addExtract(lineAt(sg.start_ms), lineEndingAt(sg.end_ms), sg.title) }, 'Ajouter à mon clip'),
+                ? el('button', { class: 'btn secondary small', type: 'button', onclick: () => { const k = S.extracts.findIndex((e) => e.from === sg.start_ms); if (k >= 0) { S.extracts.splice(k, 1); extractsChanged(); } } }, 'Retirer de mon clip')
+                : el('button', { class: 'btn small', type: 'button', onclick: () => addExtract(sg.start_ms, sg.end_ms, sg.title, sg.start_ms) }, 'Ajouter à mon clip'),
             )),
           )
         : el('p', { class: 'st-help' }, 'Pas d’extrait proposé pour cette vidéo : choisis un passage dans la transcription.'),
       el('h3', {}, 'Choisir un autre passage'),
-      el('p', { class: 'st-help' }, 'Touche une ligne : l’extrait démarre là (environ 25 s), puis ajuste le début et la fin ligne par ligne.'),
+      el('p', { class: 'st-help' }, 'Touche une ligne : l’extrait démarre là (environ 25 s), puis ajuste le début et la fin au dixième de seconde (ou tape l’instant exact).'),
       search,
       lineList,
     );
     renderLines();
+    if (focusKey) {
+      panelExtracts.querySelector(`[data-k="${focusKey}"]`)?.focus({ preventScroll: true });
+      focusKey = '';
+    }
   }
 
   // ============================================================ onglet Sous-titres
@@ -384,9 +457,8 @@ async function openEditor(youtubeId) {
     const rows = [];
     let offset = 0;
     S.extracts.forEach((ex, k) => {
-      const m = exMs(ex);
-      for (let i = ex.a; i <= ex.b; i++) rows.push({ k, line: S.lines[i], at: offset + Math.max(0, (S.lines[i].start_ms - m.start_ms) / 1000) });
-      offset += (m.end_ms - m.start_ms) / 1000;
+      for (const l of S.lines) if (l.end_ms > ex.start_ms && l.start_ms < ex.end_ms) rows.push({ k, line: l, at: offset + Math.max(0, (l.start_ms - ex.start_ms) / 1000) });
+      offset += exDur(ex);
     });
     return rows;
   };
@@ -661,7 +733,7 @@ async function openEditor(youtubeId) {
 
   // premier extrait : le mieux noté
   const best = [...S.suggestions].sort((x, y) => y.score - x.score)[0];
-  if (best) addExtract(lineAt(best.start_ms), lineEndingAt(best.end_ms), best.title);
+  if (best) addExtract(best.start_ms, best.end_ms, best.title, best.start_ms);
   else extractsChanged();
 }
 

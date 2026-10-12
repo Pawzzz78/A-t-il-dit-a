@@ -109,7 +109,11 @@ qu'à choisir les extraits.
   transcription change. Modèle : `CLIP_MODEL`, sinon celui des résumés.
 - **Studio public** (`/studio/`) : les visiteurs choisissent une interview dont l'admin a autorisé les clips, prennent un ou
   plusieurs extraits (jusqu'à 4, 90 s au total : les propositions de l'IA, ou un passage libre dans la transcription), ajustent le
-  début et la fin **ligne par ligne** (jamais au milieu d'un mot), puis habillent le clip :
+  début et la fin **avec précision**, puis habillent le clip :
+  - **réglage des bornes** : boutons − / + avec un pas au choix (0,1 s, 0,5 s par défaut, 1 s, 2 s, « Ligne » = jusqu'à la limite de ligne
+    suivante, ou n'importe quelle durée de 0,01 à 30 s dans le champ libre) ; on peut aussi **taper l'instant exact** (`1:23,5`).
+    Les bornes sont en millisecondes (arrondies au centième de seconde) ; une ligne coupée au milieu ne garde que les mots dits dans la
+    partie conservée, à leur horaire d'origine ;
   - **5 styles TikTok** : mots en surbrillance, un mot à la fois, karaoké, classique, sur fond sombre ;
   - **réglages** : police (22 polices libres dans `public/fonts/studio/`), taille, couleur du texte et du mot actif, contour
     (épaisseur et couleur), ombre, fond sombre (couleur, opacité et **arrondi**, de l'angle droit aux bords entièrement ronds), majuscules, mots affichés à la fois, largeur, animation « pop » ;

@@ -64,8 +64,35 @@ test('mots : plusieurs extraits bout à bout, lignes coupées aux bornes', () =>
   close(words[0].start, 0);
   close(words[2].end, 2);
   close(words[3].start, 2); // le 2e extrait commence là où finit le 1er
-  close(words.at(-1).end, 4); // la ligne de 3 s est coupée à 2 s
-  assert.deepEqual(words.map((w) => w.line), [0, 0, 0, 1, 1, 1, 1, 1].slice(0, words.length));
+  // la ligne de 3 s (5 mots) est coupée à 2 s : seuls les mots dits avant la coupure restent, à leur horaire d'origine (pas comprimés)
+  const second = words.slice(3);
+  assert.ok(second.length >= 3 && second.length < 5, `${second.length} mots gardés`);
+  assert.ok(second.at(-1).end <= 4 + 1e-9);
+  assert.deepEqual(words.map((w) => w.line), [0, 0, 0, ...second.map(() => 1)]);
+});
+
+test('extrait coupé au milieu des lignes : bornes à la milliseconde, mots gardés selon leur horaire, ni trou ni décalage', () => {
+  const full = wordsForExtracts(lines, [{ start_ms: 0, end_ms: 6000 }]).words; // références : horaires dans l'extrait complet
+  // 1 500 → 4 700 : coupe la 1re ligne (0–4 s) au début et la 2e (4–6 s) à la fin
+  const cut = wordsForExtracts(lines, [{ start_ms: 1500, end_ms: 4700 }]);
+  close(cut.duration, 3.2);
+  assert.ok(cut.words.length > 0 && cut.words.length < full.length);
+  for (const w of cut.words) {
+    assert.ok(w.start >= 0 && w.end <= 3.2 + 1e-9 && w.end > w.start, JSON.stringify(w));
+    const ref = full.find((f) => f.text === w.text && Math.abs(f.start - 1.5 - w.start) < 1e-6 + (w.start === 0 ? 1.5 : 0)); // même mot, même instant (décalé de l'entrée)
+    assert.ok(ref, `${w.text} garde son horaire d'origine`);
+  }
+  // le 1er mot gardé de la 1re ligne n'est pas « UN » (dit avant 1,5 s)
+  assert.notEqual(cut.words[0].text, 'Un');
+  // décaler le début de 0,5 s ne change ni l'horaire ni le texte des mots gardés des deux côtés
+  const a = wordsForExtracts(lines, [{ start_ms: 1500, end_ms: 4700 }]).words;
+  const b = wordsForExtracts(lines, [{ start_ms: 2000, end_ms: 4700 }]).words;
+  for (const w of b) {
+    const same = a.find((x) => x.text === w.text && Math.abs(x.start - 0.5 - w.start) < 1e-6);
+    assert.ok(same || w.start === 0, `${w.text} décalé de 0,5 s`);
+  }
+  // une ligne qui ne fait que « toucher » l'extrait n'en fait pas partie
+  assert.equal(wordsForExtracts(lines, [{ start_ms: 6000, end_ms: 9000 }]).words.length, 0);
 });
 
 test('groupes : par mots, un mot, ou phrase découpée de façon équilibrée', () => {

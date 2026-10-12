@@ -103,9 +103,12 @@ function weight(token) {
 }
 
 /**
- * Mots horodatés du clip final. `lines` : [{ start_ms, end_ms, text }] ; `extracts` : [{ start_ms, end_ms }].
- * Les extraits sont mis bout à bout. Renvoie { words: [{ text, start, end, line }], duration, segments: [{ offset, length }] }
- * (secondes, sur la durée du clip final ; `line` numérote les lignes d'origine).
+ * Mots horodatés du clip final. `lines` : [{ start_ms, end_ms, text }] ; `extracts` : [{ start_ms, end_ms }] (bornes au millième de
+ * seconde, pas forcément alignées sur les lignes). Les extraits sont mis bout à bout. Renvoie
+ * { words: [{ text, start, end, line }], duration, segments: [{ offset, length }] } (secondes, sur la durée du clip final ;
+ * `line` numérote les lignes d'origine).
+ * Les mots d'une ligne sont répartis sur toute la durée de la ligne, puis on ne garde que ceux qui tombent dans l'extrait : une ligne
+ * coupée au milieu ne montre que les mots réellement dits dans la partie conservée, sans que le reste soit comprimé.
  */
 export function wordsForExtracts(lines, extracts) {
   const words = [];
@@ -115,22 +118,27 @@ export function wordsForExtracts(lines, extracts) {
   for (const ex of extracts) {
     const length = (ex.end_ms - ex.start_ms) / 1000;
     segments.push({ offset, length });
+    const from = ex.start_ms / 1000;
+    const to = ex.end_ms / 1000;
     for (const ln of lines) {
-      if (ln.start_ms < ex.start_ms - 50 || ln.start_ms >= ex.end_ms) continue;
+      if (ln.end_ms <= ex.start_ms || ln.start_ms >= ex.end_ms) continue;
       const tokens = String(ln.text ?? '').split(/\s+/).filter(Boolean);
       if (!tokens.length) continue;
-      const s = Math.max(ln.start_ms, ex.start_ms) / 1000;
-      const e = Math.min(ln.end_ms, ex.end_ms) / 1000;
+      const s = ln.start_ms / 1000;
+      const e = ln.end_ms / 1000;
       const ws = tokens.map(weight);
       const total = ws.reduce((a, b) => a + b, 0);
       let acc = 0;
+      let kept = 0;
       tokens.forEach((text, i) => {
         const a = s + ((e - s) * acc) / total;
         acc += ws[i];
         const b = s + ((e - s) * acc) / total;
-        words.push({ text, start: offset + (a - ex.start_ms / 1000), end: offset + (b - ex.start_ms / 1000), line: lineNo });
+        if ((a + b) / 2 < from || (a + b) / 2 >= to) return; // mot dit hors de l'extrait
+        words.push({ text, start: offset + (Math.max(a, from) - from), end: offset + (Math.min(b, to) - from), line: lineNo });
+        kept++;
       });
-      lineNo++;
+      if (kept) lineNo++;
     }
     offset += length;
   }
