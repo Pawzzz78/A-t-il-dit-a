@@ -9,7 +9,7 @@ import { pool } from '../db.js';
 import { HttpError } from '../http-error.js';
 import { DEFAULT_STYLE, LIMITS, PRESETS } from '../../public/js/studio-core.js';
 import { cancelJob, createPreview, enqueueRender, FONTS, getJob, MUSIC, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
-import { ensureImage, searchPhotos, STOCK_PROVIDER, stockEnabled } from '../studio/stock.js';
+import { ensureImage, searchPhotos, stockEnabled, stockProvider } from '../studio/stock.js';
 import { parseYoutubeId } from '../youtube.js';
 
 export const studioRouter = Router();
@@ -46,7 +46,7 @@ studioRouter.get('/assets', (_req, res) => {
     fonts: FONTS.map(({ id, label, category, file, em_ratio, cap_em }) => ({ id, label, category, file, em_ratio, cap_em })),
     music: MUSIC.map(({ id, title, mood, bpm, duration_s, file, license }) => ({ id, title, mood, bpm, duration_s, file, license })),
     limits: { ...LIMITS, suggestionMinS: CLIP_LIMITS.minS, suggestionMaxS: CLIP_LIMITS.maxS },
-    stock: { enabled: stockEnabled(), provider: STOCK_PROVIDER },
+    stock: { enabled: stockEnabled(), provider: stockProvider() },
   });
 });
 

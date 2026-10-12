@@ -598,7 +598,9 @@ test('zoom : mouvement lisse mesuré sur de vraies images, fidèle à la courbe 
 test('rendu avec zoom et image b-roll : image visible au bon moment, zoom sans toucher le reste, durée exacte', { skip: !enabled }, async () => {
   const stockDir = path.join(process.env.STORAGE_DIR, 'stock');
   await fs.mkdir(stockDir, { recursive: true });
-  const jpg = path.join(stockDir, '777-f.jpg');
+  const keepKey = process.env.PIXABAY_API_KEY;
+  process.env.PIXABAY_API_KEY = 'cle-de-test'; // le rendu cherche l'image dans le cache du fournisseur actif
+  const jpg = path.join(stockDir, 'pixabay-777-f.jpg');
   execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0xE01010:s=1253x1880', '-frames:v', '1', jpg]);
   const frame = async (id, t) => {
     const file = path.join(dir, `fx-${id}.mp4`);
@@ -637,23 +639,28 @@ test('rendu avec zoom et image b-roll : image visible au bon moment, zoom sans t
   assert.ok(!(before.r > 190 && before.g < 60), 'pas encore d\'image');
   const after = red((await frame(fxId, 4.9)).png);
   assert.ok(!(after.r > 190 && after.g < 60), 'plus d\'image');
+  if (keepKey === undefined) delete process.env.PIXABAY_API_KEY;
+  else process.env.PIXABAY_API_KEY = keepKey;
 });
 
 test('routes des images : recherche et image refusent proprement, état indiqué dans les éléments de l\'éditeur', { skip: !enabled }, async () => {
-  const keep = process.env.PEXELS_API_KEY;
+  const keep = { pexels: process.env.PEXELS_API_KEY, pixabay: process.env.PIXABAY_API_KEY };
   delete process.env.PEXELS_API_KEY;
+  delete process.env.PIXABAY_API_KEY;
   try {
-    assert.equal((await api('GET', '/api/studio/assets')).body.stock.enabled, false);
+    assert.deepEqual((await api('GET', '/api/studio/assets')).body.stock, { enabled: false, provider: null });
     const s = await api('GET', '/api/studio/stock/search?q=mairie');
     assert.equal(s.status, 503);
     assert.match(s.body.error, /pas configurée/);
     assert.equal((await api('GET', '/api/studio/stock/image/abc')).status, 400);
     assert.equal((await api('GET', '/api/studio/stock/image/..%2F..%2Fetc%2Fpasswd')).status, 400);
-    process.env.PEXELS_API_KEY = 'x';
-    assert.equal((await api('GET', '/api/studio/assets')).body.stock.enabled, true);
+    process.env.PIXABAY_API_KEY = 'x';
+    assert.deepEqual((await api('GET', '/api/studio/assets')).body.stock, { enabled: true, provider: 'Pixabay' });
     assert.equal((await api('GET', '/api/studio/stock/search?q=a')).status, 400); // trop court : refusé avant tout appel
   } finally {
-    if (keep === undefined) delete process.env.PEXELS_API_KEY;
-    else process.env.PEXELS_API_KEY = keep;
+    for (const [k, v] of [['PEXELS_API_KEY', keep.pexels], ['PIXABAY_API_KEY', keep.pixabay]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
   }
 });

@@ -826,7 +826,7 @@ async function openEditor(youtubeId) {
     const credits = [...new Set(S.broll.map((b) => b.photographer).filter(Boolean))];
     sourceField.value =
       `${sourceText(S.video.title, S.video.published_at)} — https://www.youtube.com/watch?v=${S.video.youtube_id}` +
-      (credits.length ? `\nImages : ${credits.join(', ')} (Pexels)` : '');
+      (credits.length ? `\nImages : ${credits.join(', ')} (${assets.stock?.provider ?? 'banque d’images'})` : '');
     sourceField.rows = credits.length ? 3 : 2;
   }
 
@@ -902,15 +902,15 @@ async function openEditor(youtubeId) {
             S.stock.error ? el('p', { class: 'st-msg err' }, S.stock.error) : null,
             S.stock.photos.length
               ? el('div', { class: 'st-photos' }, S.stock.photos.map((p) =>
-                  el('button', { type: 'button', class: 'st-photo', title: `Ajouter à l’instant de l’aperçu — ${p.photographer} / Pexels`, style: { background: p.color }, onclick: () => addBroll(p) },
+                  el('button', { type: 'button', class: 'st-photo', title: `Ajouter à l’instant de l’aperçu — ${p.photographer} / ${assets.stock.provider}`, style: { background: p.color }, onclick: () => addBroll(p) },
                     el('img', { src: p.thumb, alt: p.alt || 'Image', loading: 'lazy' }))))
               : null,
             S.stock.next ? el('button', { type: 'button', class: 'btn secondary small', disabled: S.stock.busy, onclick: () => searchStock(true) }, 'Plus d’images') : null,
-            S.stock.photos.length ? el('p', { class: 'st-help' }, 'Touche une image pour l’ajouter à l’instant où se trouve l’aperçu. Photos Pexels : les crédits sont ajoutés au texte « Source à citer ».') : null,
+            S.stock.photos.length ? el('p', { class: 'st-help' }, `Touche une image pour l’ajouter à l’instant où se trouve l’aperçu. Images ${assets.stock.provider} : les crédits sont ajoutés au texte « Source à citer ».`) : null,
             brollRows.length ? el('h4', {}, `Images du clip (${brollRows.length}/${BROLL.maxItems})`) : null,
             brollRows.length ? el('ul', { class: 'st-fxlist' }, brollRows) : null,
           ]
-        : [el('p', { class: 'st-help' }, 'La recherche d’images n’est pas encore activée sur ce site (clé Pexels manquante).')]),
+        : [el('p', { class: 'st-help' }, 'La recherche d’images n’est pas encore activée sur ce site (clé de la banque d’images manquante).')]),
       fxNote,
     ].filter(Boolean));
   }

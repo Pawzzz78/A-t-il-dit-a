@@ -138,8 +138,8 @@ export function normalizeRequest(body, video) {
 }
 
 /**
- * Images b-roll : [{ id (numéro de photo Pexels), start, dur }] en secondes du clip. Le visiteur ne donne qu'un numéro : l'adresse
- * est retrouvée par le serveur auprès de Pexels. Pas de chevauchement, durée 1 à 8 s, à l'intérieur du clip.
+ * Images b-roll : [{ id (numéro de photo de la banque d'images), start, dur }] en secondes du clip. Le visiteur ne donne qu'un numéro : l'adresse
+ * est retrouvée par le serveur auprès du fournisseur. Pas de chevauchement, durée 1 à 8 s, à l'intérieur du clip.
  */
 export function normalizeBroll(input, total) {
   if (input == null) return [];
@@ -195,7 +195,7 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
   if (music) args.push('-stream_loop', '-1', '-t', String(req.total), '-i', path.join(MUSIC_DIR, music.file));
   const broll = kind === 'final' ? req.broll ?? [] : [];
   const imageIdx = musicIdx + (music ? 1 : 0);
-  broll.forEach((b) => args.push('-loop', '1', '-framerate', String(FPS), '-t', String(b.dur), '-i', images[b.id] ?? path.join(stockDir(), `${b.id}-f.jpg`)));
+  broll.forEach((b) => args.push('-loop', '1', '-framerate', String(FPS), '-t', String(b.dur), '-i', images[b.id] ?? path.join(stockDir(), `${b.id}.jpg`)));
 
   const f = [];
   req.extracts.forEach((e, i) => {

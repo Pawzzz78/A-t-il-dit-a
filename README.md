@@ -150,15 +150,19 @@ qu'à choisir les extraits.
       coûte environ 0,4 s de calcul par seconde de vidéo 1080 × 1920) ;
     - **aperçu identique** : le navigateur calcule la même courbe (`zoomAt` dans `studio-core.js`, partagé avec le rendu) et l'applique
       en `transform` à la vidéo seule ; écart avec le MP4 final de 2 à 3 px mesuré ;
-    - **images** libres de droits (Pexels) : recherche (mots du clip proposés), un appui ajoute l'image à l'instant de l'aperçu
-      (2,5 s par défaut, 1 à 8 s, début et durée modifiables, 8 images au plus, sans chevauchement). Image plein écran par-dessus la
-      vidéo pendant que la voix continue, fondu de 0,18 s et très léger zoom lent (même technique). Les crédits des photographes sont
-      ajoutés au texte « Source à citer ». Il faut une clé gratuite `PEXELS_API_KEY` (sans elle, la section images est désactivée) :
-      elle reste sur le serveur, qui interroge Pexels ; le navigateur ne donne qu'un **numéro** de photo, jamais une adresse. Le serveur
-      retrouve l'adresse auprès de Pexels, vérifie qu'elle est en https sur `images.pexels.com` (sans suivre de redirection), contrôle
-      type et taille (15 Mo), garde le fichier dans `STORAGE_DIR/stock` (supprimé après une heure) ; recherches et téléchargements sont
-      limités par visiteur (`STOCK_SEARCHES_PER_HOUR`, `STOCK_DOWNLOADS_PER_HOUR`). Pexels plutôt que Pixabay : API simple, photos
-      verticales, licence gratuite y compris commerciale sans obligation de crédit ;
+    - **images** libres de droits (**Pixabay** ou Pexels) : recherche (mots du clip proposés), un appui ajoute l'image à l'instant de
+      l'aperçu (2,5 s par défaut, 1 à 8 s, début et durée modifiables, 8 images au plus, sans chevauchement). Image plein écran par-dessus la
+      vidéo pendant que la voix continue, fondu de 0,18 s et très léger zoom lent (même technique). Les crédits des auteurs sont
+      ajoutés au texte « Source à citer ». Il faut une clé gratuite : `PIXABAY_API_KEY` (https://pixabay.com/api/docs/, ouverte à tous
+      après inscription) ou `PEXELS_API_KEY` (Pexels a suspendu l'ouverture de nouvelles clés) ; sans clé, la section images est
+      désactivée. Pixabay est choisi s'il a une clé (`STOCK_PROVIDER=pexels` pour forcer l'autre). La clé reste sur le serveur, qui
+      interroge le fournisseur ; le navigateur ne donne qu'un **numéro** de photo, jamais une adresse. Le serveur retrouve l'adresse
+      auprès du fournisseur, vérifie qu'elle est en https sur ses serveurs d'images (`pixabay.com`, `cdn.pixabay.com`,
+      `images.pexels.com` ; les redirections sont suivies une à une et vérifiées, jamais vers un autre site), contrôle type et taille
+      (15 Mo), garde le fichier dans `STORAGE_DIR/stock` (supprimé après une heure). Les vignettes des résultats sont l'adresse
+      temporaire fournie (valable 24 h, usage prévu par Pixabay) ; les images utilisées sont téléchargées par le serveur, jamais
+      appelées en direct. Recherches et téléchargements sont limités par visiteur (`STOCK_SEARCHES_PER_HOUR`,
+      `STOCK_DOWNLOADS_PER_HOUR`). Licences : gratuit, y compris en usage commercial, crédit non obligatoire ;
   - **aperçu en direct** : la vidéo (cadrage seul, 360 × 640) vient du serveur, les sous-titres sont dessinés par le navigateur avec
     le **même code** que le rendu (`public/js/studio-core.js`) : horaires des mots, groupes, tailles, réduction des mots trop
     longs. Vérifié image par image contre le MP4 final.
@@ -333,7 +337,7 @@ src/
 tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéos sans sous-titres, envoyée au site
   openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
-  studio/            studio public : rendu ffmpeg (render.js), mesure du fond des sous-titres (box-probe.js), images libres de droits (stock.js), polices (fonts.json), musiques (music.json)
+  studio/            studio public : rendu ffmpeg (render.js), mesure du fond des sous-titres (box-probe.js), images libres de droits Pixabay / Pexels (stock.js), polices (fonts.json), musiques (music.json)
   media.js           fichiers vidéo du studio : dépôt par morceaux, ffprobe, stockage
   clip-suggestions.js  extraits proposés par le LLM (numéros de lignes, horaires issus de la transcription)
   trends.js          tendances : comptage des mots par mois, mots les plus prononcés, cache et limites
