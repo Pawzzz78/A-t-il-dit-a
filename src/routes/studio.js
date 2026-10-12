@@ -1,0 +1,159 @@
+/**
+ * Studio de clips public : liste des vidéos dont l'admin a autorisé les clips, éléments de l'éditeur (polices, musiques,
+ * styles), aperçu du cadrage, rendu du MP4 en arrière-plan (file d'attente) et téléchargement.
+ * Le fichier vidéo d'origine n'est jamais servi : seuls des extraits (aperçu 360p, rendu final) en sortent.
+ */
+import express, { Router } from 'express';
+import { getClipSuggestions, prepareSegments, CLIP_LIMITS } from '../clip-suggestions.js';
+import { pool } from '../db.js';
+import { HttpError } from '../http-error.js';
+import { DEFAULT_STYLE, LIMITS, PRESETS } from '../../public/js/studio-core.js';
+import { cancelJob, createPreview, enqueueRender, FONTS, getJob, MUSIC, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
+import { parseYoutubeId } from '../youtube.js';
+
+export const studioRouter = Router();
+studioRouter.use(express.json({ limit: '100kb' }));
+
+const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
+
+const CLIPPABLE = `v.clips_enabled AND v.file_name IS NOT NULL AND v.norm_text <> ''`;
+const COLS = `v.id, v.youtube_id, v.title, v.channel, v.published_at, v.thumbnail_url, v.file_name, v.file_size,
+  v.file_duration_s, v.file_has_audio, v.file_width, v.file_height, v.file_uploaded_at`;
+
+async function loadVideo(youtubeId) {
+  const id = parseYoutubeId(String(youtubeId ?? ''));
+  const { rows } = id ? await pool.query(`SELECT ${COLS} FROM videos v WHERE v.youtube_id = $1 AND ${CLIPPABLE}`, [id]) : { rows: [] };
+  if (!rows[0]) throw new HttpError(404, "Cette vidéo n'est pas disponible dans le studio.");
+  return rows[0];
+}
+
+const presentVideo = (v) => ({
+  youtube_id: v.youtube_id,
+  title: v.title,
+  channel: v.channel,
+  published_at: v.published_at,
+  thumbnail_url: v.thumbnail_url,
+  duration_s: v.file_duration_s,
+});
+
+/** Éléments de l'éditeur : styles, polices, musiques et limites. */
+studioRouter.get('/assets', (_req, res) => {
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json({
+    presets: Object.entries(PRESETS).map(([id, p]) => ({ id, label: p.label, hint: p.hint, style: p.style })),
+    default_style: DEFAULT_STYLE,
+    fonts: FONTS.map(({ id, label, category, file, em_ratio, cap_em }) => ({ id, label, category, file, em_ratio, cap_em })),
+    music: MUSIC.map(({ id, title, mood, bpm, duration_s, file, license }) => ({ id, title, mood, bpm, duration_s, file, license })),
+    limits: { ...LIMITS, suggestionMinS: CLIP_LIMITS.minS, suggestionMaxS: CLIP_LIMITS.maxS },
+  });
+});
+
+studioRouter.get(
+  '/videos',
+  ah(async (_req, res) => {
+    const { rows } = await pool.query(
+      `SELECT ${COLS}, COALESCE(jsonb_array_length(c.content->'clips'), 0) AS suggestions
+       FROM videos v LEFT JOIN clip_suggestions c ON c.video_id = v.id
+       WHERE ${CLIPPABLE} ORDER BY v.published_at DESC NULLS LAST, v.id DESC`,
+    );
+    res.json({ videos: rows.map((v) => ({ ...presentVideo(v), suggestions: Number(v.suggestions) })) });
+  }),
+);
+
+/** Une vidéo du studio : extraits proposés et lignes de la transcription (pour ajuster le début et la fin ligne par ligne). */
+studioRouter.get(
+  '/videos/:youtubeId',
+  ah(async (req, res) => {
+    const v = await loadVideo(req.params.youtubeId);
+    const { rows } = await pool.query('SELECT start_ms, duration_ms, text FROM segments WHERE video_id = $1 ORDER BY position', [v.id]);
+    const lines = prepareSegments(rows).map((s) => [s.start_ms, s.end_ms, s.text]);
+    const sg = await getClipSuggestions(v.id);
+    res.json({
+      video: { ...presentVideo(v), width: v.file_width, height: v.file_height, has_audio: v.file_has_audio },
+      suggestions: (sg?.clips ?? []).map(({ start_ms, end_ms, duration_s, title, why, score, text }) => ({ start_ms, end_ms, duration_s, title, why, score, text })),
+      lines,
+    });
+  }),
+);
+
+/** Lignes de la transcription ({ start_ms, end_ms, text }) d'une vidéo. */
+async function linesOf(videoId) {
+  const { rows } = await pool.query('SELECT start_ms, duration_ms, text FROM segments WHERE video_id = $1 ORDER BY position', [videoId]);
+  return prepareSegments(rows);
+}
+
+studioRouter.post(
+  '/preview',
+  ah(async (req, res) => {
+    const v = await loadVideo(req.body?.youtube_id);
+    const request = normalizeRequest(req.body, v);
+    const { key, duration_s } = await createPreview({ video: v, req: request, ip: req.ip });
+    res.json({ url: `/api/studio/preview/${key}.mp4`, duration_s });
+  }),
+);
+
+studioRouter.get(
+  '/preview/:file',
+  ah(async (req, res) => {
+    const found = await previewFile(String(req.params.file).replace(/\.mp4$/, ''));
+    if (!found) throw new HttpError(404, 'Aperçu expiré : il sera recalculé.');
+    await loadVideo(found.youtube_id); // l'autorisation de la vidéo peut avoir été retirée depuis
+    res.sendFile(found.file, { acceptRanges: true, headers: { 'Cache-Control': 'private, max-age=3600', 'Content-Type': 'video/mp4' } });
+  }),
+);
+
+studioRouter.post(
+  '/render',
+  ah(async (req, res) => {
+    const v = await loadVideo(req.body?.youtube_id);
+    const request = normalizeRequest(req.body, v);
+    const job = await enqueueRender({ video: v, req: request, lines: await linesOf(v.id), ip: req.ip });
+    res.status(202).json(publicJob(job));
+  }),
+);
+
+const jobOr404 = (id) => {
+  const job = getJob(String(id));
+  if (!job) throw new HttpError(404, 'Clip introuvable ou expiré (les clips sont conservés une heure).');
+  return job;
+};
+
+studioRouter.get('/render/:id', (req, res, next) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    res.json(publicJob(jobOr404(req.params.id)));
+  } catch (e) {
+    next(e);
+  }
+});
+
+studioRouter.get('/render/:id/file', (req, res, next) => {
+  try {
+    const job = jobOr404(req.params.id);
+    if (job.status !== 'done') throw new HttpError(409, "Le clip n'est pas encore prêt.");
+    res.set('Cache-Control', 'no-store');
+    res.download(job.out, job.filename, (err) => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'Clip expiré.' });
+    });
+  } catch (e) {
+    next(e);
+  }
+});
+
+studioRouter.delete(
+  '/render/:id',
+  ah(async (req, res) => {
+    await cancelJob(jobOr404(req.params.id));
+    res.json({ ok: true });
+  }),
+);
+
+// eslint-disable-next-line no-unused-vars
+studioRouter.use((err, _req, res, _next) => {
+  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, ...err.extra });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Demande trop volumineuse.' });
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Demande illisible.' });
+  console.error(err);
+  res.status(500).json({ error: 'Erreur interne.' });
+});
+

@@ -1,0 +1,74 @@
+[
+  {
+    "id": "lofi-doux",
+    "title": "Lo-fi doux",
+    "mood": "Posé, chaleureux",
+    "bpm": 80,
+    "duration_s": 48.0,
+    "file": "lofi-doux.mp3",
+    "license": "Création originale, libre de droits (CC0)"
+  },
+  {
+    "id": "ambiant-calme",
+    "title": "Ambiant calme",
+    "mood": "Planant, discret",
+    "bpm": 60,
+    "duration_s": 64.0,
+    "file": "ambiant-calme.mp3",
+    "license": "Création originale, libre de droits (CC0)"
+  },
+  {
+    "id": "piano-doux",
+    "title": "Piano doux",
+    "mood": "Sobre, réfléchi",
+    "bpm": 90,
+    "duration_s": 42.7,
+    "file": "piano-doux.mp3",
+    "license": "Création originale, libre de droits (CC0)"
+  },
+  {
+    "id": "pop-optimiste",
+    "title": "Pop optimiste",
+    "mood": "Entraînant, positif",
+    "bpm": 110,
+    "duration_s": 52.4,
+    "file": "pop-optimiste.mp3",
+    "license": "Création originale, libre de droits (CC0)"
+  },
+  {
+    "id": "tension-actu",
+    "title": "Tension actualité",
+    "mood": "Sérieux, dramatique",
+    "bpm": 100,
+    "duration_s": 57.6,
+    "file": "tension-actu.mp3",
+    "license": "Création originale, libre de droits (CC0)"
+  },
+  {
+    "id": "cinematique",
+    "title": "Cinématique",
+    "mood": "Ample, solennel",
+    "bpm": 70,
+    "duration_s": 41.1,
+    "file": "cinematique.mp3",
+    "license": "Création originale, libre de droits (CC0)"
+  },
+  {
+    "id": "electro-motivant",
+    "title": "Électro motivant",
+    "mood": "Énergique, rapide",
+    "bpm": 124,
+    "duration_s": 61.9,
+    "file": "electro-motivant.mp3",
+    "license": "Création originale, libre de droits (CC0)"
+  },
+  {
+    "id": "acoustique-leger",
+    "title": "Acoustique léger",
+    "mood": "Naturel, convivial",
+    "bpm": 100,
+    "duration_s": 57.6,
+    "file": "acoustique-leger.mp3",
+    "license": "Création originale, libre de droits (CC0)"
+  }
+]

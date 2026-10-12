@@ -4,6 +4,8 @@ import { initDb } from './db.js';
 import { ffmpegAvailable, storageDir } from './media.js';
 import { adminRouter } from './routes/admin.js';
 import { publicRouter } from './routes/public.js';
+import { studioRouter } from './routes/studio.js';
+import { startStudioCleanup } from './studio/render.js';
 import { startSummaryScheduler } from './auto-summaries.js';
 import { startScheduler } from './sync.js';
 
@@ -23,6 +25,7 @@ export function createApp() {
 
   const publicDir = new URL('../public', import.meta.url).pathname;
   app.use('/api/admin', express.json({ limit: '10mb' }), adminRouter);
+  app.use('/api/studio', studioRouter);
   app.use('/api', publicRouter);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Route inconnue.' }));
   app.use(
@@ -54,4 +57,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   ffmpegAvailable().then((ok) => console.log(`Studio de clips : ffmpeg ${ok ? 'disponible' : 'ABSENT (dépôt de vidéos impossible)'} · stockage ${storageDir()}`));
   startScheduler();
   startSummaryScheduler();
+  startStudioCleanup();
 }
