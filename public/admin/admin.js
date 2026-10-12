@@ -1222,6 +1222,7 @@ async function renderEditor(id) {
         { open: Boolean(f) || Boolean(sg) },
         h('summary', {}, `Clips TikTok : ${label}`),
         st.ffmpeg ? null : h('p', { class: 'status err' }, 'ffmpeg n’est pas installé sur ce serveur : le dépôt de vidéos est impossible.'),
+        st.ffmpeg && !st.render_ready ? h('p', { class: 'status err' }, 'Le ffmpeg de ce serveur ne sait pas incruster de sous-titres ou encoder en H.264 : le studio ne pourra pas créer de clips (voir les journaux de démarrage).') : null,
         ...fileBlock,
         clipsPreview,
         h('div', { class: 'actions' }, fileInput),

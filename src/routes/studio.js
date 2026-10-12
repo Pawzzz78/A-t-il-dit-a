@@ -87,18 +87,18 @@ studioRouter.post(
   ah(async (req, res) => {
     const v = await loadVideo(req.body?.youtube_id);
     const request = normalizeRequest(req.body, v);
-    const { key, duration_s } = await createPreview({ video: v, req: request, ip: req.ip });
-    res.json({ url: `/api/studio/preview/${key}.mp4`, duration_s });
+    const { key, ext, duration_s } = await createPreview({ video: v, req: request, ip: req.ip });
+    res.json({ url: `/api/studio/preview/${key}.${ext}`, duration_s });
   }),
 );
 
 studioRouter.get(
   '/preview/:file',
   ah(async (req, res) => {
-    const found = await previewFile(String(req.params.file).replace(/\.mp4$/, ''));
+    const found = await previewFile(String(req.params.file).replace(/\.(mp4|webm)$/, ''));
     if (!found) throw new HttpError(404, 'Aperçu expiré : il sera recalculé.');
     await loadVideo(found.youtube_id); // l'autorisation de la vidéo peut avoir été retirée depuis
-    res.sendFile(found.file, { acceptRanges: true, headers: { 'Cache-Control': 'private, max-age=3600', 'Content-Type': 'video/mp4' } });
+    res.sendFile(found.file, { acceptRanges: true, headers: { 'Cache-Control': 'private, max-age=3600', 'Content-Type': found.ext === 'webm' ? 'video/webm' : 'video/mp4' } });
   }),
 );
 

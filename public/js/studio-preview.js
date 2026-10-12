@@ -1,0 +1,249 @@
+// Aperçu en direct du clip : cadre 9:16 avec la vidéo (cadrage seul, préparé par le serveur), les sous-titres dessinés par le
+// navigateur avec exactement les mêmes groupes, horaires, tailles et réductions que le rendu final (studio-core.js), le bandeau de
+// source, la musique synchronisée. Les sous-titres se déplacent au doigt ou à la souris. Aucun innerHTML : tout est posé en nœuds.
+import { OUT, activeAt, displayText, fitScale, usableWidth } from './studio-core.js';
+
+/** Crée un élément (propriétés, style, événements « on… »). */
+export function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') node.className = v;
+    else if (k === 'style' && typeof v === 'object') Object.assign(node.style, v);
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+    else if (['value', 'checked', 'disabled', 'hidden', 'selected', 'muted', 'loop'].includes(k)) node[k] = v;
+    else node.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of children.flat()) if (c != null && c !== false) node.append(c);
+  return node;
+}
+
+const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+
+/** Contour rond façon libass : couronnes d'ombres décalées (rend pareil dans tous les navigateurs, sans pointes aux angles). */
+export function outlineShadow(radius, color, shadow, scaleShadow) {
+  const parts = [];
+  if (radius > 0.4) {
+    for (const r of radius > 3 ? [radius, radius * 0.66, radius * 0.33] : [radius]) {
+      const n = Math.max(10, Math.round(r * 5));
+      for (let i = 0; i < n; i++) {
+        const a = (2 * Math.PI * i) / n;
+        parts.push(`${(Math.cos(a) * r).toFixed(2)}px ${(Math.sin(a) * r).toFixed(2)}px 0 ${color}`);
+      }
+    }
+  }
+  if (shadow > 0) parts.push(`${(shadow * scaleShadow).toFixed(2)}px ${(shadow * scaleShadow).toFixed(2)}px 0 rgba(0,0,0,.65)`);
+  return parts.join(',') || 'none';
+}
+
+export const rgba = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${a})`;
+
+/**
+ * Cadre de téléphone. `onMove({ x, y })` : les sous-titres ont été déplacés (fractions 0–1 du cadre).
+ * Renvoie l'élément racine et les commandes.
+ */
+export function createPhone({ onMove }) {
+  const video = el('video', { class: 'ph-video', playsinline: '', preload: 'auto', loop: true });
+  const bannerText = el('span', {});
+  const banner = el('div', { class: 'ph-banner' }, bannerText);
+  const subText = el('div', { class: 'sub-text' });
+  const subBox = el('div', { class: 'sub-box', title: 'Glisse pour déplacer les sous-titres' }, subText);
+  const guides = el('div', { class: 'ph-guides', hidden: true }, el('span', { class: 'top' }, 'barre TikTok'), el('span', { class: 'bottom' }, 'légende, boutons et description TikTok'));
+  const busy = el('div', { class: 'ph-busy', hidden: true });
+  const playBtn = el('button', { class: 'ph-play', type: 'button', 'aria-label': 'Lire l’aperçu' }, '▶');
+  const screen = el('div', { class: 'ph-screen' }, video, banner, subBox, guides, busy, playBtn);
+  const range = el('input', { class: 'ph-range', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': 'Position dans l’aperçu' });
+  const time = el('span', { class: 'ph-time' }, '0:00 / 0:00');
+  const guideToggle = el('label', { class: 'ph-toggle' }, el('input', { type: 'checkbox' }), 'Zones TikTok');
+  const bar = el('div', { class: 'ph-bar' }, range, time);
+  const root = el('div', { class: 'phone' }, screen, bar, guideToggle);
+  const music = new Audio();
+  music.loop = true;
+  music.preload = 'auto';
+
+  let cfg = { groups: [], style: null, font: null, banner: '' };
+  let playing = false;
+  let lastKey = '';
+  let lastGroup = null;
+  let raf = 0;
+
+  const scale = () => (screen.clientWidth || 360) / OUT.w;
+
+  function applyStyle() {
+    const { style, font } = cfg;
+    if (!style) return;
+    const s = scale();
+    const emRatio = font?.em_ratio ?? 1;
+    const css = {
+      '--ff': `'ST-${style.font}', 'Montserrat', sans-serif`,
+      '--fs': `${style.size * s}px`,
+      '--lh': `${(style.size / emRatio) * s}px`,
+      '--c': style.color,
+      '--hl': style.highlight,
+      '--w': `${usableWidth(style) * s}px`,
+    };
+    subText.style.cssText = Object.entries(css).map(([k, v]) => `${k}:${v}`).join(';');
+    subText.style.textShadow = style.box ? 'none' : outlineShadow(style.outline * s, style.outlineColor, style.shadow, s);
+    subBox.style.left = `${style.x * 100}%`;
+    subBox.style.top = `${style.y * 100}%`;
+    banner.style.cssText = `font-size:${30 * s}px;top:${(150 / OUT.h) * 100}%;left:${(60 / OUT.w) * 100}%;right:${(60 / OUT.w) * 100}%`;
+    bannerText.style.padding = `${10 * s}px ${14 * s}px`;
+    lastKey = '';
+  }
+
+  function renderSub() {
+    const { groups, style, font } = cfg;
+    if (!style) return;
+    const t = video.currentTime || 0;
+    let at = activeAt(groups, t);
+    let ghost = false;
+    if (!at && !playing && groups.length) {
+      at = { group: groups.find((g) => g.start >= t) ?? groups.at(-1), active: -1 };
+      ghost = true; // à l'arrêt, on montre le groupe le plus proche pour pouvoir régler et déplacer les sous-titres
+    }
+    if (!at) {
+      subBox.style.visibility = 'hidden';
+      lastKey = '';
+      return;
+    }
+    const idx = at.group.words.findIndex((w, i) => i === at.active);
+    const key = `${groups.indexOf(at.group)}|${at.active}|${ghost}|${style.mode}`;
+    subBox.style.visibility = 'visible';
+    subBox.classList.toggle('ghost', ghost);
+    if (key === lastKey) return;
+    lastKey = key;
+    const texts = at.group.words.map((w) => displayText(w.text, style));
+    const k = fitScale(texts, style, font);
+    const frag = document.createDocumentFragment();
+    texts.forEach((text, i) => {
+      const on = !ghost && (style.mode === 'words' ? i === idx : style.mode === 'karaoke' ? i <= idx : false);
+      frag.append(el('span', { class: on ? 'w on' : 'w' }, text), i < texts.length - 1 ? ' ' : '');
+    });
+    const inner = el('span', { class: style.box ? 'sub-inner boxed' : 'sub-inner' }, frag);
+    if (style.box) inner.style.background = rgba(style.boxColor, style.boxOpacity);
+    subText.style.setProperty('--k', String(k));
+    subText.replaceChildren(inner);
+    const popped = style.animation === 'pop' && at.group !== lastGroup && !ghost;
+    lastGroup = at.group;
+    subText.classList.remove('pop');
+    if (popped) {
+      void subText.offsetWidth; // relance l'animation
+      subText.classList.add('pop');
+    }
+  }
+
+  function tick() {
+    renderSub();
+    const d = video.duration || 0;
+    if (d) {
+      range.value = String(Math.round((video.currentTime / d) * 1000));
+      time.textContent = `${fmt(video.currentTime)} / ${fmt(d)}`;
+    }
+    if (playing) raf = requestAnimationFrame(tick);
+  }
+
+  const syncMusic = () => {
+    if (!music.src || !music.duration) return;
+    music.currentTime = video.currentTime % music.duration;
+  };
+  const play = () => video.play().catch(() => {});
+  playBtn.addEventListener('click', () => (video.paused ? play() : video.pause()));
+  video.addEventListener('click', () => (video.paused ? play() : video.pause()));
+  video.addEventListener('play', () => {
+    playing = true;
+    playBtn.hidden = true;
+    syncMusic();
+    if (music.src) music.play().catch(() => {});
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(tick);
+  });
+  video.addEventListener('pause', () => {
+    playing = false;
+    playBtn.hidden = false;
+    music.pause();
+    tick();
+  });
+  video.addEventListener('seeked', () => {
+    syncMusic();
+    tick();
+  });
+  video.addEventListener('loadedmetadata', tick);
+  video.addEventListener('timeupdate', () => !playing && tick());
+  range.addEventListener('input', () => {
+    if (video.duration) video.currentTime = (Number(range.value) / 1000) * video.duration;
+  });
+  guideToggle.firstChild.addEventListener('change', (e) => (guides.hidden = !e.target.checked));
+  new ResizeObserver(() => {
+    applyStyle();
+    renderSub();
+  }).observe(screen);
+
+  // déplacement des sous-titres : le centre du bloc suit le doigt ou la souris
+  let drag = null;
+  subBox.addEventListener('pointerdown', (e) => {
+    const rect = screen.getBoundingClientRect();
+    drag = { rect };
+    subBox.setPointerCapture(e.pointerId);
+    subBox.classList.add('dragging');
+    e.preventDefault();
+  });
+  subBox.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const x = Math.min(0.9, Math.max(0.1, (e.clientX - drag.rect.left) / drag.rect.width));
+    const y = Math.min(0.9, Math.max(0.1, (e.clientY - drag.rect.top) / drag.rect.height));
+    onMove({ x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000 });
+  });
+  const stop = () => {
+    drag = null;
+    subBox.classList.remove('dragging');
+  };
+  subBox.addEventListener('pointerup', stop);
+  subBox.addEventListener('pointercancel', stop);
+
+  return {
+    root,
+    video,
+    /** Nouvelle vidéo d'aperçu (cadrage) ; on garde la position de lecture. */
+    setSource(url) {
+      const keep = video.currentTime || 0;
+      const wasPlaying = !video.paused;
+      if (video.getAttribute('src') === url) return;
+      video.src = url;
+      video.addEventListener('loadedmetadata', function once() {
+        video.removeEventListener('loadedmetadata', once);
+        if (keep && keep < video.duration) video.currentTime = keep;
+        if (wasPlaying) play();
+      });
+      video.load();
+    },
+    setBusy(message) {
+      busy.hidden = !message;
+      busy.textContent = message ?? '';
+    },
+    /** Sous-titres : groupes horodatés, style complet, police (métriques), bandeau de source. */
+    configure(next) {
+      cfg = { ...cfg, ...next };
+      bannerText.textContent = cfg.banner;
+      applyStyle();
+      renderSub();
+    },
+    setAudio({ url, volume, voice }) {
+      if (url && music.getAttribute('src') !== url) {
+        music.src = url;
+        music.load();
+      }
+      if (!url) {
+        music.pause();
+        music.removeAttribute('src');
+      }
+      music.volume = Math.min(1, Math.max(0, volume ?? 0.25));
+      video.volume = Math.min(1, Math.max(0, voice ?? 1));
+      if (url && !video.paused) music.play().catch(() => {});
+    },
+    pause: () => video.pause(),
+    refresh: () => {
+      lastKey = '';
+      renderSub();
+    },
+  };
+}

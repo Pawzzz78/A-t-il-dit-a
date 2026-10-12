@@ -19,6 +19,7 @@ import {
   videoFilePath,
 } from '../media.js';
 import { LlmError, llmConfigured } from '../openrouter.js';
+import { studioCapabilities } from '../studio/render.js';
 
 export const clipsAdminRouter = Router({ mergeParams: true });
 
@@ -60,6 +61,7 @@ async function state(v) {
     has_text: v.has_text,
     suggestions: await getClipSuggestions(v.id),
     ffmpeg: await ffmpegAvailable(),
+    render_ready: (await ffmpegAvailable()) ? (await studioCapabilities()).ready : false, // sous-titres + H.264 + AAC disponibles pour créer les clips
     llm: llmConfigured(),
     max_mb: Math.round(maxVideoBytes() / 1024 / 1024),
     chunk_bytes: CHUNK_BYTES,

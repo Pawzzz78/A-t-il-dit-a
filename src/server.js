@@ -5,7 +5,7 @@ import { ffmpegAvailable, storageDir } from './media.js';
 import { adminRouter } from './routes/admin.js';
 import { publicRouter } from './routes/public.js';
 import { studioRouter } from './routes/studio.js';
-import { startStudioCleanup } from './studio/render.js';
+import { startStudioCleanup, studioCapabilities } from './studio/render.js';
 import { startSummaryScheduler } from './auto-summaries.js';
 import { startScheduler } from './sync.js';
 
@@ -54,7 +54,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const port = Number(process.env.PORT) || 3000;
   createApp().listen(port, () => console.log(`Lisnard Facts → http://localhost:${port}`));
-  ffmpegAvailable().then((ok) => console.log(`Studio de clips : ffmpeg ${ok ? 'disponible' : 'ABSENT (dépôt de vidéos impossible)'} · stockage ${storageDir()}`));
+  ffmpegAvailable().then(async (ok) => {
+    const cap = ok ? await studioCapabilities() : null;
+    console.log(`Studio de clips : ffmpeg ${ok ? 'disponible' : 'ABSENT (dépôt de vidéos impossible)'}${cap ? ` · sous-titres (libass) ${cap.ass ? 'oui' : 'NON'} · H.264 ${cap.x264 ? 'oui' : 'NON'} · AAC ${cap.aac ? 'oui' : 'NON'}` : ''} · stockage ${storageDir()}`);
+  });
   startScheduler();
   startSummaryScheduler();
   startStudioCleanup();

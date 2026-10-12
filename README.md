@@ -86,11 +86,13 @@ d'historique).
 - L'API (`GET /api/trends?q=…`, `GET /api/trends/words`) met ses résultats en cache 5 minutes (invalidés dès qu'une vidéo change) et
   limite le calcul à 120 requêtes par heure et par visiteur.
 
-## Studio de clips TikTok / Reels (en construction)
+## Studio de clips TikTok / Reels
 
 Objectif : créer des vidéos verticales à partir des meilleurs extraits d'une interview, avec sous-titres stylés et musique. Les
 sous-titres n'ont besoin ni d'IA ni d'API : on dessine le texte de la transcription, déjà horodaté. Le LLM (OpenRouter) ne sert
-qu'à choisir les extraits. **Étape actuelle (admin) :**
+qu'à choisir les extraits.
+
+**Côté admin (éditeur d'une vidéo, panneau « Clips TikTok ») :**
 
 - **Fichier vidéo par vidéo** : tu télécharges la vidéo toi-même (de préférence en 720p) et tu la déposes dans l'éditeur de la
   vidéo, panneau « Clips TikTok ». Le dépôt se fait **par morceaux de 8 Mo** (reprise automatique après une coupure, pas de limite de
@@ -105,8 +107,30 @@ qu'à choisir les extraits. **Étape actuelle (admin) :**
   mot. Consignes éditoriales : extraits compréhensibles seuls, qui commencent et finissent sur une phrase entière sans couper avant
   une nuance, choisis pour la clarté et non pour le côté polémique. Résultats stockés ; ils sont signalés comme périmés si la
   transcription change. Modèle : `CLIP_MODEL`, sinon celui des résumés.
-- **Prochaines étapes** : éditeur public (sous-titres : style, position, taille ; musique libre de droits) et rendu du MP4 avec
-  ffmpeg sur le serveur (file d'attente, limite de clips simultanés, suppression rapide des fichiers produits).
+- **Studio public** (`/studio/`) : les visiteurs choisissent une interview dont l'admin a autorisé les clips, prennent un ou
+  plusieurs extraits (jusqu'à 4, 90 s au total : les propositions de l'IA, ou un passage libre dans la transcription), ajustent le
+  début et la fin **ligne par ligne** (jamais au milieu d'un mot), puis habillent le clip :
+  - **5 styles TikTok** : mots en surbrillance, un mot à la fois, karaoké, classique, sur fond sombre ;
+  - **réglages** : police (22 polices libres dans `public/fonts/studio/`), taille, couleur du texte et du mot actif, contour
+    (épaisseur et couleur), ombre, fond sombre (couleur et opacité), majuscules, mots affichés à la fois, largeur, animation « pop » ;
+  - **position** : on **glisse les sous-titres** directement sur l'aperçu (ou boutons Haut / Milieu / Bas / Centrer) ;
+  - **musique** : 8 morceaux originaux libres de droits (`tools/make_studio_music.py`), volumes de la musique et de la voix ;
+  - **cadrage 9:16** : vidéo entière sur fond flou, ou plein écran recadré (position réglable) ;
+  - **aperçu en direct** : la vidéo (cadrage seul, 360 × 640) vient du serveur, les sous-titres sont dessinés par le navigateur avec
+    le **même code** que le rendu (`public/js/studio-core.js`) : horaires des mots, groupes, tailles, réduction des mots trop
+    longs. Vérifié image par image contre le MP4 final.
+- **Rendu** : ffmpeg sur le serveur, sous-titres incrustés (ASS/libass), musique mixée sous la voix, MP4 H.264 + AAC en 1080 × 1920
+  (ou 720 × 1280). **File d'attente** (`STUDIO_CONCURRENCY` clips à la fois, 1 par défaut ; `STUDIO_MAX_QUEUE`), limites par visiteur
+  (2 clips en cours, `STUDIO_RENDERS_PER_HOUR` par heure, `STUDIO_PREVIEWS_PER_HOUR` aperçus), progression, annulation. Les clips
+  sont **supprimés une heure** après leur création. Le fichier vidéo d'origine n'est jamais servi : seuls ces extraits sortent.
+- **Garde-fous** : un bandeau « Source : titre · date » est incrusté en haut de **chaque** clip (non désactivable), les sous-titres
+  sont ceux de la transcription (mot pour mot), et il faut cocher un engagement à ne pas déformer les propos avant de créer.
+- **Taille des sous-titres** : la « taille » d'un style est une taille d'em (comme une `font-size`). libass dessine un texte de taille
+  ASS N avec une em de N × `unitsPerEm / (winAscent + winDescent)` (mesuré, écart < 1 %) : `buildAss` convertit par police grâce à
+  `em_ratio` (dans `src/studio/fonts.json`, calculé par `tools/fetch_studio_fonts.py`).
+- **Limites connues** : les horaires des mots sont estimés (la durée de chaque ligne est répartie selon la longueur des mots) car
+  nos transcriptions n'ont pas d'horaires au mot ; le karaoké remplit mot par mot dans l'aperçu et progressivement dans le MP4 ;
+  l'état des clips est en mémoire (un redémarrage du serveur annule les créations en cours).
 - **Sur Railway** : le volume est monté sur `/data` (`STORAGE_DIR=/data/storage`) et ffmpeg est installé dans l'image grâce à la
   variable `NIXPACKS_APT_PKGS=ffmpeg` (le constructeur réellement utilisé est Nixpacks, comme l'indique `railway.json`).
 
@@ -257,6 +281,7 @@ src/
 tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéos sans sous-titres, envoyée au site
   openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
+  studio/            studio public : rendu ffmpeg (render.js), polices (fonts.json), musiques (music.json)
   media.js           fichiers vidéo du studio : dépôt par morceaux, ffprobe, stockage
   clip-suggestions.js  extraits proposés par le LLM (numéros de lignes, horaires issus de la transcription)
   trends.js          tendances : comptage des mots par mois, mots les plus prononcés, cache et limites

@@ -32,7 +32,31 @@ export const config = () => ({
   timeoutMs: 12 * 60 * 1000,
 });
 
+/** Format de l'aperçu : MP4 (H.264, lu partout). STUDIO_PREVIEW_FORMAT=webm : réservé aux tests avec un navigateur sans H.264. */
+const previewExt = () => (process.env.STUDIO_PREVIEW_FORMAT === 'webm' ? 'webm' : 'mp4');
+
 const SIZES = { hd: { w: 1080, h: 1920, crf: 21, preset: 'veryfast' }, fast: { w: 720, h: 1280, crf: 23, preset: 'veryfast' }, preview: { w: 360, h: 640, crf: 31, preset: 'ultrafast' } };
+
+// --- capacités de ffmpeg ----------------------------------------------------------------------------
+
+let capabilities;
+/** Ce que le ffmpeg du serveur sait faire : incruster des sous-titres (libass) et encoder en H.264 / AAC. */
+export async function studioCapabilities() {
+  if (capabilities) return capabilities;
+  const run = (args) =>
+    new Promise((resolve) => {
+      const p = spawn('ffmpeg', ['-hide_banner', ...args], { stdio: ['ignore', 'pipe', 'ignore'] });
+      let out = '';
+      p.stdout.on('data', (d) => (out += d));
+      p.on('error', () => resolve(''));
+      p.on('close', () => resolve(out));
+    });
+  const [filters, encoders] = await Promise.all([run(['-filters']), run(['-encoders'])]);
+  const has = (text, re) => re.test(text);
+  capabilities = { ass: has(filters, /\bass\b/), x264: has(encoders, /libx264/), aac: has(encoders, /\baac\b/) };
+  capabilities.ready = capabilities.ass && capabilities.x264 && capabilities.aac;
+  return capabilities;
+}
 
 // --- validation de la demande -------------------------------------------------------------------
 
@@ -123,6 +147,10 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
     f.push(`[ac]volume=${req.voice},alimiter=limit=0.95[ao]`);
   }
   args.push('-filter_complex', f.join(';'), '-map', '[vo]', '-map', '[ao]');
+  if (kind === 'preview' && previewExt() === 'webm') {
+    args.push('-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '700k', '-pix_fmt', 'yuv420p', '-r', '30', '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-t', String(req.total), out);
+    return args;
+  }
   args.push('-c:v', 'libx264', '-preset', size.preset, '-crf', String(size.crf), '-pix_fmt', 'yuv420p', '-r', '30');
   if (kind === 'final') args.push('-profile:v', 'high', '-level', '4.1');
   args.push('-c:a', 'aac', '-b:a', kind === 'final' ? '160k' : '64k', '-ar', '48000', '-t', String(req.total), '-movflags', '+faststart', out);
@@ -226,8 +254,9 @@ export async function createPreview({ video, req, ip = 'local' }) {
   const keySource = JSON.stringify([video.file_name, video.file_size, String(video.file_uploaded_at), req.extracts, req.layout.fit, req.layout.cropX]);
   const key = crypto.createHash('sha1').update(keySource).digest('hex');
   await ensureDirs();
-  const out = path.join(dirs().previews, `${key}.mp4`);
-  const done = { key, duration_s: req.total };
+  const ext = previewExt();
+  const out = path.join(dirs().previews, `${key}.${ext}`);
+  const done = { key, ext, duration_s: req.total };
   if (await fs.stat(out).then(() => true, () => false)) {
     await fs.writeFile(path.join(dirs().previews, `${key}.json`), JSON.stringify({ youtube_id: video.youtube_id }));
     return done;
@@ -237,7 +266,7 @@ export async function createPreview({ video, req, ip = 'local' }) {
   const promise = (async () => {
     await acquirePreview();
     try {
-      const tmp = `${out}.tmp.mp4`;
+      const tmp = `${out}.tmp.${ext}`;
       const args = buildFfmpegArgs({ file: videoFilePath(video.file_name), req, hasAudio: video.file_has_audio, out: tmp, kind: 'preview' });
       await runFfmpeg(args, req.total, { timeoutMs: 120_000 }).promise.catch((e) => {
         throw new HttpError(500, `Aperçu impossible : ${e.message.split('\n').pop().slice(0, 160)}`);
@@ -256,9 +285,13 @@ export async function createPreview({ video, req, ip = 'local' }) {
 /** Chemin d'un aperçu mis en cache (et vidéo d'origine) : null s'il n'existe plus. */
 export async function previewFile(key) {
   if (!/^[0-9a-f]{40}$/.test(key)) return null;
-  const file = path.join(dirs().previews, `${key}.mp4`);
   const meta = await fs.readFile(path.join(dirs().previews, `${key}.json`), 'utf8').then(JSON.parse, () => null);
-  return meta && (await fs.stat(file).then(() => true, () => false)) ? { file, youtube_id: meta.youtube_id } : null;
+  if (!meta) return null;
+  for (const ext of ['mp4', 'webm']) {
+    const file = path.join(dirs().previews, `${key}.${ext}`);
+    if (await fs.stat(file).then(() => true, () => false)) return { file, ext, youtube_id: meta.youtube_id };
+  }
+  return null;
 }
 
 // --- file d'attente des rendus --------------------------------------------------------------------------
