@@ -312,6 +312,16 @@ export function createPhone({ onMove, onCrop }) {
       video.volume = Math.min(1, Math.max(0, voice ?? 1));
       if (url && !video.paused) music.play().catch(() => {});
     },
+    /** Place l'aperçu à l'instant t (secondes du clip) ; avec `play`, lit à partir de là. */
+    seek(t, play = false) {
+      const go = () => {
+        video.currentTime = Math.max(0, Math.min(t, video.duration || t));
+        if (play) video.play().catch(() => {});
+        else tick();
+      };
+      if (video.readyState >= 1) go();
+      else video.addEventListener('loadedmetadata', go, { once: true });
+    },
     pause: () => video.pause(),
     refresh: () => {
       lastKey = '';

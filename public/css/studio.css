@@ -174,3 +174,22 @@
 }
 @media (max-width: 900px) { .ph-play { width: 2.6rem; height: 2.6rem; font-size: 1rem; } }
 @media (max-width: 480px) { .ph-screen { width: calc(32vh * 9 / 16); } .st-left { padding: .4rem 1rem; } }
+
+/* texte des sous-titres */
+.st-subnav { margin-bottom: 1.2rem; }
+.st-line-list { list-style: none; margin: .6rem 0 0; padding: 0; display: grid; gap: .6rem; }
+.st-line-head { margin-top: .6rem; font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-label); color: var(--ne-chamois-dark); }
+.st-line { display: grid; grid-template-columns: 4.6rem minmax(0, 1fr); gap: .7rem; align-items: start; padding: .6rem .7rem; border: 1px solid var(--color-hairline); border-radius: var(--radius); background: #fff; }
+.st-line.edited { border-color: var(--ne-chamois); background: #fffdf2; }
+.st-line.far { border-color: var(--color-danger); background: #fff6f8; }
+.st-seek { font: inherit; font-size: .75rem; font-weight: 800; font-variant-numeric: tabular-nums; padding: .55rem .5rem; border: 0; border-radius: var(--radius-pill); background: var(--color-surface-alt); color: var(--color-primary); cursor: pointer; white-space: nowrap; }
+.st-seek:hover { background: var(--color-primary); color: #fff; }
+.st-line-text { width: 100%; font: inherit; font-size: .92rem; line-height: 1.45; padding: .45rem .6rem; border: 1px solid var(--color-border); border-radius: .5rem; resize: none; overflow: hidden; background: #fff; color: var(--color-text); }
+.st-line-text:focus { outline: 3px solid var(--color-ring); outline-offset: 0; }
+.st-line-meta { display: flex; align-items: center; gap: .6rem; margin-top: .25rem; min-height: 1.2rem; }
+.st-line-meta [hidden], .st-line-warn[hidden] { display: none; }
+.st-line-warn { margin: .3rem 0 0; font-size: .78rem; font-weight: 700; color: var(--color-danger); }
+@media (max-width: 480px) { .st-line { grid-template-columns: minmax(0, 1fr); } .st-seek { justify-self: start; } }
+.st-badge { font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-label); padding: .15rem .55rem; border-radius: var(--radius-pill); background: var(--ne-chamois); color: var(--ne-ink, #1b1f5c); }
+.st-line:not(.edited) .st-line-meta { display: none; }
+.st-line-meta { min-height: 0; }

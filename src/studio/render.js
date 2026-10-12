@@ -60,6 +60,34 @@ export async function studioCapabilities() {
 
 // --- validation de la demande -------------------------------------------------------------------
 
+const MAX_EDITS = 300;
+const MAX_EDIT_CHARS = 500;
+
+/**
+ * Corrections du texte des sous-titres : { "<début de la ligne en ms>": "texte" } -> [{ start_ms, text }].
+ * La ligne garde son horodatage d'origine (début et fin) : seul le texte change, et ses mots sont répartis sur la même durée.
+ * Un texte vide supprime le sous-titre de cette ligne.
+ */
+export function normalizeEdits(input) {
+  if (input == null) return [];
+  if (typeof input !== 'object' || Array.isArray(input)) throw new HttpError(400, 'Corrections de texte invalides.');
+  const entries = Object.entries(input);
+  if (entries.length > MAX_EDITS) throw new HttpError(400, `${MAX_EDITS} lignes corrigées au maximum.`);
+  return entries.map(([key, value]) => {
+    if (!/^\d{1,9}$/.test(key) || typeof value !== 'string') throw new HttpError(400, 'Correction de texte invalide.');
+    const text = value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (text.length > MAX_EDIT_CHARS) throw new HttpError(400, `Une ligne de sous-titre ne peut pas dépasser ${MAX_EDIT_CHARS} caractères.`);
+    return { start_ms: Number(key), text };
+  });
+}
+
+/** Lignes de la transcription avec les corrections appliquées (même horodatage, texte remplacé). */
+export function applyEdits(lines, edits = []) {
+  if (!edits.length) return lines;
+  const byStart = new Map(edits.map((e) => [e.start_ms, e.text]));
+  return lines.map((l) => (byStart.has(l.start_ms) ? { ...l, text: byStart.get(l.start_ms) } : l));
+}
+
 /** Demande de rendu normalisée à partir d'une saisie quelconque ; lève une 400 claire sinon. `video` : { file_duration_s }. */
 export function normalizeRequest(body, video) {
   const b = body && typeof body === 'object' ? body : {};
@@ -92,7 +120,7 @@ export function normalizeRequest(body, video) {
     music = { id: b.music.id, volume: Math.round(Math.min(1, Math.max(0, Number.isFinite(Number(b.music.volume)) ? Number(b.music.volume) : 0.25)) * 100) / 100 };
   }
   const voice = Math.round(Math.min(1.5, Math.max(0, Number.isFinite(Number(b.voice)) ? Number(b.voice) : 1)) * 100) / 100;
-  return { extracts, layout, style, music, voice, total: Math.round(total * 1000) / 1000 };
+  return { extracts, layout, style, music, voice, edits: normalizeEdits(b.edits), total: Math.round(total * 1000) / 1000 };
 }
 
 // --- commande ffmpeg --------------------------------------------------------------------------------
@@ -164,7 +192,7 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
 
 /** Fichier ASS du clip : mots horodatés des lignes de la transcription, groupés selon le style, plus le bandeau de source. */
 export function assForRequest({ req, lines, video }) {
-  const { words, duration } = wordsForExtracts(lines, req.extracts);
+  const { words, duration } = wordsForExtracts(applyEdits(lines, req.edits), req.extracts);
   const groups = groupWords(words, req.style);
   const font = fontById.get(req.style.font) ?? FONTS[0];
   const banner = fontById.get('inter') ?? font;

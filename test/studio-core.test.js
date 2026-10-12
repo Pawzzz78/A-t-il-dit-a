@@ -13,6 +13,8 @@ import {
   fitScale,
   usableWidth,
   groupWords,
+  lineSimilarity,
+  SIMILARITY_WARNING,
   sanitizeStyle,
   wordsForExtracts,
 } from '../public/js/studio-core.js';
@@ -187,4 +189,26 @@ test('mot trop long : réduit pour ne jamais déborder de l\'écran, aperçu et 
   assert.deepEqual([Number(m[1]), Number(m[3])], [Math.round(72 * k), Math.round(100 * k)]);
   const short = buildAss({ groups: [{ start: 0, end: 1, words: [{ text: 'oui', start: 0, end: 1, line: 0 }] }], style: sanitizeStyle({ preset: 'classique' }, FONTS), font: { ass_name: 'F', cap_em: 0.8 }, banner: 'x', duration: 1 });
   assert.doesNotMatch(events(short)[0], /fscx/); // mot court : aucune réduction
+});
+
+test('fidélité : la similarité d\'une ligne corrigée ignore casse, accents et ponctuation', () => {
+  const o = 'Il faut baisser la dépense publique, maintenant.';
+  assert.equal(lineSimilarity(o, 'IL FAUT BAISSER LA DEPENSE PUBLIQUE MAINTENANT'), 1);
+  assert.ok(lineSimilarity(o, 'Il faut baisser la dépense publique maintenant mais') > SIMILARITY_WARNING); // un mot ajouté : pas d\'alerte
+  assert.ok(lineSimilarity(o, 'Il faut baisser les dépenses publiques maintenant') > SIMILARITY_WARNING); // quelques mots corrigés : pas d\'alerte
+  assert.ok(lineSimilarity(o, 'Je suis contre toute réforme') < SIMILARITY_WARNING); // un autre propos : alerte
+  assert.equal(lineSimilarity('', ''), 1);
+  assert.equal(lineSimilarity(o, ''), 0);
+  assert.equal(lineSimilarity('', o), 0);
+});
+
+test('texte corrigé : les mots gardent l\'horodatage de la ligne, quel que soit leur nombre', () => {
+  for (const text of ['Oui', 'Un deux trois quatre cinq six sept huit neuf dix onze douze treize']) {
+    const edited = lines.map((l, i) => (i === 0 ? { ...l, text } : l));
+    const { words } = wordsForExtracts(edited, [{ start_ms: 0, end_ms: 4000 }]);
+    assert.equal(words.length, text.split(' ').length);
+    close(words[0].start, 0);
+    close(words.at(-1).end, 4);
+    for (let i = 1; i < words.length; i++) close(words[i].start, words[i - 1].end); // sans trou ni chevauchement
+  }
 });

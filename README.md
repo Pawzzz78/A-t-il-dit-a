@@ -116,6 +116,13 @@ qu'à choisir les extraits.
   - **position** : on **glisse les sous-titres** directement sur l'aperçu (ou boutons Haut / Milieu / Bas / Centrer). Pendant le
     glissement, des **repères pointillés** montrent le centre de l'écran ; le bloc s'**aimante** au centre horizontal et vertical, et
     les repères s'allument en rose quand il est exactement centré (petite vibration au toucher) ;
+  - **texte des sous-titres** (onglet Sous-titres › Texte) : on corrige les mots mal reconnus ligne par ligne, avec le clip qui se place
+    sur la ligne (bouton ▶ avec son horodatage). **L'horodatage d'origine est toujours conservé** : la ligne garde son début et sa fin,
+    et les mots corrigés (plus ou moins nombreux) sont répartis sur la même durée. Une ligne vidée n'affiche aucun sous-titre. Les
+    corrections ne concernent que ce clip : la transcription du site n'est jamais modifiée (elles sont gardées dans le navigateur, par
+    interview, tant que la transcription ne change pas). Un avertissement s'affiche si une ligne s'éloigne beaucoup de la transcription
+    (`lineSimilarity` < 60 %, pluriels et accents ignorés) et l'engagement à ne pas déformer les propos couvre les sous-titres corrigés.
+    Côté serveur : `edits` = `{ "<début de la ligne en ms>": "texte" }`, 300 lignes et 500 caractères par ligne au maximum ;
   - **musique** : 8 morceaux originaux libres de droits (`tools/make_studio_music.py`), volumes de la musique et de la voix ;
   - **cadrage 9:16** : vidéo entière sur fond flou, ou **plein écran** recadré : on **glisse la vidéo** vers la gauche ou la droite sur
     l'aperçu pour recentrer sur la personne (un curseur permet d'affiner). L'aperçu plein écran est la vidéo entière recadrée en direct

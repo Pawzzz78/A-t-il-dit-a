@@ -349,3 +349,51 @@ test('rendu en miroir : l\'image est réellement retournée', { skip: !enabled }
   assert.ok(notFlipped < 0.85, `sans retournement : ${notFlipped}`);
   // (les sous-titres ne sont jamais retournés : le miroir précède l'incrustation dans le graphe de filtres, vérifié plus haut)
 });
+
+test('corrections de texte : validées, appliquées avec l\'horodatage d\'origine, ligne vide = pas de sous-titre', { skip: !enabled }, async () => {
+  const { normalizeEdits, applyEdits, normalizeRequest, assForRequest } = studio;
+  const bad = (input, re) => assert.throws(() => normalizeEdits(input), (e) => e.status === 400 && re.test(e.message), JSON.stringify(input)?.slice(0, 60));
+  assert.deepEqual(normalizeEdits(undefined), []);
+  assert.deepEqual(normalizeEdits({ 1000: '  Bonjour\n\tle   monde \u0007 ' }), [{ start_ms: 1000, text: 'Bonjour le monde' }]);
+  bad([], /invalides/);
+  bad('texte', /invalides/);
+  bad({ abc: 'x' }, /invalide/);
+  bad({ '-5': 'x' }, /invalide/);
+  bad({ 1000: 42 }, /invalide/);
+  bad({ 1000: 'x'.repeat(501) }, /500 caractères/);
+  bad(Object.fromEntries(Array.from({ length: 301 }, (_, i) => [i, 'x'])), /300 lignes/);
+  assert.equal(normalizeEdits({ 1000: 'x'.repeat(500) })[0].text.length, 500);
+
+  const video = { file_duration_s: DURATION, title: 'Interview', published_at: '2025-03-01' };
+  const lines = Array.from({ length: 12 }, (_, i) => ({ start_ms: i * 1000, end_ms: i * 1000 + 950, text: `Ligne numéro ${i} de la transcription` }));
+  assert.equal(applyEdits(lines, []), lines);
+  const edited = applyEdits(lines, [{ start_ms: 2000, text: 'Mot' }, { start_ms: 424242, text: 'inconnue' }]);
+  assert.deepEqual(edited[2], { start_ms: 2000, end_ms: 2950, text: 'Mot' });
+  assert.deepEqual(edited.filter((_, i) => i !== 2), lines.filter((_, i) => i !== 2)); // le reste est intact, ligne inconnue ignorée
+  assert.equal(lines[2].text, 'Ligne numéro 2 de la transcription'); // la transcription d'origine n'est jamais modifiée
+
+  const dialogues = (ass) => ass.split('\n').filter((l) => l.startsWith('Dialogue: 0,')); // sous-titres (le bandeau est sur la couche 1)
+  const reqFor = (edits) => normalizeRequest({ extracts: [{ start_ms: 2000, end_ms: 5950 }], style: { preset: 'classique' }, edits }, video);
+  const plain = assForRequest({ req: reqFor(undefined), lines, video });
+  const withEdit = assForRequest({ req: reqFor({ 2000: 'Salut à tous les amis' }), lines, video });
+  assert.match(withEdit, /Salut/);
+  assert.doesNotMatch(plain, /Salut/);
+  assert.notEqual(plain, withEdit);
+  // ligne vidée : plus aucun mot de cette ligne dans le clip
+  const emptied = assForRequest({ req: reqFor({ 2000: '' }), lines, video });
+  assert.ok(dialogues(emptied).length < dialogues(plain).length);
+  // les corrections n'ont aucune incidence sur la durée du clip ni sur le bandeau
+  assert.equal(reqFor({ 2000: 'Salut' }).total, reqFor(undefined).total);
+});
+
+test('rendu avec texte corrigé : MP4 produit, durée inchangée', { skip: !enabled }, async () => {
+  const body = REQ({ layout: { fit: 'blur', quality: 'fast' }, music: null, extracts: [{ start_ms: 1000, end_ms: 4500 }], edits: { 1000: 'Texte corrigé à la main', 2000: '' } });
+  const r = await api('POST', '/api/studio/render', body);
+  assert.equal(r.status, 202, JSON.stringify(r.body));
+  await waitFor(r.body.id, (s) => s.status === 'done');
+  const file = path.join(dir, 'edited.mp4');
+  await fs.writeFile(file, Buffer.from(await (await fetch(`${base}/api/studio/render/${r.body.id}/file`)).arrayBuffer()));
+  const info = probe(file);
+  assert.ok(Math.abs(Number(info.format.duration) - 3.5) < 0.2, `durée ${info.format.duration}`);
+  assert.equal((await api('POST', '/api/studio/render', REQ({ edits: { x: 'non' } }))).status, 400);
+});

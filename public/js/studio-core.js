@@ -189,6 +189,40 @@ export function activeAt(groups, t) {
   return { group: g, active };
 }
 
+/** Mots d'un texte, comparables : minuscules, sans accents, ponctuation ni pluriel (« dépense » = « dépenses »). */
+const comparable = (text) =>
+  String(text ?? '')
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean)
+    .map((w) => (w.length > 3 ? w.replace(/[sx]$/, '') : w));
+
+/**
+ * Ressemblance (0 à 1) entre une ligne de la transcription et sa version corrigée : part des mots conservés dans l'ordre
+ * (plus longue sous-suite commune / nombre de mots du plus long des deux). Sert à signaler une correction qui s'éloigne
+ * beaucoup de ce qui est dit ; 1 = identique (à la casse, aux accents et à la ponctuation près).
+ */
+export function lineSimilarity(original, edited) {
+  const a = comparable(original);
+  const b = comparable(edited);
+  if (!a.length && !b.length) return 1;
+  if (!a.length || !b.length) return 0;
+  let prev = new Array(b.length + 1).fill(0);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [0];
+    for (let j = 1; j <= b.length; j++) cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1]);
+    prev = cur;
+  }
+  return prev[b.length] / Math.max(a.length, b.length);
+}
+
+/** Seuil en dessous duquel une ligne corrigée est signalée comme s'écartant de la transcription. */
+export const SIMILARITY_WARNING = 0.6;
+
 export const displayText = (text, style) => (style.uppercase ? text.toLocaleUpperCase('fr-FR') : text);
 
 /** Largeur utilisable du texte (en px du repère 1080) : jamais au-delà de l'écran, même déplacé vers un bord. */

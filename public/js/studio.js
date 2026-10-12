@@ -1,6 +1,6 @@
 // Studio de clips : choix d'une interview, extraits (proposés par l'IA ou libres), sous-titres TikTok (style, police, couleurs,
 // contour, position, taille), musique, cadrage, puis création du MP4 sur le serveur. Aucun innerHTML : tout est posé en nœuds.
-import { LIMITS, PRESETS, bannerText, groupWords, sanitizeStyle, wordsForExtracts } from './studio-core.js';
+import { LIMITS, PRESETS, SIMILARITY_WARNING, bannerText, groupWords, lineSimilarity, sanitizeStyle, wordsForExtracts } from './studio-core.js';
 import { createPhone, el, outlineShadow, rgba } from './studio-preview.js';
 import { fmtDate } from './ui.js';
 
@@ -85,6 +85,24 @@ async function openEditor(youtubeId) {
     voice: Number.isFinite(prefs.voice) ? prefs.voice : 1,
     layout: { fit: prefs.layout?.fit === 'crop' ? 'crop' : 'blur', cropX: 0.5, quality: prefs.layout?.quality === 'fast' ? 'fast' : 'hd', mirror: prefs.layout?.mirror === true },
     ticket: 0,
+    edits: new Map(), // corrections de texte : début de la ligne (ms) -> { orig, text }
+  };
+  // corrections gardées dans le navigateur (un rechargement ne les perd pas) ; ignorées si la transcription a changé depuis
+  const editsKey = `studio.edits.${S.video.youtube_id}`;
+  try {
+    const saved = JSON.parse(localStorage.getItem(editsKey) ?? '{}');
+    for (const [start, e] of Object.entries(saved)) {
+      if (S.lines.some((l) => l.start_ms === Number(start) && l.text === e.orig) && typeof e.text === 'string') S.edits.set(Number(start), { orig: e.orig, text: e.text });
+    }
+  } catch {
+    // stockage indisponible : sans importance
+  }
+  const saveEdits = () => {
+    try {
+      localStorage.setItem(editsKey, JSON.stringify(Object.fromEntries(S.edits)));
+    } catch {
+      // idem
+    }
   };
 
   // @font-face de toutes les polices (le navigateur ne télécharge que celles qui servent)
@@ -119,7 +137,8 @@ async function openEditor(youtubeId) {
   const pushFraming = () => phone.setFraming({ fit: S.layout.fit, cropX: S.layout.cropX, mirror: S.layout.mirror });
   const banner = bannerText(S.video.title, S.video.published_at);
   function rebuildSubtitles() {
-    const { words } = wordsForExtracts(S.lines, S.extracts.map(exMs));
+    const lines = S.edits.size ? S.lines.map((l) => (S.edits.has(l.start_ms) ? { ...l, text: S.edits.get(l.start_ms).text } : l)) : S.lines;
+    const { words } = wordsForExtracts(lines, S.extracts.map(exMs));
     phone.configure({ groups: groupWords(words, S.style), style: S.style, font: fontById.get(S.style.font), banner });
   }
   function applyAudio() {
@@ -165,6 +184,7 @@ async function openEditor(youtubeId) {
   function extractsChanged() {
     rebuildSubtitles();
     renderExtracts();
+    renderTextEditor();
     schedulePreview();
     renderCreateSummary();
   }
@@ -302,12 +322,22 @@ async function openEditor(youtubeId) {
     }))]));
   }
   const panelStyle = el('div', { class: 'st-panel' });
+  const lookWrap = el('div', {});
+  const textWrap = el('div', { hidden: true });
+  const subNav = el('div', { class: 'seg st-subnav', role: 'group', 'aria-label': 'Sous-titres' });
+  const openSub = (which) => {
+    textWrap.hidden = which !== 'text';
+    lookWrap.hidden = which !== 'look';
+    subNav.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.sub === which)));
+    if (which === 'text') renderTextEditor();
+  };
+  for (const [which, label] of [['look', 'Apparence'], ['text', 'Texte']]) subNav.append(el('button', { type: 'button', 'data-sub': which, onclick: () => openSub(which) }, label));
   const boxRows = el('div', { class: 'st-sub' });
   const posButtons = el('div', { class: 'st-pos' }, [['Haut', 0.3], ['Milieu', 0.5], ['Bas', 0.68]].map(([label, y]) => el('button', { type: 'button', class: 'st-mini wide', onclick: () => setStyle({ y }) }, label)), el('button', { type: 'button', class: 'st-mini wide', onclick: () => setStyle({ x: 0.5 }) }, 'Centrer'));
   const rowHl = row('Couleur du mot actif', ...colorInput('highlight'));
   const rowShadow = row('Ombre', ...slider('shadow', 0, 12, 0.5, (v) => (v ? `${v}` : 'aucune')));
   const rowGroup = row('Mots affichés à la fois', ...slider('wordsPerGroup', 1, 8, 1, (v) => `${v}`));
-  panelStyle.append(
+  lookWrap.append(
     el('h3', {}, 'Style'), presetGrid,
     el('h3', {}, 'Police'), fontGrid,
     el('h3', {}, 'Texte'),
@@ -347,6 +377,78 @@ async function openEditor(youtubeId) {
     boxRows.hidden = !s.box;
     ctl.outline.input.closest('.st-row').hidden = s.box;
     ctl.outlineColor.input.closest('.st-row').hidden = s.box;
+  }
+
+  // --- texte des sous-titres : on corrige les mots, la ligne garde son horodatage d'origine
+  const clipLines = () => {
+    const rows = [];
+    let offset = 0;
+    S.extracts.forEach((ex, k) => {
+      const m = exMs(ex);
+      for (let i = ex.a; i <= ex.b; i++) rows.push({ k, line: S.lines[i], at: offset + Math.max(0, (S.lines[i].start_ms - m.start_ms) / 1000) });
+      offset += (m.end_ms - m.start_ms) / 1000;
+    });
+    return rows;
+  };
+  const clock = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+  const editedInClip = () => clipLines().filter((r) => S.edits.has(r.line.start_ms)).length;
+
+  const fitAreas = () => textWrap.querySelectorAll('textarea').forEach((a) => { a.style.height = 'auto'; a.style.height = `${a.scrollHeight}px`; });
+  if (typeof ResizeObserver === 'function') new ResizeObserver(() => !textWrap.hidden && fitAreas()).observe(textWrap); // largeur modifiée, onglet ouvert
+
+  function renderTextEditor() {
+    if (!textWrap || textWrap.hidden) return;
+    const rows = clipLines();
+    const summary = el('p', { class: 'st-help' });
+    const refreshSummary = () => {
+      const n = editedInClip();
+      summary.textContent = n ? `${n} ligne${n > 1 ? 's' : ''} corrigée${n > 1 ? 's' : ''}.` : 'Corrige les mots mal reconnus : chaque ligne garde son horodatage, les mots sont répartis sur la même durée.';
+    };
+    const resetAll = el('button', { type: 'button', class: 'st-link', onclick: () => { for (const r of rows) S.edits.delete(r.line.start_ms); saveEdits(); rebuildSubtitles(); renderTextEditor(); renderCreateSummary(); } }, 'Tout rétablir');
+    let lastK = -1;
+    const items = rows.flatMap(({ k, line, at }) => {
+      const original = line.text;
+      const area = el('textarea', { class: 'st-line-text', rows: '1', spellcheck: 'true', lang: 'fr', 'aria-label': `Sous-titre de ${clock(at)}`, maxlength: '500' });
+      area.value = S.edits.get(line.start_ms)?.text ?? original;
+      const badge = el('span', { class: 'st-badge' }, 'corrigé');
+      const warn = el('p', { class: 'st-line-warn' });
+      const undo = el('button', { type: 'button', class: 'st-link', title: 'Rétablir le texte de la transcription' }, 'Rétablir');
+      const li = el('li', { class: 'st-line' });
+      const fit = () => { area.style.height = 'auto'; area.style.height = `${area.scrollHeight}px`; };
+      const refresh = () => {
+        const edited = S.edits.has(line.start_ms);
+        const text = area.value.trim();
+        li.classList.toggle('edited', edited);
+        badge.hidden = undo.hidden = !edited;
+        const far = edited && text && lineSimilarity(original, text) < SIMILARITY_WARNING;
+        warn.hidden = !(far || (edited && !text));
+        warn.textContent = !text ? 'Aucun sous-titre ne sera affiché pour cette ligne.' : '⚠ Ce texte s’écarte beaucoup de la transcription : vérifie qu’il reste fidèle à ce qui est dit.';
+        li.classList.toggle('far', Boolean(far));
+        refreshSummary();
+      };
+      area.addEventListener('input', () => {
+        if (area.value.trim() === original) S.edits.delete(line.start_ms);
+        else S.edits.set(line.start_ms, { orig: original, text: area.value });
+        saveEdits(); fit(); refresh(); rebuildSubtitles(); renderCreateSummary();
+      });
+      area.addEventListener('focus', () => phone.seek(at));
+      undo.addEventListener('click', () => { S.edits.delete(line.start_ms); area.value = original; saveEdits(); fit(); refresh(); rebuildSubtitles(); renderCreateSummary(); });
+      li.append(
+        el('button', { type: 'button', class: 'st-seek', title: 'Écouter cette ligne', onclick: () => phone.seek(at, true) }, `▶ ${clock(at)}`),
+        el('div', { class: 'st-line-body' }, area, el('div', { class: 'st-line-meta' }, badge, undo), warn),
+      );
+      refresh();
+      requestAnimationFrame(fit);
+      const head = k !== lastK && S.extracts.length > 1 ? el('li', { class: 'st-line-head' }, `Extrait ${k + 1} · ${S.extracts[k].title || 'Passage libre'}`) : null;
+      lastK = k;
+      return head ? [head, li] : [li];
+    });
+    textWrap.replaceChildren(
+      el('h3', {}, 'Texte des sous-titres'),
+      summary,
+      ...(S.edits.size ? [resetAll] : []),
+      rows.length ? el('ul', { class: 'st-line-list' }, items) : el('p', { class: 'st-help' }, 'Ajoute d’abord un extrait pour corriger ses sous-titres.'),
+    );
   }
 
   // ============================================================ onglet Musique
@@ -422,6 +524,7 @@ async function openEditor(youtubeId) {
       el('li', {}, el('strong', {}, 'Durée : '), S.extracts.length ? `${secs(totalS())} (${S.extracts.length} extrait${S.extracts.length > 1 ? 's' : ''})` : 'aucun extrait choisi'),
       el('li', {}, el('strong', {}, 'Sous-titres : '), `${PRESETS[S.style.preset].label}, ${fontById.get(S.style.font).label}`),
       el('li', {}, el('strong', {}, 'Musique : '), track ? track.title : 'aucune'),
+      ...(editedInClip() ? [el('li', {}, el('strong', {}, 'Texte : '), `${editedInClip()} ligne${editedInClip() > 1 ? 's' : ''} de sous-titres corrigée${editedInClip() > 1 ? 's' : ''}`)] : []),
       el('li', {}, el('strong', {}, 'Cadrage : '), `${S.layout.fit === 'blur' ? 'vidéo entière sur fond flou' : 'plein écran'}${S.layout.mirror ? ', en miroir' : ''}`)));
     makeBtn.disabled = !S.extracts.length || !pledge.checked || Boolean(job && ['queued', 'running'].includes(job.status));
   }
@@ -433,7 +536,7 @@ async function openEditor(youtubeId) {
       el('h3', {}, 'Ton clip'), createSummary,
       el('h3', {}, 'Qualité'),
       el('div', { class: 'st-opts' }, quality('hd', 'HD 1080 × 1920', 'Meilleure qualité, un peu plus long à créer'), quality('fast', 'Rapide 720 × 1280', 'Création plus rapide, fichier plus léger')),
-      el('label', { class: 'st-check pledge' }, pledge, 'Je m’engage à ne pas déformer le sens des propos de cette interview.'),
+      el('label', { class: 'st-check pledge' }, pledge, 'Je m’engage à ne pas déformer le sens des propos de cette interview, y compris dans les sous-titres que j’ai corrigés.'),
       makeBtn, makeMsg, jobBox,
       el('p', { class: 'st-help' }, 'Ta vidéo est conservée une heure sur le serveur : télécharge-la dès qu’elle est prête.'),
     );
@@ -495,6 +598,7 @@ async function openEditor(youtubeId) {
         style: S.style,
         music: S.music.id ? S.music : null,
         voice: S.voice,
+        edits: Object.fromEntries(clipLines().filter((r) => S.edits.has(r.line.start_ms)).map((r) => [r.line.start_ms, S.edits.get(r.line.start_ms).text])),
       });
       showJob();
       poll();
@@ -532,6 +636,8 @@ async function openEditor(youtubeId) {
   renderMusic();
   renderFrame();
   renderCreate();
+  panelStyle.prepend(subNav, textWrap, lookWrap);
+  openSub('look');
   syncStyleControls();
   applyAudio();
   pushFraming();
