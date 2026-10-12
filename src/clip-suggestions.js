@@ -10,11 +10,15 @@
 import { pool } from './db.js';
 import { HttpError } from './http-error.js';
 import { LlmError, completeWithOpenRouter } from './openrouter.js';
-import { summaryModel, speakerName } from './summarize.js';
+import { speakerName } from './summarize.js';
 import { formatTimestamp } from './transcripts.js';
 
 export const PROMPT_VERSION = 'c1';
-export const clipModel = () => process.env.CLIP_MODEL ?? summaryModel();
+// Modèle dédié aux extraits (à vérifier sur https://openrouter.ai/models) : sans raisonnement, qui suit bien des consignes
+// éditoriales et rend du JSON fiable, pour peu cher (≈ 0,01 $ par interview). Il ne dépend volontairement pas du modèle des
+// résumés / traductions (TRANSLATE_MODEL, SUMMARY_MODEL), qui peut être un modèle « à raisonnement » incapable de répondre ici.
+export const DEFAULT_CLIP_MODEL = 'openai/gpt-4.1-mini';
+export const clipModel = () => process.env.CLIP_MODEL || DEFAULT_CLIP_MODEL;
 export const CLIP_LIMITS = {
   minS: Number(process.env.CLIP_MIN_S) || 20,
   maxS: Number(process.env.CLIP_MAX_S) || 60,

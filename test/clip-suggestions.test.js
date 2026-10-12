@@ -130,3 +130,24 @@ test('génération : tranches multiples pour une longue transcription, erreurs c
   await setSegments(rows(2));
   await assert.rejects(svc.suggestClipsFor(rows(2), { complete }), (e) => e.status === 409); // transcription trop courte
 });
+
+test('modèle des extraits : propre aux extraits, jamais celui des résumés / traductions', async () => {
+  const { clipModel, DEFAULT_CLIP_MODEL } = await import('../src/clip-suggestions.js');
+  const keep = { clip: process.env.CLIP_MODEL, translate: process.env.TRANSLATE_MODEL, summary: process.env.SUMMARY_MODEL };
+  try {
+    process.env.TRANSLATE_MODEL = 'deepseek/deepseek-v4.1-flash';
+    process.env.SUMMARY_MODEL = 'deepseek/deepseek-v4.1-flash';
+    delete process.env.CLIP_MODEL;
+    assert.equal(clipModel(), DEFAULT_CLIP_MODEL);
+    assert.doesNotMatch(clipModel(), /deepseek/);
+    process.env.CLIP_MODEL = 'google/gemini-2.5-flash-lite';
+    assert.equal(clipModel(), 'google/gemini-2.5-flash-lite');
+    process.env.CLIP_MODEL = '';
+    assert.equal(clipModel(), DEFAULT_CLIP_MODEL); // variable vide : modèle par défaut
+  } finally {
+    for (const [k, v] of Object.entries({ CLIP_MODEL: keep.clip, TRANSLATE_MODEL: keep.translate, SUMMARY_MODEL: keep.summary })) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});

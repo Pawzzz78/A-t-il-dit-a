@@ -106,7 +106,7 @@ qu'à choisir les extraits.
   **numéros de lignes** de la transcription : les horaires viennent de la transcription et il ne peut pas inventer ni modifier un
   mot. Consignes éditoriales : extraits compréhensibles seuls, qui commencent et finissent sur une phrase entière sans couper avant
   une nuance, choisis pour la clarté et non pour le côté polémique. Résultats stockés ; ils sont signalés comme périmés si la
-  transcription change. Modèle : `CLIP_MODEL`, sinon celui des résumés.
+  transcription change. Modèle : `CLIP_MODEL`, par défaut `openai/gpt-4.1-mini` (sans raisonnement, environ 0,01 $ par interview), indépendant du modèle des résumés.
 - **Studio public** (`/studio/`) : les visiteurs choisissent une interview dont l'admin a autorisé les clips, prennent un ou
   plusieurs extraits (jusqu'à 4, 90 s au total : les propositions de l'IA, ou un passage libre dans la transcription), ajustent le
   début et la fin **avec précision**, puis habillent le clip :
