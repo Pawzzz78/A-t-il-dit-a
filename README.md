@@ -108,7 +108,7 @@ qu'à choisir les extraits. **Étape actuelle (admin) :**
 - **Prochaines étapes** : éditeur public (sous-titres : style, position, taille ; musique libre de droits) et rendu du MP4 avec
   ffmpeg sur le serveur (file d'attente, limite de clips simultanés, suppression rapide des fichiers produits).
 - **Sur Railway** : le volume est monté sur `/data` (`STORAGE_DIR=/data/storage`) et ffmpeg est installé dans l'image grâce à la
-  variable `RAILPACK_DEPLOY_APT_PACKAGES=ffmpeg` (le constructeur est Railpack).
+  variable `NIXPACKS_APT_PKGS=ffmpeg` (le constructeur réellement utilisé est Nixpacks, comme l'indique `railway.json`).
 
 ## Dernières vidéos et résumés
 
