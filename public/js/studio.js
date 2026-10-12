@@ -26,7 +26,7 @@ const loadPrefs = () => {
 };
 const savePrefs = (S) => {
   try {
-    localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality } }));
+    localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror } }));
   } catch {
     // stockage indisponible : sans importance
   }
@@ -83,7 +83,7 @@ async function openEditor(youtubeId) {
     style: sanitizeStyle(prefs.style, fontIds),
     music: { id: assets.music.some((m) => m.id === prefs.music?.id) ? prefs.music.id : null, volume: Number.isFinite(prefs.music?.volume) ? prefs.music.volume : 0.25 },
     voice: Number.isFinite(prefs.voice) ? prefs.voice : 1,
-    layout: { fit: prefs.layout?.fit === 'crop' ? 'crop' : 'blur', cropX: 0.5, quality: prefs.layout?.quality === 'fast' ? 'fast' : 'hd' },
+    layout: { fit: prefs.layout?.fit === 'crop' ? 'crop' : 'blur', cropX: 0.5, quality: prefs.layout?.quality === 'fast' ? 'fast' : 'hd', mirror: prefs.layout?.mirror === true },
     ticket: 0,
   };
 
@@ -108,7 +108,15 @@ async function openEditor(youtubeId) {
   };
 
   // --- aperçu
-  const phone = createPhone({ onMove: ({ x, y }) => setStyle({ x, y }) });
+  let cropSlider = null; // curseur « position du cadrage » de l'onglet Cadrage, tenu à jour quand on glisse la vidéo
+  const phone = createPhone({
+    onMove: ({ x, y }) => setStyle({ x, y }),
+    onCrop: (cropX) => {
+      S.layout.cropX = cropX;
+      if (cropSlider) cropSlider.value = String(Math.round(cropX * 100));
+    },
+  });
+  const pushFraming = () => phone.setFraming({ fit: S.layout.fit, cropX: S.layout.cropX, mirror: S.layout.mirror });
   const banner = bannerText(S.video.title, S.video.published_at);
   function rebuildSubtitles() {
     const { words } = wordsForExtracts(S.lines, S.extracts.map(exMs));
@@ -376,14 +384,24 @@ async function openEditor(youtubeId) {
   const panelFrame = el('div', { class: 'st-panel' });
   function renderFrame() {
     const opt = (value, title, text) => el('label', { class: S.layout.fit === value ? 'st-opt on' : 'st-opt' },
-      el('input', { type: 'radio', name: 'fit', value, checked: S.layout.fit === value, onchange: () => { S.layout.fit = value; savePrefs(S); renderFrame(); schedulePreview(); } }),
+      el('input', { type: 'radio', name: 'fit', value, checked: S.layout.fit === value, onchange: () => { S.layout.fit = value; savePrefs(S); pushFraming(); renderFrame(); schedulePreview(); renderCreateSummary(); } }),
       el('strong', {}, title), el('small', {}, text));
-    const crop = el('input', { type: 'range', min: '0', max: '100', step: '1', value: String(Math.round(S.layout.cropX * 100)), 'aria-label': 'Position horizontale du cadrage' });
-    crop.addEventListener('input', () => { S.layout.cropX = Number(crop.value) / 100; schedulePreview(); });
+    cropSlider = el('input', { type: 'range', min: '0', max: '100', step: '1', value: String(Math.round(S.layout.cropX * 100)), 'aria-label': 'Position horizontale du cadrage' });
+    cropSlider.addEventListener('input', () => { S.layout.cropX = Number(cropSlider.value) / 100; pushFraming(); });
+    const mirror = el('input', { type: 'checkbox', checked: S.layout.mirror });
+    mirror.addEventListener('change', () => { S.layout.mirror = mirror.checked; savePrefs(S); pushFraming(); renderCreateSummary(); });
     panelFrame.replaceChildren(
       el('h3', {}, 'Cadrage de la vidéo'),
       el('div', { class: 'st-opts' }, opt('blur', 'Vidéo entière', 'Sur un fond flou fait avec la vidéo'), opt('crop', 'Plein écran', 'La vidéo est recadrée pour remplir l’écran')),
-      S.layout.fit === 'crop' ? el('div', { class: 'st-row' }, el('label', {}, 'Position du cadrage'), el('div', { class: 'st-row-ctl' }, el('span', { class: 'st-end' }, 'gauche'), crop, el('span', { class: 'st-end' }, 'droite'))) : null,
+      S.layout.fit === 'crop'
+        ? el('div', { class: 'st-sub-block' },
+            el('p', { class: 'st-help' }, 'Glisse la vidéo vers la gauche ou la droite sur l’aperçu pour recentrer le cadrage sur la personne. Le curseur permet de régler plus finement.'),
+            el('div', { class: 'st-row' }, el('label', {}, 'Position du cadrage'), el('div', { class: 'st-row-ctl' }, el('span', { class: 'st-end' }, 'gauche'), cropSlider, el('span', { class: 'st-end' }, 'droite'))),
+            el('button', { type: 'button', class: 'st-mini wide', onclick: () => { S.layout.cropX = 0.5; cropSlider.value = '50'; pushFraming(); } }, 'Recentrer'))
+        : null,
+      el('h3', {}, 'Miroir'),
+      el('label', { class: 'st-check' }, mirror, 'Retourner l’image horizontalement (miroir)'),
+      el('p', { class: 'st-help' }, 'L’image est retournée gauche-droite ; les sous-titres et le bandeau « Source » ne le sont jamais. Attention : les textes visibles dans l’image (panneaux, logos, bandeaux de chaîne) apparaîtront à l’envers. Le miroir ne change pas les droits sur la vidéo d’origine.'),
       el('p', { class: 'st-help' }, 'Le bandeau « Source : titre · date » est toujours ajouté en haut du clip : il rappelle d’où vient l’extrait.'),
     );
   }
@@ -404,7 +422,7 @@ async function openEditor(youtubeId) {
       el('li', {}, el('strong', {}, 'Durée : '), S.extracts.length ? `${secs(totalS())} (${S.extracts.length} extrait${S.extracts.length > 1 ? 's' : ''})` : 'aucun extrait choisi'),
       el('li', {}, el('strong', {}, 'Sous-titres : '), `${PRESETS[S.style.preset].label}, ${fontById.get(S.style.font).label}`),
       el('li', {}, el('strong', {}, 'Musique : '), track ? track.title : 'aucune'),
-      el('li', {}, el('strong', {}, 'Cadrage : '), S.layout.fit === 'blur' ? 'vidéo entière sur fond flou' : 'plein écran')));
+      el('li', {}, el('strong', {}, 'Cadrage : '), `${S.layout.fit === 'blur' ? 'vidéo entière sur fond flou' : 'plein écran'}${S.layout.mirror ? ', en miroir' : ''}`)));
     makeBtn.disabled = !S.extracts.length || !pledge.checked || Boolean(job && ['queued', 'running'].includes(job.status));
   }
   const quality = (value, title, text) => el('label', { class: S.layout.quality === value ? 'st-opt on' : 'st-opt' },
@@ -516,6 +534,7 @@ async function openEditor(youtubeId) {
   renderCreate();
   syncStyleControls();
   applyAudio();
+  pushFraming();
   openTab('extraits');
 
   // premier extrait : le mieux noté

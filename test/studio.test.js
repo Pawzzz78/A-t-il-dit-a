@@ -285,3 +285,67 @@ test('nettoyage : rien n\'est conservé plus d\'une heure', { skip: !enabled }, 
   assert.deepEqual((await fs.readdir(path.join(process.env.STORAGE_DIR, 'renders'))).filter((n) => n.startsWith(r.body.id)), []);
   void core;
 });
+
+test('miroir et cadrage : demande validée, hflip après le cadrage (final seulement), aperçu non recadré', { skip: !enabled }, () => {
+  const { normalizeRequest, buildFfmpegArgs } = studio;
+  const video = { file_duration_s: 60 };
+  const base = { extracts: [{ start_ms: 0, end_ms: 5000 }] };
+  assert.equal(normalizeRequest(base, video).layout.mirror, false);
+  assert.equal(normalizeRequest({ ...base, layout: { mirror: true } }, video).layout.mirror, true);
+  assert.equal(normalizeRequest({ ...base, layout: { mirror: 'oui' } }, video).layout.mirror, false); // seul « true » active le miroir
+  const graph = (layout, kind = 'final') => {
+    const req = normalizeRequest({ ...base, layout }, video);
+    const a = buildFfmpegArgs({ file: '/x/in.mp4', req, hasAudio: true, assPath: '/x/a.ass', out: '/x/o.mp4', kind });
+    return a[a.indexOf('-filter_complex') + 1];
+  };
+  // plein écran : le miroir vient APRÈS le recadrage (la position du cadrage reste celle de la vidéo d'origine)
+  assert.match(graph({ fit: 'crop', cropX: 0.3, mirror: true }), /crop=1080:1920:\(iw-ow\)\*0\.3:\(ih-oh\)\*0\.5,setsar=1,hflip\[v0\]/);
+  assert.match(graph({ fit: 'blur', mirror: true }), /overlay=\(W-w\)\/2:\(H-h\)\/2,setsar=1,hflip\[v0\]/);
+  assert.doesNotMatch(graph({ fit: 'crop', mirror: false }), /hflip/);
+  // les sous-titres sont incrustés après le miroir : jamais retournés
+  assert.ok(graph({ fit: 'blur', mirror: true }).indexOf('hflip') < graph({ fit: 'blur', mirror: true }).indexOf('ass='));
+  // aperçu : jamais de hflip (le navigateur retourne), et en plein écran la vidéo n'est pas recadrée par le serveur
+  assert.doesNotMatch(graph({ fit: 'blur', mirror: true }, 'preview'), /hflip/);
+  const previewCrop = graph({ fit: 'crop', cropX: 0.9, mirror: true }, 'preview');
+  assert.match(previewCrop, /scale=-2:640/);
+  assert.doesNotMatch(previewCrop, /crop=|hflip/);
+});
+
+test('aperçu : la position du cadrage et le miroir ne demandent aucun nouveau calcul au serveur', { skip: !enabled }, async () => {
+  const get = (layout) => api('POST', '/api/studio/preview', REQ({ layout }));
+  const a = await get({ fit: 'crop', cropX: 0.2, mirror: false, quality: 'fast' });
+  assert.equal(a.status, 200, JSON.stringify(a.body));
+  const t0 = Date.now();
+  const b = await get({ fit: 'crop', cropX: 0.9, mirror: true, quality: 'hd' });
+  assert.equal(b.body.url, a.body.url);
+  assert.ok(Date.now() - t0 < 600, 'servi depuis le cache');
+  const blur = await get({ fit: 'blur', mirror: true });
+  assert.notEqual(blur.body.url, a.body.url); // un autre mode de cadrage est un autre aperçu
+  // l'aperçu plein écran garde le format de la vidéo (16:9 à 640 px de haut), le navigateur la recadre
+  const info = probe(path.join(process.env.STORAGE_DIR, 'previews', a.body.url.split('/').pop()));
+  const v = info.streams.find((s) => s.codec_type === 'video');
+  assert.deepEqual([v.width, v.height], [1138, 640]);
+});
+
+test('rendu en miroir : l\'image est réellement retournée', { skip: !enabled }, async () => {
+  const render = async (mirror) => {
+    const r = await api('POST', '/api/studio/render', REQ({ layout: { fit: 'crop', cropX: 0.5, quality: 'fast', mirror }, music: null, extracts: [{ start_ms: 1000, end_ms: 4500 }] }));
+    assert.equal(r.status, 202, JSON.stringify(r.body));
+    await waitFor(r.body.id, (s) => s.status === 'done');
+    const file = path.join(dir, `mirror-${mirror}.mp4`);
+    await fs.writeFile(file, Buffer.from(await (await fetch(`${base}/api/studio/render/${r.body.id}/file`)).arrayBuffer()));
+    return file;
+  };
+  const normal = await render(false);
+  const mirrored = await render(true);
+  // bande du milieu (ni bandeau en haut, ni sous-titres plus bas) : le miroir de l'original doit ressembler à la version en miroir
+  const ssim = (a, b, pre) => {
+    const r = spawnSync('ffmpeg', ['-v', 'info', '-ss', '1.5', '-i', a, '-ss', '1.5', '-i', b, '-lavfi', `[0:v]crop=720:300:0:330${pre}[x];[1:v]crop=720:300:0:330[y];[x][y]ssim`, '-frames:v', '1', '-f', 'null', '-'], { encoding: 'utf8' });
+    return Number(/All:([0-9.]+)/.exec(r.stderr)?.[1]);
+  };
+  const flipped = ssim(normal, mirrored, ',hflip');
+  const notFlipped = ssim(normal, mirrored, '');
+  assert.ok(flipped > 0.9, `SSIM du retournement : ${flipped}`);
+  assert.ok(notFlipped < 0.85, `sans retournement : ${notFlipped}`);
+  // (les sous-titres ne sont jamais retournés : le miroir précède l'incrustation dans le graphe de filtres, vérifié plus haut)
+});

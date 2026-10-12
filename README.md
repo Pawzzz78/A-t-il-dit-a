@@ -113,9 +113,17 @@ qu'à choisir les extraits.
   - **5 styles TikTok** : mots en surbrillance, un mot à la fois, karaoké, classique, sur fond sombre ;
   - **réglages** : police (22 polices libres dans `public/fonts/studio/`), taille, couleur du texte et du mot actif, contour
     (épaisseur et couleur), ombre, fond sombre (couleur et opacité), majuscules, mots affichés à la fois, largeur, animation « pop » ;
-  - **position** : on **glisse les sous-titres** directement sur l'aperçu (ou boutons Haut / Milieu / Bas / Centrer) ;
+  - **position** : on **glisse les sous-titres** directement sur l'aperçu (ou boutons Haut / Milieu / Bas / Centrer). Pendant le
+    glissement, des **repères pointillés** montrent le centre de l'écran ; le bloc s'**aimante** au centre horizontal et vertical, et
+    les repères s'allument en rose quand il est exactement centré (petite vibration au toucher) ;
   - **musique** : 8 morceaux originaux libres de droits (`tools/make_studio_music.py`), volumes de la musique et de la voix ;
-  - **cadrage 9:16** : vidéo entière sur fond flou, ou plein écran recadré (position réglable) ;
+  - **cadrage 9:16** : vidéo entière sur fond flou, ou **plein écran** recadré : on **glisse la vidéo** vers la gauche ou la droite sur
+    l'aperçu pour recentrer sur la personne (un curseur permet d'affiner). L'aperçu plein écran est la vidéo entière recadrée en direct
+    par le navigateur avec la même formule que le rendu (`décalage = (largeur de la vidéo − largeur de l'écran) × position`), donc
+    aucun calcul serveur pendant le glissement ;
+  - **miroir** : retourne l'image gauche-droite. Il est appliqué après le cadrage et avant l'incrustation : sous-titres et bandeau
+    « Source » ne sont jamais retournés (en revanche les textes visibles dans l'image le sont). Il ne change pas les droits sur la
+    vidéo d'origine ;
   - **aperçu en direct** : la vidéo (cadrage seul, 360 × 640) vient du serveur, les sous-titres sont dessinés par le navigateur avec
     le **même code** que le rendu (`public/js/studio-core.js`) : horaires des mots, groupes, tailles, réduction des mots trop
     longs. Vérifié image par image contre le MP4 final.

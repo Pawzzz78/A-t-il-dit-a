@@ -39,19 +39,23 @@ export function outlineShadow(radius, color, shadow, scaleShadow) {
 export const rgba = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseInt(hex.slice(3, 5), 16)},${parseInt(hex.slice(5, 7), 16)},${a})`;
 
 /**
- * Cadre de téléphone. `onMove({ x, y })` : les sous-titres ont été déplacés (fractions 0–1 du cadre).
+ * Cadre de téléphone. `onMove({ x, y })` : les sous-titres ont été déplacés (fractions 0–1 du cadre) ; `onCrop(cropX)` : la vidéo
+ * plein écran a été glissée pour recentrer le cadrage (0 = bord gauche de la vidéo, 1 = bord droit).
  * Renvoie l'élément racine et les commandes.
  */
-export function createPhone({ onMove }) {
+export function createPhone({ onMove, onCrop }) {
   const video = el('video', { class: 'ph-video', playsinline: '', preload: 'auto', loop: true });
   const bannerText = el('span', {});
   const banner = el('div', { class: 'ph-banner' }, bannerText);
   const subText = el('div', { class: 'sub-text' });
   const subBox = el('div', { class: 'sub-box', title: 'Glisse pour déplacer les sous-titres' }, subText);
   const guides = el('div', { class: 'ph-guides', hidden: true }, el('span', { class: 'top' }, 'barre TikTok'), el('span', { class: 'bottom' }, 'légende, boutons et description TikTok'));
+  const guideV = el('div', { class: 'ph-guide v', hidden: true });
+  const guideH = el('div', { class: 'ph-guide h', hidden: true });
+  const hint = el('div', { class: 'ph-hint', hidden: true }, '↔ Glisse la vidéo pour la recentrer');
   const busy = el('div', { class: 'ph-busy', hidden: true });
   const playBtn = el('button', { class: 'ph-play', type: 'button', 'aria-label': 'Lire l’aperçu' }, '▶');
-  const screen = el('div', { class: 'ph-screen' }, video, banner, subBox, guides, busy, playBtn);
+  const screen = el('div', { class: 'ph-screen' }, video, banner, subBox, guideV, guideH, guides, hint, busy, playBtn);
   const range = el('input', { class: 'ph-range', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': 'Position dans l’aperçu' });
   const time = el('span', { class: 'ph-time' }, '0:00 / 0:00');
   const guideToggle = el('label', { class: 'ph-toggle' }, el('input', { type: 'checkbox' }), 'Zones TikTok');
@@ -62,6 +66,8 @@ export function createPhone({ onMove }) {
   music.preload = 'auto';
 
   let cfg = { groups: [], style: null, font: null, banner: '' };
+  let framing = { fit: 'blur', cropX: 0.5, mirror: false };
+  let hintTimer = 0;
   let playing = false;
   let lastKey = '';
   let lastGroup = null;
@@ -132,6 +138,13 @@ export function createPhone({ onMove }) {
     }
   }
 
+  /** Cadrage appliqué en direct : position (plein écran) et miroir, sans demander de nouvel aperçu au serveur. */
+  function applyFraming() {
+    video.style.objectPosition = framing.fit === 'crop' ? `${framing.cropX * 100}% 50%` : '50% 50%';
+    video.style.transform = framing.mirror ? 'scaleX(-1)' : '';
+    video.classList.toggle('panning', framing.fit === 'crop');
+  }
+
   function tick() {
     renderSub();
     const d = video.duration || 0;
@@ -148,7 +161,35 @@ export function createPhone({ onMove }) {
   };
   const play = () => video.play().catch(() => {});
   playBtn.addEventListener('click', () => (video.paused ? play() : video.pause()));
-  video.addEventListener('click', () => (video.paused ? play() : video.pause()));
+  // clic = lecture / pause ; glissement horizontal en plein écran = recentrer la vidéo (comme déplacer une image dans Canva)
+  let pan = null;
+  video.addEventListener('pointerdown', (e) => {
+    pan = { x: e.clientX, cropX: framing.cropX, moved: false, id: e.pointerId };
+  });
+  video.addEventListener('pointermove', (e) => {
+    if (!pan || e.pointerId !== pan.id) return;
+    const dx = e.clientX - pan.x;
+    if (!pan.moved && Math.abs(dx) < 5) return;
+    pan.moved = true;
+    if (framing.fit !== 'crop' || !video.videoWidth) return;
+    video.setPointerCapture(e.pointerId);
+    const overflow = (screen.clientHeight * video.videoWidth) / video.videoHeight - screen.clientWidth; // largeur de la vidéo hors de l'écran
+    if (overflow < 2) return;
+    // vidéo tirée vers la droite à l'écran : la fenêtre de cadrage recule dans la source (et inversement quand l'image est en miroir)
+    const next = pan.cropX + (framing.mirror ? 1 : -1) * (dx / overflow);
+    const cropX = Math.round(Math.min(1, Math.max(0, next)) * 1000) / 1000;
+    framing.cropX = cropX;
+    applyFraming();
+    onCrop?.(cropX);
+  });
+  const endPan = (e) => {
+    if (!pan || e.pointerId !== pan.id) return;
+    const moved = pan.moved;
+    pan = null;
+    if (!moved && e.type === 'pointerup') video.paused ? play() : video.pause();
+  };
+  video.addEventListener('pointerup', endPan);
+  video.addEventListener('pointercancel', endPan);
   video.addEventListener('play', () => {
     playing = true;
     playBtn.hidden = true;
@@ -178,24 +219,43 @@ export function createPhone({ onMove }) {
     renderSub();
   }).observe(screen);
 
-  // déplacement des sous-titres : le centre du bloc suit le doigt ou la souris
+  // déplacement des sous-titres : le centre du bloc suit le doigt ou la souris ; il s'aimante au centre de l'écran
+  // (repères pointillés, qui s'allument quand le bloc est exactement centré, comme dans Canva)
+  const SNAP_X = 0.018;
+  const SNAP_Y = 0.014;
   let drag = null;
+  let wasSnapped = false;
+  const showGuides = (on, sx = false, sy = false) => {
+    guideV.hidden = guideH.hidden = !on;
+    guideV.classList.toggle('on', sx);
+    guideH.classList.toggle('on', sy);
+  };
   subBox.addEventListener('pointerdown', (e) => {
-    const rect = screen.getBoundingClientRect();
-    drag = { rect };
+    drag = { rect: screen.getBoundingClientRect() };
     subBox.setPointerCapture(e.pointerId);
     subBox.classList.add('dragging');
+    showGuides(true);
     e.preventDefault();
+    e.stopPropagation();
   });
   subBox.addEventListener('pointermove', (e) => {
     if (!drag) return;
-    const x = Math.min(0.9, Math.max(0.1, (e.clientX - drag.rect.left) / drag.rect.width));
-    const y = Math.min(0.9, Math.max(0.1, (e.clientY - drag.rect.top) / drag.rect.height));
+    let x = Math.min(0.9, Math.max(0.1, (e.clientX - drag.rect.left) / drag.rect.width));
+    let y = Math.min(0.9, Math.max(0.1, (e.clientY - drag.rect.top) / drag.rect.height));
+    const sx = Math.abs(x - 0.5) < SNAP_X;
+    const sy = Math.abs(y - 0.5) < SNAP_Y;
+    if (sx) x = 0.5;
+    if (sy) y = 0.5;
+    showGuides(true, sx, sy);
+    if ((sx || sy) && !wasSnapped) navigator.vibrate?.(8); // petit « clic » au toucher quand on atteint le centre
+    wasSnapped = sx || sy;
     onMove({ x: Math.round(x * 1000) / 1000, y: Math.round(y * 1000) / 1000 });
   });
   const stop = () => {
     drag = null;
+    wasSnapped = false;
     subBox.classList.remove('dragging');
+    showGuides(false);
   };
   subBox.addEventListener('pointerup', stop);
   subBox.addEventListener('pointercancel', stop);
@@ -215,6 +275,18 @@ export function createPhone({ onMove }) {
         if (wasPlaying) play();
       });
       video.load();
+    },
+    /** Cadrage : mode (« blur » ou « crop »), position du cadrage plein écran (0–1) et miroir. */
+    setFraming(next) {
+      const wasCrop = framing.fit === 'crop';
+      framing = { ...framing, ...next };
+      applyFraming();
+      if (framing.fit === 'crop' && !wasCrop) {
+        hint.hidden = false;
+        clearTimeout(hintTimer);
+        hintTimer = setTimeout(() => (hint.hidden = true), 4500);
+      }
+      if (framing.fit !== 'crop') hint.hidden = true;
     },
     setBusy(message) {
       busy.hidden = !message;

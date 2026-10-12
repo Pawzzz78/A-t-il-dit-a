@@ -83,6 +83,7 @@ export function normalizeRequest(body, video) {
     fit: l.fit === 'crop' ? 'crop' : 'blur',
     cropX: Math.round(Math.min(1, Math.max(0, Number.isFinite(Number(l.cropX)) ? Number(l.cropX) : 0.5)) * 100) / 100,
     quality: l.quality === 'fast' ? 'fast' : 'hd',
+    mirror: l.mirror === true, // image retournée gauche-droite (après le cadrage ; sous-titres et bandeau ne sont jamais retournés)
   };
   const style = sanitizeStyle(b.style, FONTS.map((f) => f.id));
   let music = null;
@@ -99,9 +100,13 @@ export function normalizeRequest(body, video) {
 const esc = (p) => String(p).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
 const even = (n) => Math.max(2, Math.round(n / 2) * 2);
 
-function layoutChain(i, { w, h }, layout) {
+function layoutChain(i, { w, h }, layout, kind) {
+  const flip = kind === 'final' && layout.mirror ? ',hflip' : ''; // l'aperçu est retourné par le navigateur, instantanément
   if (layout.fit === 'crop') {
-    return `[${i}:v]fps=30,scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}:(iw-ow)*${layout.cropX}:(ih-oh)*0.5,setsar=1[v${i}]`;
+    // Aperçu : la vidéo entière à la hauteur de l'écran, SANS recadrage : le navigateur la recadre en direct (glissement du doigt)
+    // avec la même formule que le rendu : décalage = (largeur de la vidéo − largeur de l'écran) × cropX.
+    if (kind === 'preview') return `[${i}:v]fps=30,scale=-2:${h},setsar=1[v${i}]`;
+    return `[${i}:v]fps=30,scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}:(iw-ow)*${layout.cropX}:(ih-oh)*0.5,setsar=1${flip}[v${i}]`;
   }
   // « fit » : la vidéo entière, centrée, sur un fond flou fait avec elle-même (calculé en petit pour rester rapide)
   const bw = even(w / 4);
@@ -109,7 +114,7 @@ function layoutChain(i, { w, h }, layout) {
   return (
     `[${i}:v]fps=30,split=2[bg${i}][fg${i}];` +
     `[bg${i}]scale=${bw}:${bh}:force_original_aspect_ratio=increase,crop=${bw}:${bh},boxblur=6:2,scale=${w}:${h},eq=brightness=-0.12:saturation=1.15[b${i}];` +
-    `[fg${i}]scale=${w}:-2[f${i}];[b${i}][f${i}]overlay=(W-w)/2:(H-h)/2,setsar=1[v${i}]`
+    `[fg${i}]scale=${w}:-2[f${i}];[b${i}][f${i}]overlay=(W-w)/2:(H-h)/2,setsar=1${flip}[v${i}]`
   );
 }
 
@@ -128,7 +133,7 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
   const f = [];
   req.extracts.forEach((e, i) => {
     const dur = (e.end_ms - e.start_ms) / 1000;
-    f.push(layoutChain(i, size, req.layout));
+    f.push(layoutChain(i, size, req.layout, kind));
     f.push(
       hasAudio
         ? `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:${dur},asetpts=PTS-STARTPTS[a${i}]`
@@ -249,9 +254,12 @@ const releasePreview = () => {
   previewWaiters.shift()?.();
 };
 
-/** Aperçu du cadrage (sans sous-titres, 360 × 640) : renvoie { key, duration_s }. Mis en cache selon fichier + extraits + cadrage. */
+/**
+ * Aperçu du cadrage (sans sous-titres, 640 px de haut) : renvoie { key, ext, duration_s }. Mis en cache selon fichier + extraits + mode
+ * de cadrage seulement : la position du cadrage et le miroir sont appliqués instantanément par le navigateur.
+ */
 export async function createPreview({ video, req, ip = 'local' }) {
-  const keySource = JSON.stringify([video.file_name, video.file_size, String(video.file_uploaded_at), req.extracts, req.layout.fit, req.layout.cropX]);
+  const keySource = JSON.stringify([video.file_name, video.file_size, String(video.file_uploaded_at), req.extracts, req.layout.fit]);
   const key = crypto.createHash('sha1').update(keySource).digest('hex');
   await ensureDirs();
   const ext = previewExt();
