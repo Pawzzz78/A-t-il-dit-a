@@ -47,6 +47,7 @@ export const DEFAULT_STYLE = {
   ...PRESETS[DEFAULT_PRESET].style,
   boxColor: '#000000',
   boxOpacity: 0.62,
+  boxRadius: 0.35, // arrondi du fond : 0 = angles droits, 1 = bords entièrement ronds (moitié de la hauteur d'une ligne)
   x: 0.5,
   maxWidth: 0.86,
 };
@@ -80,6 +81,7 @@ export function sanitizeStyle(input = {}, fontIds = []) {
     box: typeof s.box === 'boolean' ? s.box : base.box,
     boxColor: color(s.boxColor, base.boxColor),
     boxOpacity: Math.round(clamp(s.boxOpacity, 0, 1, base.boxOpacity) * 100) / 100,
+    boxRadius: Math.round(clamp(s.boxRadius, 0, 1, base.boxRadius) * 100) / 100,
     uppercase: typeof s.uppercase === 'boolean' ? s.uppercase : base.uppercase,
     wordsPerGroup: mode === 'one' ? 1 : Math.round(clamp(s.wordsPerGroup, 1, 10, base.wordsPerGroup)),
     animation: s.animation === 'pop' || s.animation === 'none' ? s.animation : base.animation,
@@ -228,13 +230,16 @@ export const displayText = (text, style) => (style.uppercase ? text.toLocaleUppe
 /** Largeur utilisable du texte (en px du repère 1080) : jamais au-delà de l'écran, même déplacé vers un bord. */
 export const usableWidth = (style) => Math.min(style.maxWidth, 2 * Math.min(style.x, 1 - style.x)) * OUT.w;
 
+/** Marge entre le texte et le bord du fond (px du repère 1080). */
+export const boxPad = (style) => Math.round(style.size * 0.28);
+
 /**
  * Facteur de réduction (≤ 1) d'un groupe de mots : un seul mot trop long ne peut pas passer à la ligne et déborderait de l'écran.
  * Estimation avec la largeur d'une capitale de la police (`cap_em`, mesurée avec libass) ; identique pour l'aperçu et le rendu.
  */
 export function fitScale(texts, style, font) {
   const longest = Math.max(1, ...texts.map((t) => [...t].length));
-  const pad = style.box ? style.size * 0.56 : style.outline * 2;
+  const pad = style.box ? boxPad(style) * 2 : style.outline * 2;
   const text = longest * style.size * (font?.cap_em ?? 0.62) * (style.uppercase ? 0.98 : 0.85);
   const usable = usableWidth(style);
   // le contour (ou les marges du fond) ne rétrécit pas avec le texte : on ne réduit que la part « texte »
@@ -262,8 +267,8 @@ export function assTime(sec) {
 /** Texte sûr pour ASS : pas d'accolades ni de retours à la ligne ni d'antislash. */
 export const assEscape = (t) => String(t).replace(/\\/g, '/').replace(/[{}]/g, '').replace(/[\r\n]+/g, ' ');
 
-/** Bandeau de source, obligatoire sur chaque clip : titre et date de la vidéo d'origine. */
-export function bannerText(title, publishedAt) {
+/** Ligne de source à citer dans la description de la vidéo : titre et date de l'interview d'origine. */
+export function sourceText(title, publishedAt) {
   let t = String(title ?? '').replace(/\s+/g, ' ').trim();
   if (t.length > 56) t = `${t.slice(0, 55).trimEnd()}…`;
   let date = '';
@@ -274,54 +279,117 @@ export function bannerText(title, publishedAt) {
   return `Source : ${t || 'interview'}${date ? ` · ${date}` : ''}`;
 }
 
+const ASS_HEAD = (W, H) => [
+  '[Script Info]',
+  'ScriptType: v4.00+',
+  `PlayResX: ${W}`,
+  `PlayResY: ${H}`,
+  'WrapStyle: 0',
+  'ScaledBorderAndShadow: yes',
+  '',
+  '[V4+ Styles]',
+  'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
+];
+const ASS_EVENTS = ['', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text'];
+
+/** Le fond (coins droits ou arrondis) est dessiné par nos soins, d'un seul tenant : pas de double teinte là où deux lignes se chevauchent. */
+export const roundedBox = (style) => Boolean(style.box);
+
 /**
- * Fichier ASS complet. `font` : { ass_name, em_ratio, cap_em } de la police choisie ; `banner` : texte du bandeau de source (toujours affiché).
- * Les positions et tailles sont exprimées dans le repère 1080 × 1920 : libass les adapte à la définition de sortie.
+ * Tracé du fond : un rectangle aux coins arrondis par ligne de texte, en un seul tracé (les lignes qui se chevauchent forment une seule
+ * forme, remplie d'une seule teinte). `radius` : 0 (angles droits) à 1 (bords entièrement ronds = moitié de la hauteur de la ligne).
+ * Même tracé pour ASS (`kind` 'ass') et pour l'aperçu SVG (`kind` 'svg').
  */
-export function buildAss({ groups, style, font, banner, duration }) {
-  const W = OUT.w;
-  const H = OUT.h;
-  const cx = Math.round(style.x * W);
-  const cy = Math.round(style.y * H);
-  // largeur maximale du texte, sans jamais dépasser de l'écran quand on déplace le bloc vers un bord
-  const margin = Math.max(0, Math.round((W - usableWidth(style)) / 2));
-  const fontSize = (f) => Math.round(style.size / (f?.em_ratio ?? 1)); // taille d'em -> taille ASS
-  const boxed = style.box;
-  const outline = boxed ? Math.round(style.size * 0.28) : style.outline;
-  const outlineCol = boxed ? assColor(style.boxColor, (1 - style.boxOpacity) * 255) : assColor(style.outlineColor);
-  const primary = style.mode === 'karaoke' ? style.highlight : style.color; // karaoké : « rempli » = couleur d'accent
-  const secondary = style.mode === 'karaoke' ? style.color : style.color;
-  const shadowCol = assColor('#000000', 90);
+export function boxPath(rects, radius, kind = 'ass') {
+  const f = (n) => Math.round(n * 10) / 10;
+  const [M, L, C, Z] = kind === 'svg' ? ['M', 'L', 'C', ' Z'] : ['m', 'l', 'b', ''];
+  return rects
+    .map(({ x0, y0, x1, y1 }) => {
+      const r = Math.max(0, Math.min(radius * ((y1 - y0) / 2), (x1 - x0) / 2, (y1 - y0) / 2));
+      const c = 0.5523 * r;
+      return [
+        `${M} ${f(x0 + r)} ${f(y0)} ${L} ${f(x1 - r)} ${f(y0)}`,
+        `${C} ${f(x1 - r + c)} ${f(y0)} ${f(x1)} ${f(y0 + r - c)} ${f(x1)} ${f(y0 + r)} ${L} ${f(x1)} ${f(y1 - r)}`,
+        `${C} ${f(x1)} ${f(y1 - r + c)} ${f(x1 - r + c)} ${f(y1)} ${f(x1 - r)} ${f(y1)} ${L} ${f(x0 + r)} ${f(y1)}`,
+        `${C} ${f(x0 + r - c)} ${f(y1)} ${f(x0)} ${f(y1 - r + c)} ${f(x0)} ${f(y1 - r)} ${L} ${f(x0)} ${f(y0 + r)}`,
+        `${C} ${f(x0)} ${f(y0 + r - c)} ${f(x0 + r - c)} ${f(y0)} ${f(x0 + r)} ${f(y0)}${Z}`,
+      ].join(' ');
+    })
+    .join(' ');
+}
 
-  const out = [
-    '[Script Info]',
-    'ScriptType: v4.00+',
-    `PlayResX: ${W}`,
-    `PlayResY: ${H}`,
-    'WrapStyle: 0',
-    'ScaledBorderAndShadow: yes',
-    '',
-    '[V4+ Styles]',
-    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Main,${font.ass_name},${fontSize(font)},${assColor(primary)},${assColor(secondary)},${outlineCol},${shadowCol},0,0,0,0,100,100,0,0,${boxed ? 3 : 1},${outline},${boxed ? 0 : style.shadow},5,${margin},${margin},0,1`,
-    `Style: Banner,${font.banner_name ?? font.ass_name},${Math.round(30 / (font.banner_em_ratio ?? 1))},&H00FFFFFF,&H00FFFFFF,${assColor('#000000', 115)},&H00000000,0,0,0,0,100,100,0,0,3,10,0,8,60,60,0,1`,
-    '',
-    '[Events]',
-    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
-  ];
-  const pos = `{\\an5\\pos(${cx},${cy})`;
-  // `k` : réduction d'un mot trop long ; le « pop » (grossit puis se pose) part de 72 % et finit à la taille normale réduite de k
-  const scaleTags = (k, popped) => {
-    const pc = (v) => Math.round(v * k);
-    if (popped) return `\\fscx${pc(72)}\\fscy${pc(72)}\\t(0,90,\\fscx${pc(106)}\\fscy${pc(106)})\\t(90,170,\\fscx${pc(100)}\\fscy${pc(100)})`;
-    return k < 1 ? `\\fscx${pc(100)}\\fscy${pc(100)}` : '';
-  };
-  const dlg = (start, end, text, first, k) =>
-    out.push(`Dialogue: 0,${assTime(start)},${assTime(end)},Main,,0,0,0,,${pos}${scaleTags(k, first && style.animation === 'pop')}}${text}`);
+/** Position horizontale/verticale du bloc et marge latérale (largeur maximale du texte, sans jamais dépasser de l'écran). */
+const placement = (style) => ({
+  cx: Math.round(style.x * OUT.w),
+  cy: Math.round(style.y * OUT.h),
+  margin: Math.max(0, Math.round((OUT.w - usableWidth(style)) / 2)),
+});
+const fontSizeFor = (style, f) => Math.round(style.size / (f?.em_ratio ?? 1)); // taille d'em -> taille ASS
 
-  for (const g of groups) {
+/** Réduction d'un mot trop long : le « pop » (grossit puis se pose) part de 72 % et finit à la taille normale réduite de k. */
+const scaleTags = (k, popped) => {
+  const pc = (v) => Math.round(v * k);
+  if (popped) return `\\fscx${pc(72)}\\fscy${pc(72)}\\t(0,90,\\fscx${pc(106)}\\fscy${pc(106)})\\t(90,170,\\fscx${pc(100)}\\fscy${pc(100)})`;
+  return k < 1 ? `\\fscx${pc(100)}\\fscy${pc(100)}` : '';
+};
+
+/** Mesure du fond arrondi : le bloc est écrit au centre de l'image ; seule une bande centrale est relue (toute l'image pour de très grands textes). */
+export const PROBE = { y: OUT.h / 2 };
+export const probeBand = (style) => (style.size > 120 ? OUT.h : 1400);
+
+/**
+ * Fichier ASS « de mesure » : chaque groupe (une image par seconde, dans l'ordre) est écrit exactement comme dans le clip, avec un
+ * fond rectangulaire de 1 px de marge. Rendu par libass, il donne la position exacte de chaque ligne (retours à la ligne compris),
+ * dont on tire les rectangles du fond arrondi. Aucun calcul de largeur de texte « à la main » : c'est libass qui mesure.
+ */
+export function buildProbeAss({ groups, style, font }) {
+  const { cx, margin } = placement(style);
+  const out = [...ASS_HEAD(OUT.w, OUT.h)];
+  out.push(`Style: Probe,${font.ass_name},${fontSizeFor(style, font)},&H00FFFFFF,&H00FFFFFF,&H00FFFFFF,&H00000000,0,0,0,0,100,100,0,0,3,1,0,5,${margin},${margin},0,1`, ...ASS_EVENTS);
+  groups.forEach((g, i) => {
     const texts = g.words.map((w) => assEscape(displayText(w.text, style)));
     const k = fitScale(texts, style, font);
+    out.push(`Dialogue: 0,${assTime(i)},${assTime(i + 1)},Probe,,0,0,0,,{\\an5\\pos(${cx},${PROBE.y})${scaleTags(k, false)}}${texts.join(' ')}`);
+  });
+  return `${out.join('\n')}\n`;
+}
+
+/**
+ * Fichier ASS complet. `font` : { ass_name, em_ratio, cap_em } de la police choisie.
+ * `boxes` : pour le fond, les rectangles de chaque groupe (mesurés par libass, relatifs au centre du bloc) ; sans eux, le fond est
+ * le rectangle de libass (angles droits). Les positions et tailles sont exprimées dans le repère 1080 × 1920 : libass les adapte à la
+ * définition de sortie.
+ */
+export function buildAss({ groups, style, font, boxes }) {
+  const { cx, cy, margin } = placement(style);
+  const boxed = style.box;
+  const drawn = roundedBox(style) && Array.isArray(boxes); // fond dessiné d'après la mesure de libass, plutôt que le rectangle (par ligne) de libass
+  const outline = boxed ? boxPad(style) : style.outline;
+  const outlineCol = boxed ? assColor(style.boxColor, (1 - style.boxOpacity) * 255) : assColor(style.outlineColor);
+  const primary = style.mode === 'karaoke' ? style.highlight : style.color; // karaoké : « rempli » = couleur d'accent
+  const secondary = style.color;
+  const shadowCol = assColor('#000000', 90);
+
+  const out = [...ASS_HEAD(OUT.w, OUT.h)];
+  out.push(
+    `Style: Main,${font.ass_name},${fontSizeFor(style, font)},${assColor(primary)},${assColor(secondary)},${outlineCol},${shadowCol},0,0,0,0,100,100,0,0,${boxed && !drawn ? 3 : 1},${drawn ? 0 : outline},${boxed ? 0 : style.shadow},5,${margin},${margin},0,1`,
+    ...ASS_EVENTS,
+  );
+  const pos = `{\\an5\\pos(${cx},${cy})`;
+  // fond (couche 0) sous le texte (couche 1)
+  const dlg = (start, end, text, first, k) =>
+    out.push(`Dialogue: 1,${assTime(start)},${assTime(end)},Main,,0,0,0,,${pos}${scaleTags(k, first && style.animation === 'pop')}}${text}`);
+  const boxFill = `\\1c${assTag(style.boxColor)}\\1a&H${hex2((1 - style.boxOpacity) * 255)}&`;
+
+  groups.forEach((g, gi) => {
+    const texts = g.words.map((w) => assEscape(displayText(w.text, style)));
+    const k = fitScale(texts, style, font);
+    const rects = drawn ? boxes[gi] : null;
+    if (rects?.length) {
+      // coordonnées relatives au centre du bloc : l'échelle du « pop » s'applique autour de ce centre, comme pour le texte
+      const pop = style.animation === 'pop' ? scaleTags(1, true) : '';
+      out.push(`Dialogue: 0,${assTime(g.start)},${assTime(g.end)},Main,,0,0,0,,{\\an7\\pos(${cx},${cy})\\bord0\\shad0${boxFill}${pop}\\p1}${boxPath(rects, style.boxRadius)}`);
+    }
     if (style.mode === 'phrase') {
       dlg(g.start, g.end, texts.join(' '), true, k);
     } else if (style.mode === 'karaoke') {
@@ -336,12 +404,10 @@ export function buildAss({ groups, style, font, banner, duration }) {
       g.words.forEach((w, i) => {
         const start = i === 0 ? g.start : w.start;
         const end = i + 1 < g.words.length ? g.words[i + 1].start : g.end;
-        const text = texts.map((t, k) => (k === i && style.mode === 'words' ? `{\\1c${assTag(style.highlight)}}${t}{\\1c${assTag(style.color)}}` : t)).join(' ');
+        const text = texts.map((t, j) => (j === i && style.mode === 'words' ? `{\\1c${assTag(style.highlight)}}${t}{\\1c${assTag(style.color)}}` : t)).join(' ');
         dlg(start, Math.max(end, start + 0.04), text, i === 0, k);
       });
     }
-  }
-  // bandeau de source : en haut, pendant tout le clip
-  out.push(`Dialogue: 1,${assTime(0)},${assTime(duration)},Banner,,0,0,0,,{\\an8\\pos(${W / 2},150)}${assEscape(banner)}`);
+  });
   return `${out.join('\n')}\n`;
 }

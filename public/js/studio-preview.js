@@ -1,7 +1,7 @@
 // Aperçu en direct du clip : cadre 9:16 avec la vidéo (cadrage seul, préparé par le serveur), les sous-titres dessinés par le
-// navigateur avec exactement les mêmes groupes, horaires, tailles et réductions que le rendu final (studio-core.js), le bandeau de
-// source, la musique synchronisée. Les sous-titres se déplacent au doigt ou à la souris. Aucun innerHTML : tout est posé en nœuds.
-import { OUT, activeAt, displayText, fitScale, usableWidth } from './studio-core.js';
+// navigateur avec exactement les mêmes groupes, horaires, tailles et réductions que le rendu final (studio-core.js), la musique
+// synchronisée. Les sous-titres se déplacent au doigt ou à la souris. Aucun innerHTML : tout est posé en nœuds.
+import { OUT, activeAt, boxPad, boxPath, displayText, fitScale, usableWidth } from './studio-core.js';
 
 /** Crée un élément (propriétés, style, événements « on… »). */
 export function el(tag, props = {}, ...children) {
@@ -18,6 +18,7 @@ export function el(tag, props = {}, ...children) {
   return node;
 }
 
+const SVG = 'http://www.w3.org/2000/svg';
 const fmt = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 
 /** Contour rond façon libass : couronnes d'ombres décalées (rend pareil dans tous les navigateurs, sans pointes aux angles). */
@@ -45,8 +46,6 @@ export const rgba = (hex, a) => `rgba(${parseInt(hex.slice(1, 3), 16)},${parseIn
  */
 export function createPhone({ onMove, onCrop }) {
   const video = el('video', { class: 'ph-video', playsinline: '', preload: 'auto', loop: true });
-  const bannerText = el('span', {});
-  const banner = el('div', { class: 'ph-banner' }, bannerText);
   const subText = el('div', { class: 'sub-text' });
   const subBox = el('div', { class: 'sub-box', title: 'Glisse pour déplacer les sous-titres' }, subText);
   const guides = el('div', { class: 'ph-guides', hidden: true }, el('span', { class: 'top' }, 'barre TikTok'), el('span', { class: 'bottom' }, 'légende, boutons et description TikTok'));
@@ -55,7 +54,7 @@ export function createPhone({ onMove, onCrop }) {
   const hint = el('div', { class: 'ph-hint', hidden: true }, '↔ Glisse la vidéo pour la recentrer');
   const busy = el('div', { class: 'ph-busy', hidden: true });
   const playBtn = el('button', { class: 'ph-play', type: 'button', 'aria-label': 'Lire l’aperçu' }, '▶');
-  const screen = el('div', { class: 'ph-screen' }, video, banner, subBox, guideV, guideH, guides, hint, busy, playBtn);
+  const screen = el('div', { class: 'ph-screen' }, video, subBox, guideV, guideH, guides, hint, busy, playBtn);
   const range = el('input', { class: 'ph-range', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': 'Position dans l’aperçu' });
   const time = el('span', { class: 'ph-time' }, '0:00 / 0:00');
   const guideToggle = el('label', { class: 'ph-toggle' }, el('input', { type: 'checkbox' }), 'Zones TikTok');
@@ -65,13 +64,18 @@ export function createPhone({ onMove, onCrop }) {
   music.loop = true;
   music.preload = 'auto';
 
-  let cfg = { groups: [], style: null, font: null, banner: '' };
+  let cfg = { groups: [], style: null, font: null };
   let framing = { fit: 'blur', cropX: 0.5, mirror: false };
   let hintTimer = 0;
   let playing = false;
   let lastKey = '';
   let lastGroup = null;
   let raf = 0;
+
+  document.fonts?.addEventListener?.('loadingdone', () => {
+    lastKey = '';
+    renderSub();
+  });
 
   const scale = () => (screen.clientWidth || 360) / OUT.w;
 
@@ -92,9 +96,38 @@ export function createPhone({ onMove, onCrop }) {
     subText.style.textShadow = style.box ? 'none' : outlineShadow(style.outline * s, style.outlineColor, style.shadow, s);
     subBox.style.left = `${style.x * 100}%`;
     subBox.style.top = `${style.y * 100}%`;
-    banner.style.cssText = `font-size:${30 * s}px;top:${(150 / OUT.h) * 100}%;left:${(60 / OUT.w) * 100}%;right:${(60 / OUT.w) * 100}%`;
-    bannerText.style.padding = `${10 * s}px ${14 * s}px`;
     lastKey = '';
+  }
+
+  /**
+   * Fond derrière le texte : mêmes règles que le rendu final (une cellule de la hauteur d'une ligne par ligne de texte, élargie de la
+   * marge `boxPad`, aux coins arrondis, d'un seul tenant), calculées d'après les mots tels que le navigateur les a placés. Les
+   * mesures sont celles de la mise en page (hors zoom du « pop »), dans le repère du bloc de texte avant réduction `k`.
+   */
+  function drawBox(inner, k) {
+    const { style, font } = cfg;
+    const s = scale();
+    const lh = (style.size / (font?.em_ratio ?? 1)) * s; // hauteur d'une ligne
+    const pad = (boxPad(style) * s) / k; // la marge ne rétrécit pas avec le texte réduit
+    const lines = new Map(); // ordonnée de la ligne -> { min, max }
+    for (const w of inner.querySelectorAll('.w')) {
+      const top = Math.round(w.offsetTop / (lh / 2));
+      const l = lines.get(top) ?? { min: Infinity, max: -Infinity };
+      l.min = Math.min(l.min, w.offsetLeft);
+      l.max = Math.max(l.max, w.offsetLeft + w.offsetWidth);
+      lines.set(top, l);
+    }
+    const rects = [...lines.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, l], i) => ({ x0: l.min - pad, x1: l.max + pad, y0: i * lh - pad, y1: (i + 1) * lh + pad }));
+    const path = document.createElementNS(SVG, 'path');
+    path.setAttribute('d', boxPath(rects, style.boxRadius, 'svg'));
+    path.setAttribute('fill', style.boxColor);
+    path.setAttribute('fill-opacity', String(style.boxOpacity));
+    const svg = document.createElementNS(SVG, 'svg');
+    svg.setAttribute('class', 'sub-fond');
+    svg.append(path);
+    subText.prepend(svg);
   }
 
   function renderSub() {
@@ -125,10 +158,10 @@ export function createPhone({ onMove, onCrop }) {
       const on = !ghost && (style.mode === 'words' ? i === idx : style.mode === 'karaoke' ? i <= idx : false);
       frag.append(el('span', { class: on ? 'w on' : 'w' }, text), i < texts.length - 1 ? ' ' : '');
     });
-    const inner = el('span', { class: style.box ? 'sub-inner boxed' : 'sub-inner' }, frag);
-    if (style.box) inner.style.background = rgba(style.boxColor, style.boxOpacity);
+    const inner = el('span', { class: 'sub-inner' }, frag);
     subText.style.setProperty('--k', String(k));
     subText.replaceChildren(inner);
+    if (style.box) drawBox(inner, k);
     const popped = style.animation === 'pop' && at.group !== lastGroup && !ghost;
     lastGroup = at.group;
     subText.classList.remove('pop');
@@ -292,10 +325,9 @@ export function createPhone({ onMove, onCrop }) {
       busy.hidden = !message;
       busy.textContent = message ?? '';
     },
-    /** Sous-titres : groupes horodatés, style complet, police (métriques), bandeau de source. */
+    /** Sous-titres : groupes horodatés, style complet, police (métriques). */
     configure(next) {
       cfg = { ...cfg, ...next };
-      bannerText.textContent = cfg.banner;
       applyStyle();
       renderSub();
     },

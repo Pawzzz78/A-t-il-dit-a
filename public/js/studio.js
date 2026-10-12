@@ -1,6 +1,6 @@
 // Studio de clips : choix d'une interview, extraits (proposés par l'IA ou libres), sous-titres TikTok (style, police, couleurs,
 // contour, position, taille), musique, cadrage, puis création du MP4 sur le serveur. Aucun innerHTML : tout est posé en nœuds.
-import { LIMITS, PRESETS, SIMILARITY_WARNING, bannerText, groupWords, lineSimilarity, sanitizeStyle, wordsForExtracts } from './studio-core.js';
+import { LIMITS, PRESETS, SIMILARITY_WARNING, groupWords, lineSimilarity, sanitizeStyle, sourceText, wordsForExtracts } from './studio-core.js';
 import { createPhone, el, outlineShadow, rgba } from './studio-preview.js';
 import { fmtDate } from './ui.js';
 
@@ -65,7 +65,7 @@ async function showList() {
 }
 
 const disclaimer = () =>
-  el('p', { class: 'st-legal' }, 'Les extraits proviennent d’interviews dont les droits appartiennent à leurs auteurs. Un bandeau « Source » est ajouté à chaque clip. Ne déforme pas le sens des propos : garde les phrases entières, et le contexte.');
+  el('p', { class: 'st-legal' }, 'Les extraits proviennent d’interviews dont les droits appartiennent à leurs auteurs. Pense à citer la source dans la description de ta vidéo (le studio te prépare le texte). Ne déforme pas le sens des propos : garde les phrases entières, et le contexte.');
 
 // ---------------------------------------------------------------------------------------- éditeur
 
@@ -135,11 +135,10 @@ async function openEditor(youtubeId) {
     },
   });
   const pushFraming = () => phone.setFraming({ fit: S.layout.fit, cropX: S.layout.cropX, mirror: S.layout.mirror });
-  const banner = bannerText(S.video.title, S.video.published_at);
   function rebuildSubtitles() {
     const lines = S.edits.size ? S.lines.map((l) => (S.edits.has(l.start_ms) ? { ...l, text: S.edits.get(l.start_ms).text } : l)) : S.lines;
     const { words } = wordsForExtracts(lines, S.extracts.map(exMs));
-    phone.configure({ groups: groupWords(words, S.style), style: S.style, font: fontById.get(S.style.font), banner });
+    phone.configure({ groups: groupWords(words, S.style), style: S.style, font: fontById.get(S.style.font) });
   }
   function applyAudio() {
     const track = assets.music.find((m) => m.id === S.music.id);
@@ -306,7 +305,7 @@ async function openEditor(youtubeId) {
       sample.style.color = st.color;
       sample.style.fontSize = `${Math.min(30, st.size * 0.28)}px`;
       sample.style.textShadow = st.box ? 'none' : outlineShadow(Math.min(3, st.outline * 0.28), st.outlineColor, 0, 1);
-      if (st.box) { sample.style.background = rgba(st.boxColor, st.boxOpacity); sample.style.padding = '.1em .35em'; }
+      if (st.box) { sample.style.background = rgba(st.boxColor, st.boxOpacity); sample.style.padding = '.1em .35em'; sample.style.borderRadius = `${st.boxRadius * 0.7}em`; }
       if (st.mode === 'words' || st.mode === 'karaoke') sample.append(el('span', { class: 'st-sample-hl', style: { color: st.highlight } }, ' ici'));
       const b = el('button', { type: 'button', class: 'st-preset', 'data-preset': id, onclick: () => { S.style = sanitizeStyle({ preset: id, x: S.style.x }, fontIds); savePrefs(S); rebuildSubtitles(); syncStyleControls(); } },
         el('span', { class: 'st-sample-box' }, sample), el('strong', {}, p.label), el('small', {}, p.hint));
@@ -356,7 +355,8 @@ async function openEditor(youtubeId) {
     posButtons,
     toggle('animation_pop', 'Petit « pop » à l’apparition de chaque groupe', (checked) => ({ animation: checked ? 'pop' : 'none' })),
   );
-  boxRows.append(row('Couleur du fond', ...colorInput('boxColor')), row('Opacité du fond', ...slider('boxOpacity', 0, 1, 0.02, (v) => `${Math.round(v * 100)} %`)));
+  boxRows.append(row('Couleur du fond', ...colorInput('boxColor')), row('Opacité du fond', ...slider('boxOpacity', 0, 1, 0.02, (v) => `${Math.round(v * 100)} %`)),
+    row('Arrondi du fond', ...slider('boxRadius', 0, 1, 0.05, (v) => (v ? `${Math.round(v * 100)} %` : 'angles droits'))));
 
   function syncStyleControls() {
     const s = S.style;
@@ -503,8 +503,7 @@ async function openEditor(youtubeId) {
         : null,
       el('h3', {}, 'Miroir'),
       el('label', { class: 'st-check' }, mirror, 'Retourner l’image horizontalement (miroir)'),
-      el('p', { class: 'st-help' }, 'L’image est retournée gauche-droite ; les sous-titres et le bandeau « Source » ne le sont jamais. Attention : les textes visibles dans l’image (panneaux, logos, bandeaux de chaîne) apparaîtront à l’envers. Le miroir ne change pas les droits sur la vidéo d’origine.'),
-      el('p', { class: 'st-help' }, 'Le bandeau « Source : titre · date » est toujours ajouté en haut du clip : il rappelle d’où vient l’extrait.'),
+      el('p', { class: 'st-help' }, 'L’image est retournée gauche-droite ; les sous-titres ne le sont jamais. Attention : les textes visibles dans l’image (panneaux, logos, bandeaux de chaîne) apparaîtront à l’envers. Le miroir ne change pas les droits sur la vidéo d’origine.'),
     );
   }
 
@@ -513,6 +512,20 @@ async function openEditor(youtubeId) {
   const createSummary = el('div', {});
   const pledge = el('input', { type: 'checkbox' });
   const makeBtn = el('button', { class: 'btn', type: 'button' }, 'Créer la vidéo');
+  const sourceField = el('textarea', { class: 'st-source-text', readonly: '', rows: '2', 'aria-label': 'Source à citer dans la description' });
+  sourceField.value = `${sourceText(S.video.title, S.video.published_at)} — https://www.youtube.com/watch?v=${S.video.youtube_id}`;
+  const copyBtn = el('button', { class: 'btn secondary small', type: 'button' }, 'Copier');
+  copyBtn.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(sourceField.value);
+    } catch {
+      sourceField.select();
+      document.execCommand?.('copy');
+    }
+    copyBtn.textContent = 'Copié ✓';
+    setTimeout(() => (copyBtn.textContent = 'Copier'), 2000);
+  });
+  const sourceBox = el('div', { class: 'st-source' }, sourceField, copyBtn);
   const makeMsg = el('p', { class: 'st-msg' });
   const jobBox = el('div', { class: 'st-job' });
   let job = null;
@@ -534,6 +547,9 @@ async function openEditor(youtubeId) {
   function renderCreate() {
     panelCreate.replaceChildren(
       el('h3', {}, 'Ton clip'), createSummary,
+      el('h3', {}, 'Source à citer'),
+      el('p', { class: 'st-help' }, 'La vidéo n’affiche pas la source : colle ce texte dans la description de ta publication.'),
+      sourceBox,
       el('h3', {}, 'Qualité'),
       el('div', { class: 'st-opts' }, quality('hd', 'HD 1080 × 1920', 'Meilleure qualité, un peu plus long à créer'), quality('fast', 'Rapide 720 × 1280', 'Création plus rapide, fichier plus léger')),
       el('label', { class: 'st-check pledge' }, pledge, 'Je m’engage à ne pas déformer le sens des propos de cette interview, y compris dans les sous-titres que j’ai corrigés.'),
@@ -568,7 +584,7 @@ async function openEditor(youtubeId) {
         el('video', { class: 'st-result', src: url, controls: true, playsinline: '', preload: 'metadata' }),
         el('div', { class: 'st-job-actions' }, el('a', { class: 'btn', href: url, download: job.filename }, 'Télécharger'), navigator.canShare ? share : null,
           el('button', { class: 'btn secondary small', type: 'button', onclick: () => { job = null; showJob(); renderCreateSummary(); } }, 'Faire un autre clip')),
-        el('p', { class: 'st-help' }, 'Pense à citer la source dans ta légende : titre et date de l’interview sont affichés en haut de la vidéo.'));
+        el('p', { class: 'st-help' }, 'N’oublie pas de citer la source dans la description (texte à copier dans l’onglet Créer).'));
     } else if (job.status === 'cancelled') {
       jobBox.replaceChildren(el('p', { class: 'st-job-text' }, 'Création annulée.'));
     } else {

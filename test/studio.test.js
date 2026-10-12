@@ -372,17 +372,17 @@ test('corrections de texte : validées, appliquées avec l\'horodatage d\'origin
   assert.deepEqual(edited.filter((_, i) => i !== 2), lines.filter((_, i) => i !== 2)); // le reste est intact, ligne inconnue ignorée
   assert.equal(lines[2].text, 'Ligne numéro 2 de la transcription'); // la transcription d'origine n'est jamais modifiée
 
-  const dialogues = (ass) => ass.split('\n').filter((l) => l.startsWith('Dialogue: 0,')); // sous-titres (le bandeau est sur la couche 1)
+  const dialogues = (ass) => ass.split('\n').filter((l) => l.startsWith('Dialogue: 1,')); // texte des sous-titres (couche 1, au-dessus du fond)
   const reqFor = (edits) => normalizeRequest({ extracts: [{ start_ms: 2000, end_ms: 5950 }], style: { preset: 'classique' }, edits }, video);
-  const plain = assForRequest({ req: reqFor(undefined), lines, video });
-  const withEdit = assForRequest({ req: reqFor({ 2000: 'Salut à tous les amis' }), lines, video });
+  const plain = await assForRequest({ req: reqFor(undefined), lines });
+  const withEdit = await assForRequest({ req: reqFor({ 2000: 'Salut à tous les amis' }), lines });
   assert.match(withEdit, /Salut/);
   assert.doesNotMatch(plain, /Salut/);
   assert.notEqual(plain, withEdit);
   // ligne vidée : plus aucun mot de cette ligne dans le clip
-  const emptied = assForRequest({ req: reqFor({ 2000: '' }), lines, video });
+  const emptied = await assForRequest({ req: reqFor({ 2000: '' }), lines });
   assert.ok(dialogues(emptied).length < dialogues(plain).length);
-  // les corrections n'ont aucune incidence sur la durée du clip ni sur le bandeau
+  // les corrections n'ont aucune incidence sur la durée du clip
   assert.equal(reqFor({ 2000: 'Salut' }).total, reqFor(undefined).total);
 });
 
@@ -396,4 +396,82 @@ test('rendu avec texte corrigé : MP4 produit, durée inchangée', { skip: !enab
   const info = probe(file);
   assert.ok(Math.abs(Number(info.format.duration) - 3.5) < 0.2, `durée ${info.format.duration}`);
   assert.equal((await api('POST', '/api/studio/render', REQ({ edits: { x: 'non' } }))).status, 400);
+});
+
+// --- fond des sous-titres : mesuré par libass, dessiné aux coins arrondis ------------------------------------------
+
+const { OUT } = await import('../public/js/studio-core.js');
+
+test('mesure du fond : lecture des lignes sur une image (largeurs, nombre de lignes, marge)', async () => {
+  const { rectsFromFrame } = await import('../src/studio/box-probe.js');
+  const band = 1400;
+  const frame = Buffer.alloc(OUT.w * band);
+  const fill = (y0, y1, x0, x1) => {
+    for (let y = y0; y < y1; y++) frame.fill(255, y * OUT.w + x0, y * OUT.w + x1);
+  };
+  // deux lignes de 80 px de haut (+ 1 px de marge de chaque côté), 400 puis 300 px de large, centrées sur x = 540
+  fill(500, 500 + 2 + 160, 540 - 202, 540 + 202); // boîte d'1 px autour du texte : le texte fait 400 px (338…738)
+  fill(500 + 1 + 80, 500 + 2 + 160, 540 - 202, 540 + 202);
+  frame.fill(0);
+  fill(500, 500 + 82, 540 - 201, 540 + 201); // ligne 1 : 1 px de marge + 80 px + 1 px
+  fill(500 + 80, 500 + 162, 540 - 151, 540 + 151); // ligne 2 : plus étroite
+  const rects = rectsFromFrame(frame, { band, pitch: 80, pad: 20, cx: 540 });
+  assert.equal(rects.length, 2);
+  const cropY = (OUT.h - band) / 2;
+  const [a, b] = rects;
+  assert.deepEqual([a.x0, a.x1], [-200 - 20, 200 + 20]); // texte de 400 px, marge de 20 px de chaque côté
+  assert.deepEqual([b.x0, b.x1], [-150 - 20, 150 + 20]);
+  assert.equal(a.y1 - a.y0, 80 + 40); // hauteur de ligne + marge en haut et en bas
+  assert.equal(b.y0 + 20, a.y1 - 20); // les lignes sont l'une sous l'autre
+  assert.equal(a.y0, cropY + 501 - 20 - OUT.h / 2);
+  assert.deepEqual(rectsFromFrame(Buffer.alloc(OUT.w * band), { band, pitch: 80, pad: 20, cx: 540 }), []); // image vide : aucun fond
+});
+
+test('fond arrondi : mesuré par libass puis dessiné — coins arrondis, bords pleins, même taille', { skip: !enabled }, async () => {
+  const { assForRequest, normalizeRequest, FONTS_DIR } = studio;
+  const video = { file_duration_s: DURATION };
+  const lns = Array.from({ length: 6 }, (_, i) => ({ start_ms: i * 1000, end_ms: i * 1000 + 950, text: 'Les maires doivent pouvoir décider au plus près du terrain' }));
+  const make = (boxRadius) => normalizeRequest({ extracts: [{ start_ms: 0, end_ms: 6000 }], style: { preset: 'boite', boxRadius, boxOpacity: 1, boxColor: '#000000', wordsPerGroup: 8 } }, video);
+  const frameOf = (ass, name) => {
+    const f = path.join(dir, `${name}.ass`);
+    const png = path.join(dir, `${name}.png`);
+    execFileSync('sh', ['-c', `cat > ${f}`], { input: ass });
+    execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', `color=c=0x808080:s=1080x1920:d=1:r=1`, '-vf', `ass=${f}:fontsdir=${FONTS_DIR}`, '-frames:v', '1', png]);
+    return png;
+  };
+  const pixels = (png) => execFileSync('ffmpeg', ['-v', 'error', '-i', png, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { maxBuffer: 1 << 26 });
+  const at = (buf, x, y) => buf[Math.round(y) * 1080 + Math.round(x)];
+
+  const round = await assForRequest({ req: make(1), lines: lns });
+  const sharp = await assForRequest({ req: make(0), lines: lns });
+  assert.match(round, /\\p1\}m /);
+  // premier rectangle du premier groupe, relatif au centre (540 ; 0,62 × 1920 = 1190 pour « boite » : y = 0,7)
+  const box = (ass) => {
+    const d = ass.split('\n').find((l) => l.startsWith('Dialogue: 0,'));
+    const pos = /\\pos\((\d+),(\d+)\)/.exec(d);
+    const nums = d.split('\\p1}')[1].split(' ').filter((t) => /^-?[\d.]+$/.test(t)).map(Number);
+    return { cx: Number(pos[1]), cy: Number(pos[2]), x0: Math.min(...nums.filter((_, i) => i % 2 === 0)), x1: Math.max(...nums.filter((_, i) => i % 2 === 0)) };
+  };
+  const roundBox = box(round);
+  const sharpBox = box(sharp);
+  assert.deepEqual([roundBox.x0, roundBox.x1], [sharpBox.x0, sharpBox.x1]); // l'arrondi ne change pas la taille du fond
+  const rP = pixels(frameOf(round, 'round'));
+  const sP = pixels(frameOf(sharp, 'sharp'));
+  // coin haut-gauche du fond : angle droit = noir ; bords entièrement ronds = fond gris visible
+  const first = round.split('\n').find((l) => l.startsWith('Dialogue: 0,')).split('\\p1}')[1].split(' ');
+  const top = Math.min(...first.filter((t) => /^-?[\d.]+$/.test(t)).map(Number).filter((_, i) => i % 2 === 1));
+  const x0 = roundBox.cx + roundBox.x0;
+  const y0 = roundBox.cy + top;
+  assert.equal(at(sP, x0 + 2, y0 + 2), 0, 'angle droit : le coin est rempli');
+  assert.ok(at(rP, x0 + 2, y0 + 2) > 100, 'arrondi : le coin laisse voir la vidéo');
+  assert.equal(at(rP, roundBox.cx, y0 + 3), 0, 'le bord du haut est plein au milieu');
+  assert.ok(at(rP, x0 + 3, y0 + 40) < 20 || at(rP, x0 + 12, y0 + 40) < 20, 'le côté est plein à mi-hauteur');
+  // même largeur et même hauteur qu'avec le rectangle de libass (aux marges près)
+  const extent = (buf) => {
+    let minX = 1080, maxX = 0, minY = 1920, maxY = 0;
+    for (let y = 900; y < 1500; y++) for (let x = 0; x < 1080; x++) if (buf[y * 1080 + x] < 60) { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); }
+    return [minX, maxX, minY, maxY];
+  };
+  const [a, b] = [extent(rP), extent(sP)];
+  for (let i = 0; i < 4; i++) assert.ok(Math.abs(a[i] - b[i]) <= 2, `bord ${i} : ${a[i]} vs ${b[i]}`);
 });

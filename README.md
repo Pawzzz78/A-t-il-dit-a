@@ -112,7 +112,7 @@ qu'à choisir les extraits.
   début et la fin **ligne par ligne** (jamais au milieu d'un mot), puis habillent le clip :
   - **5 styles TikTok** : mots en surbrillance, un mot à la fois, karaoké, classique, sur fond sombre ;
   - **réglages** : police (22 polices libres dans `public/fonts/studio/`), taille, couleur du texte et du mot actif, contour
-    (épaisseur et couleur), ombre, fond sombre (couleur et opacité), majuscules, mots affichés à la fois, largeur, animation « pop » ;
+    (épaisseur et couleur), ombre, fond sombre (couleur, opacité et **arrondi**, de l'angle droit aux bords entièrement ronds), majuscules, mots affichés à la fois, largeur, animation « pop » ;
   - **position** : on **glisse les sous-titres** directement sur l'aperçu (ou boutons Haut / Milieu / Bas / Centrer). Pendant le
     glissement, des **repères pointillés** montrent le centre de l'écran ; le bloc s'**aimante** au centre horizontal et vertical, et
     les repères s'allument en rose quand il est exactement centré (petite vibration au toucher) ;
@@ -128,8 +128,8 @@ qu'à choisir les extraits.
     l'aperçu pour recentrer sur la personne (un curseur permet d'affiner). L'aperçu plein écran est la vidéo entière recadrée en direct
     par le navigateur avec la même formule que le rendu (`décalage = (largeur de la vidéo − largeur de l'écran) × position`), donc
     aucun calcul serveur pendant le glissement ;
-  - **miroir** : retourne l'image gauche-droite. Il est appliqué après le cadrage et avant l'incrustation : sous-titres et bandeau
-    « Source » ne sont jamais retournés (en revanche les textes visibles dans l'image le sont). Il ne change pas les droits sur la
+  - **miroir** : retourne l'image gauche-droite. Il est appliqué après le cadrage et avant l'incrustation : les sous-titres
+    ne sont jamais retournés (en revanche les textes visibles dans l'image le sont). Il ne change pas les droits sur la
     vidéo d'origine ;
   - **aperçu en direct** : la vidéo (cadrage seul, 360 × 640) vient du serveur, les sous-titres sont dessinés par le navigateur avec
     le **même code** que le rendu (`public/js/studio-core.js`) : horaires des mots, groupes, tailles, réduction des mots trop
@@ -138,8 +138,17 @@ qu'à choisir les extraits.
   (ou 720 × 1280). **File d'attente** (`STUDIO_CONCURRENCY` clips à la fois, 1 par défaut ; `STUDIO_MAX_QUEUE`), limites par visiteur
   (2 clips en cours, `STUDIO_RENDERS_PER_HOUR` par heure, `STUDIO_PREVIEWS_PER_HOUR` aperçus), progression, annulation. Les clips
   sont **supprimés une heure** après leur création. Le fichier vidéo d'origine n'est jamais servi : seuls ces extraits sortent.
-- **Garde-fous** : un bandeau « Source : titre · date » est incrusté en haut de **chaque** clip (non désactivable), les sous-titres
-  sont ceux de la transcription (mot pour mot), et il faut cocher un engagement à ne pas déformer les propos avant de créer.
+- **Garde-fous** : la vidéo n'affiche plus de bandeau « Source » (choix de l'éditeur : la source va dans la description de la publication) ;
+  l'onglet Créer prépare ce texte (« Source : titre · date — lien de l'interview ») avec un bouton Copier. Les sous-titres sont ceux
+  de la transcription (corrections éventuelles signalées si elles s'en éloignent), et il faut cocher un engagement à ne pas
+  déformer les propos avant de créer.
+- **Fond des sous-titres** : libass ne sait pas arrondir son fond rectangulaire, et il le double de teinte là où deux lignes se
+  chevauchent. Le fond est donc **dessiné** (tracé vectoriel ASS, un seul tracé pour toutes les lignes, une seule teinte) d'après la
+  position de chaque ligne, **mesurée par libass lui-même** : `src/studio/box-probe.js` fait rendre chaque groupe de mots sur un fond
+  noir avec un fond blanc rectangulaire de 1 px de marge, puis lit les largeurs de ligne sur l'image (mêmes polices, même mise à la
+  ligne, même crénage que le clip). Aucune largeur de police n'est estimée. La mesure se fait dans la file d'attente, juste avant le
+  rendu (environ 0,2 s). L'aperçu dessine le même tracé (SVG) à partir des mots tels que le navigateur les a placés ; le rayon du coin
+  est `arrondi × (moitié de la hauteur d'une ligne de fond)`.
 - **Taille des sous-titres** : la « taille » d'un style est une taille d'em (comme une `font-size`). libass dessine un texte de taille
   ASS N avec une em de N × `unitsPerEm / (winAscent + winDescent)` (mesuré, écart < 1 %) : `buildAss` convertit par police grâce à
   `em_ratio` (dans `src/studio/fonts.json`, calculé par `tools/fetch_studio_fonts.py`).
@@ -296,7 +305,7 @@ src/
 tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéos sans sous-titres, envoyée au site
   openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
-  studio/            studio public : rendu ffmpeg (render.js), polices (fonts.json), musiques (music.json)
+  studio/            studio public : rendu ffmpeg (render.js), mesure du fond des sous-titres (box-probe.js), polices (fonts.json), musiques (music.json)
   media.js           fichiers vidéo du studio : dépôt par morceaux, ffprobe, stockage
   clip-suggestions.js  extraits proposés par le LLM (numéros de lignes, horaires issus de la transcription)
   trends.js          tendances : comptage des mots par mois, mots les plus prononcés, cache et limites

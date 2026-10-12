@@ -8,7 +8,8 @@ import {
   assColor,
   assEscape,
   assTime,
-  bannerText,
+  boxPath,
+  sourceText,
   buildAss,
   fitScale,
   usableWidth,
@@ -101,19 +102,19 @@ test('couleurs et temps ASS', () => {
   assert.equal(assEscape('a {b} \\c\nd'), 'a b /c d');
 });
 
-test('bandeau de source : titre tronqué et date en français', () => {
-  assert.equal(bannerText('Mon interview', '2025-03-01'), 'Source : Mon interview · 1 mars 2025');
-  assert.match(bannerText('x'.repeat(100), '2025-12-25'), /^Source : x{55}… · 25 décembre 2025$/);
-  assert.equal(bannerText('', null), 'Source : interview');
+test('source à citer : titre tronqué et date en français', () => {
+  assert.equal(sourceText('Mon interview', '2025-03-01'), 'Source : Mon interview · 1 mars 2025');
+  assert.match(sourceText('x'.repeat(100), '2025-12-25'), /^Source : x{55}… · 25 décembre 2025$/);
+  assert.equal(sourceText('', null), 'Source : interview');
 });
 
-const font = { ass_name: 'Anton Regular', banner_name: 'Inter ExtraBold' };
+const font = { ass_name: 'Anton Regular' };
 const build = (style, extracts = [{ start_ms: 0, end_ms: 6000 }]) => {
   const st = sanitizeStyle(style, FONTS);
   const { words, duration } = wordsForExtracts(lines, extracts);
-  return { st, ass: buildAss({ groups: groupWords(words, st), style: st, font, banner: 'Source : test', duration }), words, duration };
+  return { st, ass: buildAss({ groups: groupWords(words, st), style: st, font }), words, duration };
 };
-const events = (ass) => ass.split('\n').filter((l) => l.startsWith('Dialogue: 0,'));
+const events = (ass) => ass.split('\n').filter((l) => l.startsWith('Dialogue: 1,')); // texte (couche 1) ; le fond est sur la couche 0
 
 test('ASS « mots en surbrillance » : un événement par mot, mot actif coloré, pop au début du groupe seulement', () => {
   const { ass, words } = build({ preset: 'hormozi', color: '#FFFFFF', highlight: '#FFE600', size: 90, outline: 11, outlineColor: '#112233' });
@@ -125,7 +126,7 @@ test('ASS « mots en surbrillance » : un événement par mot, mot actif coloré
   assert.match(ev[0], /\{\\1c&H00E6FF&\}UN\{\\1c&HFFFFFF&\} DEUX TROIS$/); // texte en majuscules, mot actif en jaune
   assert.doesNotMatch(ev[1], /fscx72/); // pas de pop sur les mots suivants du même groupe
   assert.match(ev[1], /UN \{\\1c&H00E6FF&\}DEUX\{/);
-  assert.match(ass, /Dialogue: 1,0:00:00.00,0:00:06.00,Banner,,0,0,0,,\{\\an8\\pos\(540,150\)\}Source : test/);
+  assert.doesNotMatch(ass, /Banner|Source :/); // plus de bandeau de source dans la vidéo
 });
 
 test('ASS karaoké : un événement par phrase, durées \\k en centisecondes qui couvrent tout le groupe', () => {
@@ -140,7 +141,7 @@ test('ASS karaoké : un événement par phrase, durées \\k en centisecondes qui
   assert.match(ev[0], /\{\\k\d+\}Un \{\\k\d+\}deux/);
 });
 
-test('ASS fond sombre et position : bandeau opaque, largeur adaptée au bord', () => {
+test('ASS fond sombre et position : fond rectangulaire sans mesure, largeur adaptée au bord', () => {
   const { ass } = build({ preset: 'boite', boxColor: '#000000', boxOpacity: 0.5, size: 60, x: 0.2, y: 0.9 });
   assert.match(ass, /,&H80000000,&H5A000000,0,0,0,0,100,100,0,0,3,17,0,5,324,324,0,1/); // BorderStyle 3, marge de 324 = (1080 − 0,4 × 1080) / 2
   assert.match(events(ass)[0], /\\pos\(216,1728\)/);
@@ -152,18 +153,17 @@ test('ASS : texte sans accolades ni antislash, majuscules facultatives', () => {
   const evil = [{ start_ms: 0, end_ms: 3000, text: 'Un {\\fs500} mot\\Nsuite' }];
   const st = sanitizeStyle({ preset: 'classique', uppercase: false }, FONTS);
   const { words, duration } = wordsForExtracts(evil, [{ start_ms: 0, end_ms: 3000 }]);
-  const ass = buildAss({ groups: groupWords(words, st), style: st, font, banner: 'Source : {x}', duration });
+  const ass = buildAss({ groups: groupWords(words, st), style: st, font });
   const ev = events(ass)[0];
   assert.equal((ev.match(/\{/g) ?? []).length, 1, 'une seule balise de style : celle du programme'); // aucune balise injectée par le texte
   assert.doesNotMatch(ass, /\{\\fs500/);
-  assert.doesNotMatch(ass, /Source : \{x\}/);
   assert.match(ev, /Un \/fs500 mot\/Nsuite/);
 });
 
 test('taille : la taille de l\'éditeur est une taille d\'em, convertie en taille ASS selon la police', () => {
   const st = sanitizeStyle({ preset: 'classique', size: 60 }, FONTS);
   const { words, duration } = wordsForExtracts(lines, [{ start_ms: 0, end_ms: 6000 }]);
-  const ass = (f) => buildAss({ groups: groupWords(words, st), style: st, font: f, banner: 'x', duration });
+  const ass = (f) => buildAss({ groups: groupWords(words, st), style: st, font: f });
   assert.match(ass({ ass_name: 'F', em_ratio: 0.5 }), /Style: Main,F,120,/); // em de 60 px avec un rapport de 0,5 : taille ASS 120
   assert.match(ass({ ass_name: 'F', em_ratio: 1 }), /Style: Main,F,60,/);
   assert.match(ass({ ass_name: 'F' }), /Style: Main,F,60,/); // police sans rapport connu : pas de conversion
@@ -183,11 +183,11 @@ test('mot trop long : réduit pour ne jamais déborder de l\'écran, aperçu et 
   assert.ok(usableWidth(sanitizeStyle({ preset: 'un-mot', x: 0.15 }, FONTS)) < usableWidth(st));
   // dans le fichier ASS : \fscx/\fscy réduits, et le « pop » part de 72 % de la taille réduite
   const g = [{ start: 0, end: 1, words: [{ text: 'décentralisation', start: 0, end: 1, line: 0 }] }];
-  const ass = buildAss({ groups: g, style: st, font: { ass_name: 'F', cap_em: 0.8 }, banner: 'x', duration: 1 });
+  const ass = buildAss({ groups: g, style: st, font: { ass_name: 'F', cap_em: 0.8 } });
   const m = events(ass)[0].match(/\\fscx(\d+)\\fscy\d+\\t\(0,90,\\fscx(\d+)\\fscy\d+\)\\t\(90,170,\\fscx(\d+)/);
   assert.ok(m, events(ass)[0]);
   assert.deepEqual([Number(m[1]), Number(m[3])], [Math.round(72 * k), Math.round(100 * k)]);
-  const short = buildAss({ groups: [{ start: 0, end: 1, words: [{ text: 'oui', start: 0, end: 1, line: 0 }] }], style: sanitizeStyle({ preset: 'classique' }, FONTS), font: { ass_name: 'F', cap_em: 0.8 }, banner: 'x', duration: 1 });
+  const short = buildAss({ groups: [{ start: 0, end: 1, words: [{ text: 'oui', start: 0, end: 1, line: 0 }] }], style: sanitizeStyle({ preset: 'classique' }, FONTS), font: { ass_name: 'F', cap_em: 0.8 } });
   assert.doesNotMatch(events(short)[0], /fscx/); // mot court : aucune réduction
 });
 
@@ -211,4 +211,50 @@ test('texte corrigé : les mots gardent l\'horodatage de la ligne, quel que soit
     close(words.at(-1).end, 4);
     for (let i = 1; i < words.length; i++) close(words[i].start, words[i - 1].end); // sans trou ni chevauchement
   }
+});
+
+test('arrondi du fond : borné de 0 à 1, valeur du style par défaut sinon', () => {
+  assert.equal(sanitizeStyle({ preset: 'boite', boxRadius: 5 }, FONTS).boxRadius, 1);
+  assert.equal(sanitizeStyle({ preset: 'boite', boxRadius: -1 }, FONTS).boxRadius, 0);
+  assert.equal(sanitizeStyle({ preset: 'boite', boxRadius: 0.456 }, FONTS).boxRadius, 0.46);
+  assert.equal(sanitizeStyle({ preset: 'boite', boxRadius: 'x' }, FONTS).boxRadius, DEFAULT_STYLE.boxRadius);
+  assert.equal(sanitizeStyle({ preset: 'boite' }, FONTS).boxRadius, DEFAULT_STYLE.boxRadius);
+});
+
+test('tracé du fond : coins arrondis selon le curseur, une seule forme pour toutes les lignes', () => {
+  const rects = [{ x0: -100, y0: -40, x1: 100, y1: 40 }, { x0: -60, y0: 40, x1: 60, y1: 120 }];
+  const sharp = boxPath(rects, 0);
+  assert.doesNotMatch(sharp, /NaN/);
+  assert.match(sharp, /^m -100 -40 l 100 -40 b 100 -40 100 -40 100 -40 l 100 40/); // rayon nul : les courbes se réduisent à un point
+  assert.equal((boxPath(rects, 0.5).match(/m /g) ?? []).length, 2); // un sous-tracé par ligne, dans un seul tracé
+  // curseur au maximum : rayon = moitié de la hauteur de la ligne (80 / 2 = 40)
+  assert.match(boxPath(rects, 1), /^m -60 -40 l 60 -40 b 82\.1 -40 100 -22\.1 100 0/);
+  assert.match(boxPath(rects, 0.5), /^m -80 -40 l 80 -40 b /); // moitié : rayon de 20
+  // jamais plus rond qu'un demi-cercle, même pour un rectangle étroit
+  assert.doesNotMatch(boxPath([{ x0: 0, y0: 0, x1: 10, y1: 100 }], 1), /NaN|-\d/);
+  // même forme pour l'aperçu (SVG)
+  const svg = boxPath(rects, 0.5, 'svg');
+  assert.match(svg, /^M -80 -40 L 80 -40 C /);
+  assert.equal((svg.match(/ Z/g) ?? []).length, 2);
+});
+
+test('ASS fond arrondi : forme dessinée sous le texte, même pop, plus de rectangle libass', () => {
+  const st = sanitizeStyle({ preset: 'boite', boxColor: '#102030', boxOpacity: 0.5, boxRadius: 0.4, size: 60, animation: 'pop' }, FONTS);
+  const { words } = wordsForExtracts(lines, [{ start_ms: 0, end_ms: 6000 }]);
+  const groups = groupWords(words, st);
+  const boxes = groups.map(() => [{ x0: -200, y0: -50, x1: 200, y1: 50 }]);
+  const ass = buildAss({ groups, style: st, font, boxes });
+  assert.match(ass, /,0,0,0,0,100,100,0,0,1,0,0,5,/); // BorderStyle 1, sans contour ni ombre : le fond est dessiné
+  const all = ass.split('\n').filter((l) => l.startsWith('Dialogue'));
+  assert.equal(all.length, groups.length * 2);
+  assert.ok(all[0].startsWith('Dialogue: 0,'));
+  assert.ok(all[0].includes('{\\an7\\pos(540,1344)\\bord0\\shad0\\1c&H302010&\\1a&H80&\\fscx72\\fscy72\\t(0,90,\\fscx106\\fscy106)\\t(90,170,\\fscx100\\fscy100)\\p1}m '), all[0]);
+  assert.match(all[1], /^Dialogue: 1,/); // le texte est au-dessus du fond
+  // fond d'un groupe : même durée que le groupe
+  assert.equal(all[0].split(',').slice(1, 3).join(), all[1].split(',').slice(1, 3).join());
+  // sans mesure : repli sur le rectangle de libass
+  assert.match(buildAss({ groups, style: st, font }), /,0,0,0,0,100,100,0,0,3,17,0,5,/);
+  // pas de fond : aucun événement de fond
+  const plain = build({ preset: 'classique' }).ass;
+  assert.equal(plain.split('\n').filter((l) => l.startsWith('Dialogue: 0,')).length, 0);
 });

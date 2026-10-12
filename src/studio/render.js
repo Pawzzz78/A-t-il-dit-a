@@ -10,7 +10,8 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { LIMITS, OUT, bannerText, buildAss, groupWords, sanitizeStyle, wordsForExtracts } from '../../public/js/studio-core.js';
+import { LIMITS, OUT, buildAss, groupWords, roundedBox, sanitizeStyle, wordsForExtracts } from '../../public/js/studio-core.js';
+import { measureBoxes } from './box-probe.js';
 import { HttpError } from '../http-error.js';
 import { storageDir, videoFilePath } from '../media.js';
 
@@ -111,7 +112,7 @@ export function normalizeRequest(body, video) {
     fit: l.fit === 'crop' ? 'crop' : 'blur',
     cropX: Math.round(Math.min(1, Math.max(0, Number.isFinite(Number(l.cropX)) ? Number(l.cropX) : 0.5)) * 100) / 100,
     quality: l.quality === 'fast' ? 'fast' : 'hd',
-    mirror: l.mirror === true, // image retournée gauche-droite (après le cadrage ; sous-titres et bandeau ne sont jamais retournés)
+    mirror: l.mirror === true, // image retournée gauche-droite (après le cadrage ; les sous-titres ne sont jamais retournés)
   };
   const style = sanitizeStyle(b.style, FONTS.map((f) => f.id));
   let music = null;
@@ -190,18 +191,20 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
   return args;
 }
 
-/** Fichier ASS du clip : mots horodatés des lignes de la transcription, groupés selon le style, plus le bandeau de source. */
-export function assForRequest({ req, lines, video }) {
-  const { words, duration } = wordsForExtracts(applyEdits(lines, req.edits), req.extracts);
+/**
+ * Fichier ASS du clip : mots horodatés des lignes de la transcription (avec les corrections de texte), groupés selon le style.
+ * Un fond arrondi demande de mesurer chaque ligne de texte avec libass (box-probe.js) : d'où la fonction asynchrone.
+ */
+export async function assForRequest({ req, lines }) {
+  const { words } = wordsForExtracts(applyEdits(lines, req.edits), req.extracts);
   const groups = groupWords(words, req.style);
   const font = fontById.get(req.style.font) ?? FONTS[0];
-  const banner = fontById.get('inter') ?? font;
+  const boxes = roundedBox(req.style) && groups.length ? await measureBoxes({ groups, style: req.style, font, fontsDir: FONTS_DIR }) : undefined;
   return buildAss({
     groups,
     style: req.style,
-    font: { ass_name: font.ass_name, em_ratio: font.em_ratio, cap_em: font.cap_em, banner_name: banner.ass_name, banner_em_ratio: banner.em_ratio },
-    banner: bannerText(video.title, video.published_at),
-    duration,
+    font: { ass_name: font.ass_name, em_ratio: font.em_ratio, cap_em: font.cap_em },
+    boxes,
   });
 }
 
@@ -375,7 +378,7 @@ export async function enqueueRender({ video, req, lines, ip = 'local' }) {
     file: videoFilePath(video.file_name),
     hasAudio: video.file_has_audio,
     req,
-    ass: assForRequest({ req, lines, video }),
+    lines,
     createdAt: Date.now(),
   };
   jobs.set(id, job);
@@ -398,7 +401,8 @@ function pump() {
 async function runJob(job) {
   job.status = 'running';
   try {
-    await fs.writeFile(job.assPath, job.ass);
+    await fs.writeFile(job.assPath, await assForRequest({ req: job.req, lines: job.lines })); // (mesure du fond arrondi comprise : dans la file, pas avant)
+    if (job.status === 'cancelled') return; // annulé pendant la mesure du fond
     const args = buildFfmpegArgs({ file: job.file, req: job.req, hasAudio: job.hasAudio, assPath: job.assPath, out: job.out, kind: 'final' });
     const run = runFfmpeg(args, job.total, { onProgress: (p) => (job.progress = p), timeoutMs: config().timeoutMs });
     job.cancel = run.cancel;
@@ -419,7 +423,7 @@ async function runJob(job) {
     job.finishedAt = Date.now();
     job.cancel = null;
     await fs.rm(job.assPath, { force: true });
-    delete job.ass;
+    delete job.lines;
   }
 }
 

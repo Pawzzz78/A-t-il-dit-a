@@ -28,15 +28,13 @@
 .ph-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #111; }
 .ph-video.panning { cursor: grab; touch-action: pan-y; }
 .ph-video.panning:active { cursor: grabbing; }
-.ph-banner { position: absolute; text-wrap: balance; text-align: center; color: #fff; font-family: 'Inter', 'Montserrat', sans-serif; font-weight: 800; line-height: 1.5; pointer-events: none; }
-.ph-banner span { background: rgba(0,0,0,.55); box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .sub-box { position: absolute; transform: translate(-50%, -50%); cursor: grab; touch-action: none; padding: .2rem; border: 1px dashed transparent; border-radius: 6px; }
 .sub-box:hover, .sub-box.dragging { border-color: rgba(255,255,255,.7); }
 .sub-box.dragging { cursor: grabbing; }
 .sub-box.ghost { opacity: .85; }
-.sub-text { text-wrap: balance; font-family: var(--ff); font-size: var(--fs); line-height: var(--lh); color: var(--c); width: var(--w); text-align: center; transform: scale(var(--k, 1)); transform-origin: center; user-select: none; -webkit-user-select: none; overflow-wrap: normal; }
+.sub-text { position: relative; text-wrap: balance; font-family: var(--ff); font-size: var(--fs); line-height: var(--lh); color: var(--c); width: var(--w); text-align: center; transform: scale(var(--k, 1)); transform-origin: center; user-select: none; -webkit-user-select: none; overflow-wrap: normal; }
 .sub-text .w.on { color: var(--hl); }
-.sub-inner.boxed { padding: .12em .3em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.sub-fond { z-index: -1; position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
 .sub-text.pop { animation: st-pop .17s ease-out; }
 @keyframes st-pop { 0% { transform: scale(calc(.72 * var(--k, 1))); } 52% { transform: scale(calc(1.06 * var(--k, 1))); } 100% { transform: scale(var(--k, 1)); } }
 /* repères de centrage pendant le déplacement des sous-titres (pointillés ; pleins et colorés quand le bloc est exactement centré) */
@@ -193,3 +191,5 @@
 .st-badge { font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-label); padding: .15rem .55rem; border-radius: var(--radius-pill); background: var(--ne-chamois); color: var(--ne-ink, #1b1f5c); }
 .st-line:not(.edited) .st-line-meta { display: none; }
 .st-line-meta { min-height: 0; }
+.st-source { display: grid; gap: .5rem; justify-items: start; }
+.st-source-text { width: 100%; font: inherit; font-size: .9rem; line-height: 1.45; padding: .5rem .65rem; border: 1px solid var(--color-border); border-radius: .5rem; background: var(--color-surface-alt); color: var(--color-text); resize: none; }
