@@ -10,6 +10,8 @@ import {
 } from '../auth.js';
 import { pool, replaceSegments, withTransaction } from '../db.js';
 import { HttpError } from '../http-error.js';
+import { clipsAdminRouter } from './clips-admin.js';
+import { removeVideoFiles } from '../media.js';
 import { syncRouter } from './sync-admin.js';
 import { YouTubeApiError } from '../youtube.js';
 import { fetchLocalized } from '../localize.js';
@@ -54,6 +56,7 @@ adminRouter.get('/config', (_req, res) =>
 );
 
 adminRouter.use('/sync', syncRouter);
+adminRouter.use('/videos/:id', clipsAdminRouter); // fichier vidéo, clips autorisés, extraits proposés
 
 // --- vidéos ----------------------------------------------------------------
 
@@ -366,14 +369,15 @@ adminRouter.delete(
     // On mémorise l'exclusion pour que la synchronisation ne la remette pas demain.
     const found = await withTransaction(async (client) => {
       const { rows } = await client.query('DELETE FROM videos WHERE id = $1 RETURNING youtube_id', [id]);
-      if (!rows[0]) return false;
+      if (!rows[0]) return null;
       await client.query(
         `INSERT INTO excluded_videos (youtube_id, reason) VALUES ($1, 'deleted') ON CONFLICT DO NOTHING`,
         [rows[0].youtube_id],
       );
-      return true;
+      return rows[0].youtube_id;
     });
     if (!found) throw new HttpError(404, 'Vidéo introuvable.');
+    await removeVideoFiles(found).catch(() => {}); // le fichier vidéo du studio part avec la vidéo
     res.json({ ok: true });
   }),
 );
@@ -384,6 +388,7 @@ adminRouter.use((err, _req, res, _next) => {
   if (err instanceof TranscriptError) return res.status(err.status).json({ error: err.message });
   if (err instanceof TranslationError) return res.status(err.code === 'config' ? 503 : 502).json({ error: err.message });
   if (err instanceof YouTubeApiError) return res.status(502).json({ error: err.message });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Morceau trop gros.' });
   console.error(err);
   res.status(500).json({ error: 'Erreur interne.' });
 });

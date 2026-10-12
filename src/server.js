@@ -1,6 +1,7 @@
 import express from 'express';
 import { authConfigured } from './auth.js';
 import { initDb } from './db.js';
+import { ffmpegAvailable, storageDir } from './media.js';
 import { adminRouter } from './routes/admin.js';
 import { publicRouter } from './routes/public.js';
 import { startSummaryScheduler } from './auto-summaries.js';
@@ -50,6 +51,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
   const port = Number(process.env.PORT) || 3000;
   createApp().listen(port, () => console.log(`Lisnard Facts → http://localhost:${port}`));
+  ffmpegAvailable().then((ok) => console.log(`Studio de clips : ffmpeg ${ok ? 'disponible' : 'ABSENT (dépôt de vidéos impossible)'} · stockage ${storageDir()}`));
   startScheduler();
   startSummaryScheduler();
 }

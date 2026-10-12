@@ -591,6 +591,7 @@ async function renderSync() {
 async function renderEditor(id) {
   const { video, segments, summary } = await api('GET', `/videos/${id}`);
   const config = await api('GET', '/config');
+  let clipState = await api('GET', `/videos/${id}/clips`).catch(() => null);
   let segs = segments.map((s) => ({ ...s, orig: s.text, origStart: s.start_ms }));
   let dirty = false;
   let player = null;
@@ -1040,6 +1041,213 @@ async function renderEditor(id) {
     ),
   );
 
+  // --- clips TikTok / Reels : fichier vidéo, autorisation, extraits proposés
+  const clipsPanel = h('section', { class: 'panel' });
+  let clipsPreview = null; // <video> d'aperçu (pour « Voir » un extrait)
+  let uploading = null; // { abort, ... } pendant un dépôt
+  const mo = (bytes) => `${(bytes / 1024 / 1024).toFixed(bytes > 99 * 1024 * 1024 ? 0 : 1)} Mo`;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const putChunk = (url, blob, onLoaded, signal) =>
+    new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', url);
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.upload.onprogress = (e) => e.lengthComputable && onLoaded(e.loaded);
+      xhr.onload = () => {
+        let body = {};
+        try {
+          body = JSON.parse(xhr.responseText);
+        } catch {
+          // réponse sans corps JSON
+        }
+        if (xhr.status < 300) resolve(body);
+        else reject(Object.assign(new Error(xhr.status === 401 ? 'Session expirée : reconnecte-toi puis recommence.' : body.error || `Erreur ${xhr.status}`), { status: xhr.status, body }));
+      };
+      xhr.onerror = () => reject(Object.assign(new Error('Connexion interrompue'), { network: true }));
+      xhr.onabort = () => reject(Object.assign(new Error('Dépôt annulé'), { aborted: true }));
+      signal.addEventListener('abort', () => xhr.abort());
+      xhr.send(blob);
+    });
+
+  /** Dépôt par morceaux : une coupure ne fait pas tout recommencer (le serveur indique où reprendre). */
+  async function uploadVideoFile(file, onProgress, signal) {
+    const total = file.size;
+    const { chunk_bytes: step } = await api('POST', `/videos/${id}/file/start`, { size: total });
+    let offset = 0;
+    let retries = 0;
+    while (offset < total) {
+      if (signal.aborted) throw Object.assign(new Error('Dépôt annulé'), { aborted: true });
+      const end = Math.min(offset + step, total);
+      try {
+        await putChunk(`/api/admin/videos/${id}/file/chunk?offset=${offset}&total=${total}`, file.slice(offset, end), (loaded) => onProgress(offset + loaded, total), signal);
+        offset = end;
+        retries = 0;
+      } catch (e) {
+        if (e.aborted) throw e;
+        if (e.status === 409 && typeof e.body?.received === 'number') {
+          offset = e.body.received; // le serveur a déjà reçu ce morceau (réponse perdue) : on repart de là
+          continue;
+        }
+        if (e.status && e.status < 500) throw e;
+        if (++retries > 6) throw new Error(`Connexion perdue pendant le dépôt (${e.message}). Relance le dépôt.`);
+        await sleep(1000 * retries);
+      }
+      onProgress(offset, total);
+    }
+    return api('POST', `/videos/${id}/file/finish`, { size: total });
+  }
+
+  const clipMsg = h('p', { class: 'status' });
+  function renderClips() {
+    const st = clipState;
+    if (!st) {
+      clipsPanel.replaceChildren(h('p', { class: 'status err' }, 'Le studio de clips est indisponible.'));
+      return;
+    }
+    const f = st.file;
+    const label = f ? (st.enabled ? 'clips autorisés' : 'fichier prêt') : 'pas de fichier';
+    const fileInput = h('input', { type: 'file', accept: 'video/mp4,video/quicktime,video/x-matroska,video/webm,.mp4,.mov,.mkv,.webm' });
+    const progress = h('progress', { max: 100, value: 0, hidden: true });
+    const progressText = h('span', { class: 'status' });
+    const sendBtn = h('button', { class: 'btn small', type: 'button' }, f ? 'Remplacer la vidéo' : 'Déposer la vidéo');
+    const cancelBtn = h('button', { class: 'btn secondary small', type: 'button', hidden: true }, 'Annuler');
+    const guard = (e) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    sendBtn.addEventListener('click', async () => {
+      const file = fileInput.files?.[0];
+      if (!file) return status(clipMsg, 'Choisis d’abord un fichier vidéo.', 'err');
+      if (file.size > st.max_mb * 1024 * 1024) return status(clipMsg, `Fichier trop gros (${st.max_mb} Mo au maximum). Télécharge plutôt la vidéo en 720p.`, 'err');
+      const ctrl = new AbortController();
+      uploading = ctrl;
+      sendBtn.disabled = true;
+      fileInput.disabled = true;
+      progress.hidden = false;
+      cancelBtn.hidden = false;
+      cancelBtn.onclick = () => ctrl.abort();
+      status(clipMsg, '');
+      window.addEventListener('beforeunload', guard);
+      try {
+        clipState = await uploadVideoFile(
+          file,
+          (done, total) => {
+            progress.value = (done / total) * 100;
+            progressText.textContent = `${Math.round((done / total) * 100)} % · ${mo(done)} / ${mo(total)}`;
+          },
+          ctrl.signal,
+        );
+        uploading = null;
+        window.removeEventListener('beforeunload', guard);
+        renderClips();
+        status(clipMsg, 'Vidéo déposée et vérifiée.', 'ok');
+      } catch (e) {
+        uploading = null;
+        window.removeEventListener('beforeunload', guard);
+        sendBtn.disabled = false;
+        fileInput.disabled = false;
+        progress.hidden = true;
+        cancelBtn.hidden = true;
+        progressText.textContent = '';
+        status(clipMsg, e.message, 'err');
+      }
+    });
+
+    const fileBlock = f
+      ? [
+          h('p', { class: 'status' }, `${f.width && f.height ? `${f.height}p · ` : ''}${fmtDuration(Math.round(f.duration_s))} · ${mo(f.size)} · déposée le ${new Date(f.uploaded_at).toLocaleDateString('fr-FR')}${f.has_audio ? '' : ' · sans son'}`),
+          f.duration_mismatch
+            ? h('p', { class: 'status err' }, `Attention : ce fichier dure ${fmtDuration(Math.round(f.duration_s))} alors que la vidéo YouTube dure ${fmtDuration(f.youtube_duration_s)}. Ce n’est sans doute pas la même version : les extraits seraient décalés.`)
+            : null,
+          f.has_audio ? null : h('p', { class: 'status err' }, 'Ce fichier n’a pas de piste audio.'),
+        ]
+      : [h('p', { class: 'status' }, 'Télécharge la vidéo (de préférence en 720p) puis dépose-la ici. Elle doit être exactement la même que sur YouTube pour que les extraits tombent au bon endroit.')];
+
+    clipsPreview = f ? h('video', { class: 'clip-preview', controls: true, preload: 'metadata', playsinline: true, src: `/api/admin/videos/${id}/file?v=${encodeURIComponent(f.uploaded_at)}` }) : null;
+
+    const toggle = h('input', { type: 'checkbox', checked: st.enabled, disabled: !f || !st.has_text });
+    toggle.addEventListener('change', async () => {
+      toggle.disabled = true;
+      status(clipMsg, toggle.checked ? 'Autorisation… (les extraits sont proposés au passage, environ une minute)' : '');
+      try {
+        const r = await api('PUT', `/videos/${id}/clips`, { enabled: toggle.checked });
+        clipState = r;
+        renderClips();
+        status(clipMsg, r.suggestions_error ? `Clips autorisés, mais les extraits n’ont pas pu être proposés : ${r.suggestions_error}` : '', r.suggestions_error ? 'err' : '');
+      } catch (e) {
+        toggle.checked = !toggle.checked;
+        toggle.disabled = false;
+        status(clipMsg, e.message, 'err');
+      }
+    });
+
+    const sg = st.suggestions;
+    const suggestBtn = h('button', { class: 'btn secondary small', type: 'button', disabled: !st.llm || !st.has_text }, sg ? 'Régénérer les extraits' : 'Proposer des extraits');
+    suggestBtn.addEventListener('click', async () => {
+      suggestBtn.disabled = true;
+      status(clipMsg, 'Recherche des meilleurs extraits… (une minute environ)');
+      try {
+        clipState = await api('POST', `/videos/${id}/clips/suggest`, {});
+        renderClips();
+        status(clipMsg, 'Extraits proposés.', 'ok');
+      } catch (e) {
+        suggestBtn.disabled = false;
+        status(clipMsg, e.message, 'err');
+      }
+    });
+
+    const cards = (sg?.clips ?? []).map((c) => {
+      const seek = h('button', { class: 'btn secondary small', type: 'button' }, 'Voir');
+      seek.addEventListener('click', () => {
+        if (clipsPreview) {
+          clipsPreview.currentTime = c.start_ms / 1000;
+          clipsPreview.play().catch(() => {});
+          clipsPreview.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        } else window.open(`https://www.youtube.com/watch?v=${video.youtube_id}&t=${Math.floor(c.start_ms / 1000)}s`, '_blank', 'noopener');
+      });
+      return h(
+        'article',
+        { class: 'clip-card' },
+        h('div', { class: 'clip-top' }, h('strong', {}, `${fmtTs(c.start_ms)} → ${fmtTs(c.end_ms)}`), h('span', { class: 'badge' }, `${Math.round(c.duration_s)} s`), h('span', { class: 'badge ok', title: 'Note donnée par l’IA' }, `${c.score}/10`), seek),
+        h('p', { class: 'clip-title' }, c.title),
+        c.why ? h('p', { class: 'status' }, c.why) : null,
+        h('details', {}, h('summary', {}, 'Texte de l’extrait'), h('p', { class: 'clip-text' }, c.text)),
+      );
+    });
+
+    clipsPanel.replaceChildren(
+      h(
+        'details',
+        { open: Boolean(f) || Boolean(sg) },
+        h('summary', {}, `Clips TikTok : ${label}`),
+        st.ffmpeg ? null : h('p', { class: 'status err' }, 'ffmpeg n’est pas installé sur ce serveur : le dépôt de vidéos est impossible.'),
+        ...fileBlock,
+        clipsPreview,
+        h('div', { class: 'actions' }, fileInput),
+        h('div', { class: 'actions' }, sendBtn, cancelBtn, f ? h('button', { class: 'btn secondary small', type: 'button', onclick: async () => {
+          if (!confirm('Supprimer le fichier vidéo ? Les clips ne seront plus proposés au public pour cette vidéo.')) return;
+          try {
+            clipState = await api('DELETE', `/videos/${id}/file`);
+            renderClips();
+          } catch (e) {
+            status(clipMsg, e.message, 'err');
+          }
+        } }, 'Supprimer le fichier') : null),
+        progress,
+        progressText,
+        h('label', { class: 'switch-row' }, toggle, h('span', {}, 'Autoriser les clips pour le public')),
+        h('p', { class: 'status' }, 'Les visiteurs pourront créer des TikToks à partir de cette vidéo. N’autorise que des vidéos dont tu peux diffuser des extraits.'),
+        h('h3', { class: 'clips-sub' }, 'Extraits proposés par l’IA'),
+        sg?.outdated ? h('p', { class: 'status err' }, 'La transcription a changé depuis : régénère les extraits.') : null,
+        cards.length ? h('div', { class: 'clip-list' }, cards) : h('p', { class: 'status' }, st.llm ? 'Pas encore d’extraits.' : 'OPENROUTER_API_KEY manquante : impossible de proposer des extraits.'),
+        h('div', { class: 'actions' }, suggestBtn),
+        clipMsg,
+      ),
+    );
+  }
+  renderClips();
+
   // --- transcription locale (Whisper)
   const hasTranscript = segs.length > 0;
   const whisperPanel = h(
@@ -1125,7 +1333,7 @@ async function renderEditor(id) {
   $app.replaceChildren(
     h('p', {}, h('a', { href: '#/' }, '← Toutes les vidéos')),
     info,
-    h('div', { class: 'editor' }, h('aside', { class: 'side' }, playerBox, summaryPanel, whisperPanel, translatePanel, tools, source, danger), list),
+    h('div', { class: 'editor' }, h('aside', { class: 'side' }, playerBox, summaryPanel, clipsPanel, whisperPanel, translatePanel, tools, source, danger), list),
     savebar,
   );
 

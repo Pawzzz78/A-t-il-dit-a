@@ -108,3 +108,18 @@ ol.steps { margin: .5rem 0; padding-left: 1.3rem; font-size: .88rem; }
 ol.steps li { margin: .3rem 0; }
 code { background: var(--color-surface-alt); padding: .05rem .35rem; border-radius: 5px; font-size: .85em; overflow-wrap: anywhere; }
 textarea.sum-area { width: 100%; font: inherit; line-height: 1.45; padding: .5rem .6rem; border: 1px solid var(--color-border); border-radius: 6px; margin: .5rem 0; resize: vertical; }
+
+/* --- clips TikTok ---------------------------------------------------------------- */
+.admin [hidden] { display: none !important; }
+.clip-preview { width: 100%; max-height: 18rem; margin: .6rem 0; border-radius: var(--radius); background: #000; }
+.switch-row { display: flex; align-items: center; gap: .6rem; margin: .9rem 0 .2rem; font-weight: 700; color: var(--color-primary); cursor: pointer; }
+.switch-row input { width: 1.2rem; height: 1.2rem; }
+.clips-sub { margin: 1.2rem 0 .5rem; font-size: .9rem; }
+.clip-list { display: grid; gap: .7rem; }
+.clip-card { border: 1px solid var(--color-hairline); border-radius: var(--radius); padding: .7rem .8rem; background: var(--color-surface-alt); }
+.clip-top { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.clip-top strong { font-variant-numeric: tabular-nums; }
+.clip-top .btn { margin-left: auto; padding: .45rem .8rem; }
+.clip-title { margin: .45rem 0 .2rem; font-weight: 700; color: var(--color-primary); }
+.clip-text { font-size: .82rem; line-height: 1.5; color: var(--color-text); margin: .4rem 0 0; }
+progress { width: 100%; height: .6rem; margin-top: .6rem; accent-color: var(--color-primary); }

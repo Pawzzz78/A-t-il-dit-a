@@ -88,3 +88,21 @@ ALTER TABLE videos ADD COLUMN IF NOT EXISTS summary_next_at  TIMESTAMPTZ;
 ALTER TABLE videos ADD COLUMN IF NOT EXISTS summary_error    TEXT;
 UPDATE videos SET text_hash = md5(norm_text) WHERE text_hash IS NULL AND norm_text <> '';
 ALTER TABLE video_summaries ADD COLUMN IF NOT EXISTS edited_at TIMESTAMPTZ;
+
+-- Studio de clips (TikTok / Reels) : fichier vidéo déposé par l'admin, et propositions d'extraits -----------------
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS file_name        TEXT;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS file_size        BIGINT;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS file_duration_s  REAL;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS file_width       INTEGER;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS file_height      INTEGER;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS file_has_audio   BOOLEAN;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS file_uploaded_at TIMESTAMPTZ;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS clips_enabled    BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS clip_suggestions (
+  video_id   INTEGER PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+  content    JSONB NOT NULL,
+  model      TEXT,
+  text_hash  TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

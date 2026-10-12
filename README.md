@@ -86,6 +86,30 @@ d'historique).
 - L'API (`GET /api/trends?q=…`, `GET /api/trends/words`) met ses résultats en cache 5 minutes (invalidés dès qu'une vidéo change) et
   limite le calcul à 120 requêtes par heure et par visiteur.
 
+## Studio de clips TikTok / Reels (en construction)
+
+Objectif : créer des vidéos verticales à partir des meilleurs extraits d'une interview, avec sous-titres stylés et musique. Les
+sous-titres n'ont besoin ni d'IA ni d'API : on dessine le texte de la transcription, déjà horodaté. Le LLM (OpenRouter) ne sert
+qu'à choisir les extraits. **Étape actuelle (admin) :**
+
+- **Fichier vidéo par vidéo** : tu télécharges la vidéo toi-même (de préférence en 720p) et tu la déposes dans l'éditeur de la
+  vidéo, panneau « Clips TikTok ». Le dépôt se fait **par morceaux de 8 Mo** (reprise automatique après une coupure, pas de limite de
+  durée de requête). ffprobe vérifie que c'est bien une vidéo (mp4, mov, mkv, webm) et **compare sa durée à celle de la vidéo
+  YouTube** : un écart de plus de 3 s signale une autre version, dont les horaires seraient décalés.
+- **Stockage** : sur disque, dans `STORAGE_DIR` (sur Railway : volume monté sur `/data`, 5 Go sur ce plan). Le fichier n'est jamais
+  servi au public (l'aperçu de l'éditeur exige la session admin) ; il disparaît avec la vidéo ou via « Supprimer le fichier ».
+- **Interrupteur « Autoriser les clips pour le public »**, par vidéo : tu choisis ce qui sera exposé, et tu ne dois autoriser que
+  des vidéos dont tu peux diffuser des extraits (droits des chaînes d'origine).
+- **Extraits proposés par l'IA** : 20 à 60 s, jusqu'à 8 par vidéo, avec titre factuel, raison et note. Le modèle ne choisit que des
+  **numéros de lignes** de la transcription : les horaires viennent de la transcription et il ne peut pas inventer ni modifier un
+  mot. Consignes éditoriales : extraits compréhensibles seuls, qui commencent et finissent sur une phrase entière sans couper avant
+  une nuance, choisis pour la clarté et non pour le côté polémique. Résultats stockés ; ils sont signalés comme périmés si la
+  transcription change. Modèle : `CLIP_MODEL`, sinon celui des résumés.
+- **Prochaines étapes** : éditeur public (sous-titres : style, position, taille ; musique libre de droits) et rendu du MP4 avec
+  ffmpeg sur le serveur (file d'attente, limite de clips simultanés, suppression rapide des fichiers produits).
+- **Sur Railway** : le volume est monté sur `/data` (`STORAGE_DIR=/data/storage`) et ffmpeg est installé dans l'image grâce à la
+  variable `RAILPACK_DEPLOY_APT_PACKAGES=ffmpeg` (le constructeur est Railpack).
+
 ## Dernières vidéos et résumés
 
 L'accueil affiche, en grille, les **5 dernières vidéos par date de publication** : celles des chaînes suivies **et** celles ajoutées à la
@@ -233,6 +257,8 @@ src/
 tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéos sans sous-titres, envoyée au site
   openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
+  media.js           fichiers vidéo du studio : dépôt par morceaux, ffprobe, stockage
+  clip-suggestions.js  extraits proposés par le LLM (numéros de lignes, horaires issus de la transcription)
   trends.js          tendances : comptage des mots par mois, mots les plus prononcés, cache et limites
   summaries.js       résumés stockés en base : lecture publique, génération, anti-doublons
   auto-summaries.js  génération automatique en arrière-plan (file, délai de grâce, reprises, plafonds, pause)

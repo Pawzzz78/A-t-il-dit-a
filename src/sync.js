@@ -11,6 +11,7 @@
  * sous verrou de ligne. Les vidéos ajoutées à la main (sync_status NULL), celles déjà transcrites
  * (automatiquement ou corrigées à la main) ne sont ni relues ni modifiées.
  */
+import { removeVideoFiles } from './media.js';
 import { pool, replaceSegments, withTransaction } from './db.js';
 import { getSetting, setSetting } from './settings.js';
 import { summariesOverview } from './auto-summaries.js';
@@ -147,6 +148,9 @@ export async function removeShorts(videoIds) {
         [ids],
       );
     }
+    return ids;
+  }).then(async (ids) => {
+    for (const id of ids) await removeVideoFiles(id).catch(() => {}); // fichiers vidéo du studio éventuels
     return ids;
   });
 }
