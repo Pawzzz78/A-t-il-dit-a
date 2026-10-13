@@ -170,19 +170,41 @@
 .st-job-actions { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
 #studio .btn:disabled { opacity: .5; cursor: default; }
 
-/* téléphone : l'aperçu reste visible en haut pendant qu'on règle */
+/* en-tête : le titre de l'interview est dans le bandeau bleu (jamais coupé, même sur plusieurs lignes) */
+.hero.editor { padding-bottom: 2.6rem; }
+.hero.editor .st-top { margin: 1.4rem 0 0; }
+.studio.editing { margin-top: -1.2rem; }
+.ph-size { display: none; }
+
+/* téléphone : l'aperçu reste visible en haut pendant qu'on règle ; « Agrandir » le montre presque plein écran */
 @media (max-width: 900px) {
   .st-grid { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
   .st-left { top: 0; z-index: 30; margin: 0 -1rem; padding: .5rem 1rem; background: rgba(249,249,249,.96); backdrop-filter: blur(6px); border-bottom: 1px solid var(--color-hairline); }
-  .phone { max-width: none; grid-template-columns: auto 1fr; align-items: center; column-gap: .9rem; }
-  .ph-screen { width: calc(34vh * 9 / 16); border-width: 3px; border-radius: 1rem; grid-row: 1 / span 2; }
+  .phone { max-width: none; grid-template-columns: auto 1fr; grid-template-rows: auto auto 1fr; align-items: center; column-gap: .9rem; }
+  .ph-screen { height: 44vh; height: min(44dvh, 32rem); width: auto; border-width: 3px; border-radius: 1rem; grid-row: 1 / span 3; }
   .ph-bar { grid-column: 2; grid-row: 1; align-self: end; flex-direction: column; align-items: stretch; gap: .3rem; }
   .ph-toggle { grid-column: 2; grid-row: 2; justify-self: start; align-self: start; }
+  .ph-size { display: inline-flex; grid-column: 2; grid-row: 3; justify-self: start; align-self: start; align-items: center; gap: .3rem; font: inherit; font-size: .75rem; font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-caps); padding: .55rem .9rem; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: #fff; color: var(--color-primary); cursor: pointer; }
+  .ph-size[aria-pressed="true"] { background: var(--color-primary); color: #fff; }
+  .ph-play { width: 2.6rem; height: 2.6rem; font-size: 1rem; }
+  /* agrandi : l'aperçu occupe presque tout l'écran, centré, commandes dessous ; il défile avec la page (on remonte pour le revoir) */
+  .st-left.big { position: static; }
+  .phone.big { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; justify-items: center; }
+  .phone.big .ph-screen { height: 72vh; height: min(72dvh, 44rem); grid-row: auto; }
+  .phone.big .ph-bar, .phone.big .ph-toggle, .phone.big .ph-size { grid-column: 1; grid-row: auto; }
+  .phone.big .ph-bar { align-self: stretch; width: 100%; flex-direction: row; align-items: center; gap: .7rem; }
+  .phone.big .ph-toggle { justify-self: center; }
+  .phone.big .ph-size { justify-self: center; }
   .st-panel { padding: 1.1rem 1rem 1.4rem; }
   .st-row { grid-template-columns: minmax(0, 1fr); gap: .3rem; }
 }
-@media (max-width: 900px) { .ph-play { width: 2.6rem; height: 2.6rem; font-size: 1rem; } }
-@media (max-width: 480px) { .ph-screen { width: calc(32vh * 9 / 16); } .st-left { padding: .4rem 1rem; } }
+@media (max-width: 480px) { .st-left { padding: .4rem 1rem; } }
+/* téléphone : une fois dans l'éditeur, le texte d'accueil ne sert plus et repousse l'aperçu hors de l'écran */
+@media (max-width: 900px) {
+  .hero.editor { padding-top: 1.4rem; }
+  .hero.editor .wrap > p:not(.eyebrow) { display: none; }
+  .hero.editor .st-top { margin-top: .9rem; }
+}
 
 /* texte des sous-titres */
 .st-subnav { margin-bottom: 1.2rem; }

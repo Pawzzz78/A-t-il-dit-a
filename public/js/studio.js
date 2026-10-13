@@ -935,8 +935,18 @@ async function openEditor(youtubeId) {
   tabs.forEach(([id, label]) => tabBar.append(el('button', { type: 'button', role: 'tab', 'data-tab': id, onclick: () => openTab(id) }, label)));
   stage.append(tabBar, ...tabs.map(([, , p]) => p));
 
+  // « ← Autres interviews » et le titre vont dans l'en-tête bleu : un titre long sur deux ou trois lignes (téléphone) ne déborde plus
+  // en blanc sur le fond clair
+  const hero = document.querySelector('.hero .wrap');
+  hero?.querySelector('.st-top')?.remove();
+  const top = el('div', { class: 'st-top' }, el('a', { class: 'st-back', href: '/studio/' }, '← Autres interviews'), el('p', { class: 'st-title' }, S.video.title));
+  if (hero) {
+    hero.append(top);
+    hero.closest('.hero').classList.add('editor');
+  }
+  root.classList.add('editing');
   root.replaceChildren(
-    el('div', { class: 'st-top' }, el('a', { class: 'st-back', href: '/studio/' }, '← Autres interviews'), el('p', { class: 'st-title' }, S.video.title)),
+    ...(hero ? [] : [top]),
     el('div', { class: 'st-grid' }, el('div', { class: 'st-left' }, phone.root), stage),
     disclaimer(),
   );

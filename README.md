@@ -168,6 +168,10 @@ qu'à choisir les extraits.
       temporaire fournie (valable 24 h, usage prévu par Pixabay) ; les images utilisées sont téléchargées par le serveur, jamais
       appelées en direct. Recherches et téléchargements sont limités par visiteur (`STOCK_SEARCHES_PER_HOUR`,
       `STOCK_DOWNLOADS_PER_HOUR`). Licences : gratuit, y compris en usage commercial, crédit non obligatoire ;
+  - **téléphone** : l'aperçu reste collé en haut de l'écran pendant qu'on règle (44 % de la hauteur, avec la barre de lecture à côté), et un
+    bouton « Agrandir » le montre presque plein écran pour vérifier le rendu. Le titre de l'interview est dans le bandeau bleu (jamais coupé,
+    même sur plusieurs lignes) et le texte d'accueil est masqué dans l'éditeur pour ne pas repousser l'aperçu. La mise en page du
+    navigateur d'ordinateur n'est pas modifiée (breakpoint 900 px) ;
   - **aperçu en direct** : la vidéo (cadrage seul, 360 × 640) vient du serveur, les sous-titres sont dessinés par le navigateur avec
     le **même code** que le rendu (`public/js/studio-core.js`) : horaires des mots, groupes, tailles, réduction des mots trop
     longs. Vérifié image par image contre le MP4 final.

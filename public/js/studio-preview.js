@@ -63,7 +63,16 @@ export function createPhone({ onMove, onCrop, onPick }) {
   const time = el('span', { class: 'ph-time' }, '0:00 / 0:00');
   const guideToggle = el('label', { class: 'ph-toggle' }, el('input', { type: 'checkbox' }), 'Zones TikTok');
   const bar = el('div', { class: 'ph-bar' }, range, time);
-  const root = el('div', { class: 'phone' }, screen, bar, guideToggle);
+  // téléphone : « Agrandir » donne un aperçu presque plein écran pour vérifier le rendu (le réglage reste dessous)
+  const sizeBtn = el('button', { class: 'ph-size', type: 'button', 'aria-pressed': 'false', 'aria-label': 'Agrandir l’aperçu' }, '⤢ Agrandir');
+  const root = el('div', { class: 'phone' }, screen, bar, guideToggle, sizeBtn);
+  sizeBtn.addEventListener('click', () => {
+    const big = root.classList.toggle('big');
+    root.parentElement?.classList.toggle('big', big);
+    sizeBtn.setAttribute('aria-pressed', String(big));
+    sizeBtn.textContent = big ? '⤡ Réduire' : '⤢ Agrandir';
+    sizeBtn.setAttribute('aria-label', big ? 'Réduire l’aperçu' : 'Agrandir l’aperçu');
+  });
   const music = new Audio();
   music.loop = true;
   music.preload = 'auto';
