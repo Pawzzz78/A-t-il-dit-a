@@ -144,10 +144,33 @@ test('mentions légales : page présente avec le contact, aucun lien vers l\'adm
   const legal = await (await fetch(base + '/mentions-legales/')).text();
   assert.match(legal, /forecast\.lab\.0@gmail\.com/);
   assert.match(legal, /Railway/);
-  for (const path of ['/', '/videos/', '/mentions-legales/']) {
+  for (const path of ['/', '/mentions-legales/']) {
     const html = path === '/mentions-legales/' ? legal : await (await fetch(base + path)).text();
     assert.doesNotMatch(html, /href="\/admin/, `${path} ne doit pas lier vers l'admin`);
     assert.match(html, /href="\/mentions-legales\/"/);
   }
   assert.equal((await call('GET', '/api/legal')).status, 404);
+});
+
+test('site réduit au studio : la racine est le studio, les anciennes pages renvoient vers lui', { skip: !enabled }, async () => {
+  const home = await (await fetch(base + '/')).text();
+  assert.match(home, /<title>Lisnard Studio/);
+  assert.match(home, /\/js\/studio\.js/);
+  assert.doesNotMatch(home, /Vérifier une phrase|Tendances|Toutes les vidéos|Lisnard Facts/);
+  const go = async (path) => {
+    const r = await fetch(base + path, { redirect: 'manual' });
+    return [r.status, r.headers.get('location')];
+  };
+  assert.deepEqual(await go('/videos/'), [301, '/']);
+  assert.deepEqual(await go('/videos'), [301, '/']);
+  assert.deepEqual(await go('/tendances/'), [301, '/']);
+  assert.deepEqual(await go('/studio/'), [301, '/']);
+  assert.deepEqual(await go('/studio/?v=abcDEF12345'), [301, '/?v=abcDEF12345']); // anciens liens vers une interview
+  assert.equal((await fetch(base + '/js/videos.js')).status, 404);
+  // l'indexation et le studio restent en place
+  assert.equal((await fetch(base + '/api/studio/assets')).status, 200);
+  assert.equal((await fetch(base + '/mentions-legales/')).status, 200);
+  const legal = await (await fetch(base + '/mentions-legales/')).text();
+  assert.match(legal, /Lisnard Studio/);
+  assert.doesNotMatch(legal, /Lisnard Facts|vérification des propos/);
 });

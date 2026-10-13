@@ -30,7 +30,7 @@ a { color: var(--color-primary); }
 .site-header { background: #fff; border-bottom: 1px solid var(--color-hairline); }
 .site-header .wrap { display: flex; align-items: center; justify-content: space-between; gap: .6rem 1rem; padding-block: .8rem; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: .9rem; color: var(--color-primary); text-decoration: none; font-family: var(--font-display); font-weight: var(--font-weight-display); text-transform: uppercase; letter-spacing: var(--tracking-title); font-size: 1.15rem; line-height: 1.1; }
-/* Logotype « LisnardFacts » : Fraunces (serif d'affichage), « Lisnard » droit en bleu, « Facts » en italique rose */
+/* Logotype « Lisnard Studio » : Fraunces (serif d'affichage), « Lisnard » droit en bleu, « Studio » en italique rose */
 .wordmark { display: inline-flex; align-items: baseline; font-family: Fraunces, Georgia, "Times New Roman", serif; font-weight: 700; font-size: 2.2rem; line-height: 1; letter-spacing: -.025em; text-transform: none; white-space: nowrap; }
 .wordmark .wm-a { color: var(--color-primary); }
 .wordmark .wm-b { font-style: italic; color: var(--color-accent); margin-left: .06em; padding-right: .06em; position: relative; }

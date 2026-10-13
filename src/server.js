@@ -28,6 +28,11 @@ export function createApp() {
   app.use('/api/studio', studioRouter);
   app.use('/api', publicRouter);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Route inconnue.' }));
+  // anciennes adresses (recherche, vidéos, tendances, studio) : le site ne propose plus que le studio, à la racine
+  app.get(/^\/(videos|tendances|studio)(\/(index\.html)?)?$/, (req, res) => {
+    const q = req.originalUrl.indexOf('?');
+    res.redirect(301, q >= 0 ? `/${req.originalUrl.slice(q)}` : '/');
+  });
   app.use(
     express.static(publicDir, {
       extensions: ['html'],
@@ -53,7 +58,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     console.warn('ADMIN_PASSWORD / SESSION_SECRET (16+ caractères) manquants : l\'admin est désactivée.');
   }
   const port = Number(process.env.PORT) || 3000;
-  createApp().listen(port, () => console.log(`Lisnard Facts → http://localhost:${port}`));
+  createApp().listen(port, () => console.log(`Lisnard Studio → http://localhost:${port}`));
   ffmpegAvailable().then(async (ok) => {
     const cap = ok ? await studioCapabilities() : null;
     console.log(`Studio de clips : ffmpeg ${ok ? 'disponible' : 'ABSENT (dépôt de vidéos impossible)'}${cap ? ` · sous-titres (libass) ${cap.ass ? 'oui' : 'NON'} · H.264 ${cap.x264 ? 'oui' : 'NON'} · AAC ${cap.aac ? 'oui' : 'NON'} · zooms et images ${cap.zoom ? 'oui' : 'NON'}` : ''} · stockage ${storageDir()}`);

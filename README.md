@@ -1,8 +1,19 @@
-# Lisnard Facts
+# Lisnard Studio
 
-Site de fact-checking et de création de TikTok : on saisit une phrase ou une expression, et le site indique si
-David Lisnard l'a prononcée dans l'une de ses interviews YouTube, avec l'extrait
-surligné et un lien vers la vidéo au bon timestamp.
+**Plateforme dédiée à la création de TikTok / Reels** à partir d'extraits des interviews YouTube de David Lisnard : on choisit un extrait
+(proposé par l'IA ou libre), on ajoute des sous-titres, de la musique, des zooms et des images, puis on télécharge la vidéo verticale.
+La page d'accueil (`/`) est le studio ; les anciennes adresses `/studio/`, `/videos/` et `/tendances/` y redirigent (301, la requête
+`?v=…` est conservée). Il n'y a plus de page publique de recherche, de liste de vidéos ni de tendances.
+
+**Ce qui reste en place derrière le studio** : l'indexation des transcriptions (synchronisation des chaînes, Supadata, Whisper,
+traduction, résumés automatiques), l'admin et les statistiques. Les adresses techniques de la recherche, des résumés et des
+tendances (`/api/search`, `/api/summary/…`, `/api/trends…`) existent toujours côté serveur et ne sont plus liées depuis le site ; leur
+code est conservé, au cas où.
+
+> Le dépôt s'appelle encore `A-t-il-dit-a` et le domaine `lisnardfacts.fr` : seuls le nom affiché et le logotype changent.
+
+*Historique : le site est né comme « Lisnard Facts », un fact-checking qui retrouve si une phrase a été prononcée dans une interview.
+Les sections ci-dessous sur la recherche décrivent ce moteur, toujours présent côté serveur.*
 
 ## Fonctionnement
 
@@ -337,7 +348,7 @@ si celui-ci change (cookies, statistiques, publicité…).
 
 Reprise de https://www.unenouvelleenergie.fr/ : bleu `#1d257a`, chamois `#b0ad85`, rose `#d0165f`,
 police Montserrat (fichiers dans `public/fonts/`). Le logo officiel n'est volontairement pas utilisé : le site a son propre logotype « Lisnard
-*Facts* » (police Fraunces, fichiers dans `public/fonts/`, licence OFL ; « Lisnard » en bleu, « Facts » en rose italique).
+*Studio* » (police Fraunces, fichiers dans `public/fonts/`, licence OFL ; « Lisnard » en bleu, « Studio » en rose italique).
 Tout est dans [`public/css/theme.css`](public/css/theme.css) ; `app.css` et `admin.css` n'utilisent que ces variables.
 
 ## Structure

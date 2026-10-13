@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Lisnard Facts – Vérifie les propos de David Lisnard</title>
-  <meta name="description" content="Retrouve si David Lisnard a déjà prononcé une phrase ou une expression dans ses interviews, avec l'extrait et la vidéo à l'appui.">
+  <title>Lisnard Studio – Crée ton TikTok</title>
+  <meta name="description" content="Crée un TikTok ou un Reel à partir d'un extrait d'interview de David Lisnard : sous-titres, musique, téléchargement.">
   <meta name="theme-color" content="#1d257a">
   <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
   <link rel="preload" href="/fonts/montserrat-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
@@ -12,59 +12,33 @@
   <link rel="preload" href="/fonts/fraunces-italic-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/css/theme.css">
   <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/studio.css">
 </head>
 <body>
-  <div class="topbar">
-    <div class="wrap"><a href="/videos/">Toutes les vidéos</a><a href="/tendances/">Tendances</a><a href="/studio/">Studio TikTok</a><a href="#methode">Comment ça marche</a></div>
-  </div>
   <header class="site-header">
     <div class="wrap">
-      <a class="brand" href="/" aria-label="Lisnard Facts, accueil"><span class="wordmark" aria-hidden="true"><span class="wm-a">Lisnard</span><span class="wm-b">Facts</span></span></a>
-      <nav><a class="btn chamois small" href="#q">Vérifier une phrase</a></nav>
+      <a class="brand" href="/" aria-label="Lisnard Studio, accueil"><span class="wordmark" aria-hidden="true"><span class="wm-a">Lisnard</span><span class="wm-b">Studio</span></span></a>
     </div>
   </header>
 
-  <section class="hero">
+  <section class="hero compact">
     <div class="wrap">
-      <p class="eyebrow">Vérification</p>
-      <h1>A-t-il vraiment <em>dit ça</em>&nbsp;?</h1>
-      <p>Colle une phrase qui circule sur Internet, ou demande « a-t-il déjà parlé de… ? » : on cherche dans les interviews de David Lisnard et on te montre les extraits exacts.</p>
+      <p class="eyebrow">Studio</p>
+      <h1>Crée ton <em>TikTok</em></h1>
+      <p>Choisis un extrait d'interview, ajoute des sous-titres et de la musique, puis télécharge ta vidéo verticale, prête à publier.</p>
     </div>
   </section>
 
-  <div class="search wrap">
-    <div class="card search-card">
-      <form id="form" role="search">
-        <label class="sr-only" for="q">Phrase, expression ou question à vérifier</label>
-        <input id="q" name="q" type="search" placeholder="Une phrase ou une question…" autocomplete="off" maxlength="300" required minlength="3">
-        <button class="btn" type="submit">Vérifier</button>
-      </form>
-      <p class="hint" id="stats"></p>
-    </div>
-  </div>
-
-  <main class="wrap" aria-live="polite">
-    <div id="out"></div>
-
-    <section id="latest" class="latest" hidden aria-labelledby="latest-title">
-      <p class="eyebrow">À la une</p>
-      <h2 id="latest-title" class="section-title">Dernières vidéos</h2>
-      <div id="latest-list"></div>
-      <p class="more-videos"><a id="all-videos" class="btn" href="/videos/">Voir toutes les vidéos</a></p>
-    </section>
-
-    <section id="methode" class="disclaimer card">
-      <p class="eyebrow">Comment ça marche</p>
-      <p>Les transcriptions proviennent des sous-titres des vidéos YouTube ou, à défaut, d'une transcription automatique de l'audio. Elles sont générées automatiquement puis corrigées à la main, mais peuvent contenir des erreurs&nbsp;: <strong>clique toujours sur la vidéo</strong> pour entendre la phrase dans son contexte. Une absence de résultat signifie seulement que la phrase n'apparaît pas dans les vidéos déjà indexées.</p>
-    </section>
+  <main class="wrap studio" id="studio" aria-live="polite">
+    <p class="hint" id="loading">Chargement du studio…</p>
   </main>
 
   <footer class="site-footer">
     <div class="wrap">
-      <span class="footer-brand" role="img" aria-label="Lisnard Facts"><span class="wordmark" aria-hidden="true"><span class="wm-a">Lisnard</span><span class="wm-b">Facts</span></span></span>
+      <span class="footer-brand" role="img" aria-label="Lisnard Studio"><span class="wordmark" aria-hidden="true"><span class="wm-a">Lisnard</span><span class="wm-b">Studio</span></span></span>
       <p>Initiative indépendante de soutiens. Ce site ne dépend ni de Nouvelle Énergie ni de David Lisnard. · <a href="/mentions-legales/">Mentions légales</a></p>
     </div>
   </footer>
-  <script src="/js/app.js" type="module"></script>
+  <script src="/js/studio.js" type="module"></script>
 </body>
 </html>

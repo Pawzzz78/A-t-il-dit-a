@@ -70,7 +70,7 @@ async function showList() {
   root.replaceChildren(
     el('section', { class: 'card st-pick' }, el('p', { class: 'eyebrow' }, 'Étape 1'), el('h2', { class: 'section-title' }, 'Choisis une interview'),
       el('div', { class: 'st-list' }, videos.map((v) =>
-        el('a', { class: 'st-video', href: `/studio/?v=${v.youtube_id}` },
+        el('a', { class: 'st-video', href: `/?v=${v.youtube_id}` },
           v.thumbnail_url ? el('img', { src: v.thumbnail_url, alt: '', loading: 'lazy' }) : el('span', { class: 'thumb-empty', 'aria-hidden': 'true' }, '▶'),
           el('span', { class: 'st-video-info' }, el('strong', {}, v.title), el('small', {}, [fmtDate(v.published_at), v.suggestions ? `${v.suggestions} extraits proposés` : ''].filter(Boolean).join(' · '))),
         )),
@@ -660,7 +660,7 @@ async function openEditor(youtubeId) {
         try {
           const blob = await (await fetch(`${url}?use=share`)).blob();
           const file = new File([blob], job.filename, { type: 'video/mp4' });
-          if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: 'Lisnard Facts' });
+          if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: 'Lisnard Studio' });
           else { makeMsg.className = 'st-msg'; makeMsg.textContent = 'Le partage direct n’est pas disponible ici : télécharge la vidéo.'; }
         } catch { /* partage annulé */ }
       });
@@ -939,7 +939,7 @@ async function openEditor(youtubeId) {
   // en blanc sur le fond clair
   const hero = document.querySelector('.hero .wrap');
   hero?.querySelector('.st-top')?.remove();
-  const top = el('div', { class: 'st-top' }, el('a', { class: 'st-back', href: '/studio/' }, '← Autres interviews'), el('p', { class: 'st-title' }, S.video.title));
+  const top = el('div', { class: 'st-top' }, el('a', { class: 'st-back', href: '/' }, '← Autres interviews'), el('p', { class: 'st-title' }, S.video.title));
   if (hero) {
     hero.append(top);
     hero.closest('.hero').classList.add('editor');
@@ -976,6 +976,6 @@ async function openEditor(youtubeId) {
     if (id) await openEditor(id);
     else await showList();
   } catch (e) {
-    root.replaceChildren(el('section', { class: 'card st-empty' }, el('h2', {}, 'Oups'), el('p', {}, e.message), el('a', { class: 'btn small', href: '/studio/' }, 'Retour à la liste')));
+    root.replaceChildren(el('section', { class: 'card st-empty' }, el('h2', {}, 'Oups'), el('p', {}, e.message), el('a', { class: 'btn small', href: '/' }, 'Retour à la liste')));
   }
 })();
