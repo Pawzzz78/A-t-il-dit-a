@@ -91,7 +91,7 @@ studioRouter.get(
     const sg = await getClipSuggestions(v.id);
     res.json({
       video: { ...presentVideo(v), width: v.file_width, height: v.file_height, has_audio: v.file_has_audio },
-      suggestions: (sg?.clips ?? []).map(({ start_ms, end_ms, duration_s, title, why, score, text }) => ({ start_ms, end_ms, duration_s, title, why, score, text })),
+      suggestions: (sg?.clips ?? []).map(({ start_ms, end_ms, duration_s, title, why, score, text, description }) => ({ start_ms, end_ms, duration_s, title, why, score, text, description: description ?? null })),
       lines,
     });
   }),

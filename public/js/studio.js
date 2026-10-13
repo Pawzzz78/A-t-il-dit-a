@@ -198,9 +198,9 @@ async function openEditor(youtubeId) {
   const panelExtracts = el('div', { class: 'st-panel' });
   const minTotalNote = () => `${secs(totalS())} sur ${LIMITS.maxTotalS} s maximum`;
 
-  function addExtract(start_ms, end_ms, title, from) {
+  function addExtract(start_ms, end_ms, title, from, caption = null) {
     if (S.extracts.length >= LIMITS.maxExtracts) return alertNote(`${LIMITS.maxExtracts} extraits au maximum.`);
-    const ex = { start_ms, end_ms: Math.min(end_ms, videoEndMs()), title, from };
+    const ex = { start_ms, end_ms: Math.min(end_ms, videoEndMs()), title, from, caption };
     if (totalS() + exDur(ex) > LIMITS.maxTotalS) return alertNote(`Le clip ne peut pas dépasser ${LIMITS.maxTotalS} secondes.`);
     S.extracts.push(ex);
     extractsChanged();
@@ -340,7 +340,7 @@ async function openEditor(youtubeId) {
               el('details', {}, el('summary', {}, 'Lire l’extrait'), el('p', { class: 'st-text' }, sg.text)),
               taken.has(sg.start_ms)
                 ? el('button', { class: 'btn secondary small', type: 'button', onclick: () => { const k = S.extracts.findIndex((e) => e.from === sg.start_ms); if (k >= 0) { S.extracts.splice(k, 1); extractsChanged(); } } }, 'Retirer de mon clip')
-                : el('button', { class: 'btn small', type: 'button', onclick: () => addExtract(sg.start_ms, sg.end_ms, sg.title, sg.start_ms) }, 'Ajouter à mon clip'),
+                : el('button', { class: 'btn small', type: 'button', onclick: () => addExtract(sg.start_ms, sg.end_ms, sg.title, sg.start_ms, sg.description) }, 'Ajouter à mon clip'),
             )),
           )
         : el('p', { class: 'st-help' }, 'Pas d’extrait proposé pour cette vidéo : choisis un passage dans la transcription.'),
@@ -596,18 +596,24 @@ async function openEditor(youtubeId) {
   const createSummary = el('div', {});
   const pledge = el('input', { type: 'checkbox' });
   const makeBtn = el('button', { class: 'btn', type: 'button' }, 'Créer la vidéo');
-  const sourceField = el('textarea', { class: 'st-source-text', readonly: '', rows: '2', 'aria-label': 'Source à citer dans la description' });
-  sourceField.value = `${sourceText(S.video.title, S.video.published_at)} — https://www.youtube.com/watch?v=${S.video.youtube_id}`;
-  const copyBtn = el('button', { class: 'btn secondary small', type: 'button' }, 'Copier');
-  copyBtn.addEventListener('click', async () => {
+  // description à copier-coller : légende générée une fois avec les extraits proposés (accroche + 2 à 4 hashtags), suivie de la source
+  const sourceField = el('textarea', { class: 'st-source-text', rows: '7', maxlength: '2200', 'aria-label': 'Description à copier-coller pour TikTok' });
+  let captionEdited = false; // si tu la modifies, elle n'est plus recalculée
+  sourceField.addEventListener('input', () => { captionEdited = true; });
+  const copyText = async (text) => {
     try {
-      await navigator.clipboard.writeText(sourceField.value);
+      await navigator.clipboard.writeText(text);
+      return true;
     } catch {
       sourceField.select();
-      document.execCommand?.('copy');
+      return Boolean(document.execCommand?.('copy'));
     }
+  };
+  const copyBtn = el('button', { class: 'btn secondary small', type: 'button' }, 'Copier la description');
+  copyBtn.addEventListener('click', async () => {
+    await copyText(sourceField.value);
     copyBtn.textContent = 'Copié ✓';
-    setTimeout(() => (copyBtn.textContent = 'Copier'), 2000);
+    setTimeout(() => (copyBtn.textContent = 'Copier la description'), 2000);
   });
   const sourceBox = el('div', { class: 'st-source' }, sourceField, copyBtn);
   const makeMsg = el('p', { class: 'st-msg' });
@@ -632,8 +638,8 @@ async function openEditor(youtubeId) {
   function renderCreate() {
     panelCreate.replaceChildren(
       el('h3', {}, 'Ton clip'), createSummary,
-      el('h3', {}, 'Source à citer'),
-      el('p', { class: 'st-help' }, 'La vidéo n’affiche pas la source : colle ce texte dans la description de ta publication.'),
+      el('h3', {}, 'Description à copier-coller'),
+      el('p', { class: 'st-help' }, 'Légende TikTok prête à l’emploi (accroche et hashtags écrits par l’IA avec l’extrait), suivie de la source de l’interview, que la vidéo n’affiche pas. Tu peux la modifier.'),
       sourceBox,
       el('h3', {}, 'Qualité'),
       el('div', { class: 'st-opts' }, quality('hd', 'HD 1080 × 1920', 'Meilleure qualité, un peu plus long à créer'), quality('fast', 'Rapide 720 × 1280', 'Création plus rapide, fichier plus léger')),
@@ -655,21 +661,52 @@ async function openEditor(youtubeId) {
         el('button', { class: 'btn secondary small', type: 'button', onclick: async () => { try { await api('DELETE', `/render/${job.id}`); } catch { /* déjà terminé */ } } }, 'Annuler'));
     } else if (job.status === 'done') {
       const url = `/api/studio/render/${job.id}/file`;
+      const say = (text, kind = 'ok') => { makeMsg.className = `st-msg ${kind === 'ok' ? '' : 'err'}`; makeMsg.textContent = text; };
+      const shareFile = async () => {
+        const blob = await (await fetch(`${url}?use=share`)).blob();
+        const file = new File([blob], job.filename, { type: 'video/mp4' });
+        return navigator.canShare?.({ files: [file] }) ? file : null;
+      };
       const share = el('button', { class: 'btn secondary small', type: 'button' }, 'Partager');
       share.addEventListener('click', async () => {
         try {
-          const blob = await (await fetch(`${url}?use=share`)).blob();
-          const file = new File([blob], job.filename, { type: 'video/mp4' });
-          if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: 'Lisnard Studio' });
-          else { makeMsg.className = 'st-msg'; makeMsg.textContent = 'Le partage direct n’est pas disponible ici : télécharge la vidéo.'; }
+          const file = await shareFile();
+          if (file) await navigator.share({ files: [file], title: 'Lisnard Studio' });
+          else say('Le partage direct n’est pas disponible ici : télécharge la vidéo.', 'err');
         } catch { /* partage annulé */ }
+      });
+      // « Publier sur TikTok » : la description est copiée d'abord (TikTok ne la reçoit pas toujours d'un partage). Sur téléphone, la
+      // fiche de partage ouvre TikTok avec la vidéo ; sur ordinateur, la vidéo est téléchargée et la page d'envoi de TikTok s'ouvre.
+      // (La publication automatique, sans cette étape, demande une application validée par TikTok : voir le README.)
+      const publish = el('button', { class: 'btn tiktok', type: 'button' }, 'Publier sur TikTok');
+      publish.addEventListener('click', async () => {
+        const mobile = Boolean(navigator.canShare) && /Android|iPhone|iPad/i.test(navigator.userAgent);
+        if (!mobile) {
+          window.open('https://www.tiktok.com/upload', '_blank', 'noopener'); // ouvert tout de suite : sinon le navigateur bloque la fenêtre
+          const a = el('a', { href: `${url}?use=download`, download: job.filename });
+          document.body.append(a);
+          a.click();
+          a.remove();
+        }
+        const copied = await copyText(sourceField.value);
+        if (mobile) {
+          try {
+            const file = await shareFile();
+            if (file) {
+              say(copied ? 'Description copiée : choisis TikTok, puis colle-la dans la légende.' : 'Choisis TikTok dans la liste.');
+              await navigator.share({ files: [file], text: sourceField.value.split('\n\n')[0], title: 'Lisnard Studio' });
+            } else say('Le partage vers TikTok n’est pas disponible ici : télécharge la vidéo, puis envoie-la depuis l’appli TikTok.', 'err');
+          } catch { /* partage annulé */ }
+        } else {
+          say(`${copied ? 'Description copiée. ' : ''}La vidéo se télécharge et TikTok s’ouvre : choisis le fichier, puis colle la description.`);
+        }
       });
       jobBox.replaceChildren(
         el('p', { class: 'st-job-text ok' }, 'Ta vidéo est prête !'),
         el('video', { class: 'st-result', src: url, controls: true, playsinline: '', preload: 'metadata' }),
-        el('div', { class: 'st-job-actions' }, el('a', { class: 'btn', href: `${url}?use=download`, download: job.filename }, 'Télécharger'), navigator.canShare ? share : null,
+        el('div', { class: 'st-job-actions' }, publish, el('a', { class: 'btn secondary', href: `${url}?use=download`, download: job.filename }, 'Télécharger'), navigator.canShare ? share : null,
           el('button', { class: 'btn secondary small', type: 'button', onclick: () => { job = null; showJob(); renderCreateSummary(); } }, 'Faire un autre clip')),
-        el('p', { class: 'st-help' }, 'N’oublie pas de citer la source dans la description (texte à copier dans l’onglet Créer).'));
+        el('p', { class: 'st-help' }, 'Description et source prêtes à coller : « Copier la description » ci-dessus (la vidéo n’affiche pas la source).'));
     } else if (job.status === 'cancelled') {
       jobBox.replaceChildren(el('p', { class: 'st-job-text' }, 'Création annulée.'));
     } else {
@@ -823,13 +860,16 @@ async function openEditor(youtubeId) {
     S.broll.sort((x, y) => x.start - y.start);
     effectsChanged();
   }
-  /** Source à citer : l'interview, plus les photographes des images utilisées. */
+  /** Description à copier : légende de l'extrait choisi (générée avec les extraits), puis la source de l'interview et les crédits des images. */
   function updateSource() {
+    if (captionEdited) return;
     const credits = [...new Set(S.broll.map((b) => b.photographer).filter(Boolean))];
-    sourceField.value =
+    const caption = S.extracts.find((e) => e.caption)?.caption ?? '';
+    const source =
       `${sourceText(S.video.title, S.video.published_at)} — https://www.youtube.com/watch?v=${S.video.youtube_id}` +
       (credits.length ? `\nImages : ${credits.join(', ')} (${assets.stock?.provider ?? 'banque d’images'})` : '');
-    sourceField.rows = credits.length ? 3 : 2;
+    sourceField.value = [caption, source].filter(Boolean).join('\n\n');
+    sourceField.rows = caption ? 8 : credits.length ? 3 : 2;
   }
 
   const timeField = (label, ms, onSet, extra = {}) => {
@@ -966,7 +1006,7 @@ async function openEditor(youtubeId) {
 
   // premier extrait : le mieux noté
   const best = [...S.suggestions].sort((x, y) => y.score - x.score)[0];
-  if (best) addExtract(best.start_ms, best.end_ms, best.title, best.start_ms);
+  if (best) addExtract(best.start_ms, best.end_ms, best.title, best.start_ms, best.description);
   else extractsChanged();
 }
 

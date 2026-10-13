@@ -2,7 +2,7 @@
 // (la partie base de données nécessite Postgres via DATABASE_URL, sinon ignorée).
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { CLIP_LIMITS, buildClip, mergeClips, parseClipJson, prepareSegments, windowsFor } from '../src/clip-suggestions.js';
+import { CLIP_LIMITS, buildCaption, buildClip, mergeClips, parseClipJson, prepareSegments, windowsFor } from '../src/clip-suggestions.js';
 import { LlmError } from '../src/openrouter.js';
 
 /** n segments de `step` secondes, texte « phrase i ». */
@@ -105,6 +105,10 @@ test('génération : extraits stockés avec les horaires de la transcription, co
   assert.match(seen.system, /accroche immédiate/);
   assert.match(seen.system, /punchline/);
   assert.match(seen.system, /au moins un extrait toutes les 2 à 3 minutes/);
+  // légende TikTok générée avec les extraits, une fois : accroche + 2 à 4 hashtags
+  assert.match(seen.system, /"description" : la légende TikTok/);
+  assert.match(seen.system, /de 2 à 4 hashtags/);
+  assert.match(seen.system, /"hashtags":\[/);
   assert.match(seen.system, /ne coupe jamais avant un « mais », une nuance, une réserve ou une condition/);
   assert.doesNotMatch(seen.system, /pas pour le caractère polémique/);
   assert.match(seen.system, /ne modifie aucun mot/);
@@ -171,4 +175,46 @@ test('le modèle est invité à proposer jusqu\'à 20 extraits par tranche', asy
   };
   await suggestClipsFor(rows(240, 5), { complete, model: 'x' });
   assert.deepEqual(seen, [20]);
+});
+
+test('légende TikTok : texte court, 2 à 4 hashtags valides sans doublon, entrées du modèle nettoyées', () => {
+  const tags = (c) => c.hashtags;
+  const a = buildCaption('Pourquoi la dette freine-t-elle les communes ? 🤔', ['#Dette', 'communes', '#pourtoi', '#Dette'], 'Titre');
+  assert.equal(a.text, 'Pourquoi la dette freine-t-elle les communes ? 🤔'); // l'espace avant « ? » est conservé (typographie française)
+  assert.deepEqual(tags(a), ['#Dette', '#communes', '#pourtoi']);
+  assert.equal(a.caption, 'Pourquoi la dette freine-t-elle les communes ? 🤔\n\n#Dette #communes #pourtoi');
+  // au plus 4 hashtags, ceux du texte comptent aussi, pas de doublon à la casse près
+  const b = buildCaption('Un texte #un #deux', ['#trois', '#quatre', '#cinq', '#UN'], 'T');
+  assert.deepEqual(tags(b), ['#trois', '#quatre', '#cinq', '#UN']); // les hashtags du texte (#un, #deux) passent après ceux de la liste ; 4 au plus, doublon à la casse près écarté
+  assert.equal(b.text, 'Un texte');
+  // hashtags invalides écartés (trop courts, symboles), complétés jusqu'à 2 avec des valeurs par défaut
+  assert.deepEqual(tags(buildCaption('x', ['#a', '#!!!', ''], 'T')), ['#lisnard', '#politique']);
+  assert.deepEqual(tags(buildCaption('x', ['#dette'], 'T')), ['#dette', '#lisnard']);
+  assert.deepEqual(tags(buildCaption('x', ['#lisnard'], 'T')), ['#lisnard', '#politique']);
+  // HTML, liens et retours à la ligne retirés ; texte vide : le titre sert de légende ; jamais plus de 200 caractères de texte
+  const c = buildCaption('<b>Il explique</b>\nla dette https://exemple.test/x ici', [], 'Titre');
+  assert.equal(c.text, 'Il explique la dette ici');
+  assert.equal(buildCaption('', null, 'Un titre').text, 'Un titre');
+  assert.ok(buildCaption('x'.repeat(500), [], 'T').text.length <= 200);
+  assert.doesNotMatch(buildCaption('a #b\n#c', [], 'T').text, /#/);
+  // le texte du modèle ne peut pas injecter de saut de ligne dans les hashtags
+  assert.ok(buildCaption('x', ['#a b\n#c'], 'T').hashtags.every((t) => /^#[\p{L}\p{N}_]+$/u.test(t)));
+});
+
+test('légende TikTok : stockée avec chaque extrait, générée une seule fois', { skip: !enabled }, async () => {
+  await setSegments(rows(60));
+  let calls = 0;
+  const complete = async () => {
+    calls++;
+    return '{"clips":[{"start":4,"end":11,"title":"Sa position sur la dette","why":"Argument complet","description":"La dette publique, expliquée simplement par David Lisnard.","hashtags":["#dette","#communes","#lisnard"],"score":8}]}';
+  };
+  const out = await svc.generateClipSuggestions(videoId, { complete, model: 'faux-modèle' });
+  assert.equal(out.clips[0].description, 'La dette publique, expliquée simplement par David Lisnard.\n\n#dette #communes #lisnard');
+  const stored = await svc.getClipSuggestions(videoId);
+  assert.equal(stored.clips[0].description, out.clips[0].description); // relue telle quelle, sans nouvel appel au modèle
+  assert.equal(calls, 1);
+  // réponse sans légende (ancien format ou oubli du modèle) : légende de repli à partir du titre, hashtags par défaut
+  const bare = async () => '{"clips":[{"start":4,"end":11,"title":"Sa position","why":"x","score":7}]}';
+  const out2 = await svc.generateClipSuggestions(videoId, { complete: bare, model: 'faux-modèle' });
+  assert.equal(out2.clips[0].description, 'Sa position\n\n#lisnard #politique');
 });

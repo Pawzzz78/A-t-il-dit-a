@@ -14,7 +14,7 @@ import { GPT_MODEL, LlmError, completeWithOpenRouter } from './openrouter.js';
 import { speakerName } from './summarize.js';
 import { formatTimestamp } from './transcripts.js';
 
-export const PROMPT_VERSION = 'c3';
+export const PROMPT_VERSION = 'c4';
 // Modèle dédié aux extraits (à vérifier sur https://openrouter.ai/models) : sans raisonnement, qui suit bien des consignes
 // éditoriales et rend du JSON fiable, pour peu cher (≈ 0,01 $ par interview). Il ne dépend volontairement pas du modèle des
 // résumés / traductions (TRANSLATE_MODEL, SUMMARY_MODEL), qui peut être un modèle « à raisonnement » incapable de répondre ici.
@@ -47,11 +47,13 @@ Règles :
 - Tu ne fais que choisir des lignes : n'invente rien, ne modifie aucun mot.
 - "title" : titre factuel de 70 caractères maximum qui décrit ce que dit ${speakerName()}, sans point d'exclamation.
 - "why" : une phrase qui explique pourquoi cet extrait peut marcher sur TikTok (accroche, émotion, punchline, sujet qui parle à tous...).
+- "description" : la légende TikTok de la vidéo, prête à copier-coller, écrite à partir du titre : 1 à 2 phrases courtes (150 caractères maximum, sans les hashtags) qui donnent envie de regarder, avec une accroche ou une question, au plus 2 emojis, fidèle à ce que dit ${speakerName()} (aucune exagération, aucune affirmation qui n'est pas dans l'extrait).
+- "hashtags" : de 2 à 4 hashtags pertinents pour TikTok (sujet de l'extrait, personne ou lieu concerné), sans espace, sans accent inutile, avec le # ; au plus un hashtag générique comme #pourtoi ; jamais de hashtag trompeur.
 - "score" : de 1 à 10, le potentiel viral sur TikTok.
 - Les extraits ne se chevauchent pas.
 
 Réponds uniquement par un objet JSON, sans texte autour :
-{"clips":[{"start":12,"end":31,"title":"…","why":"…","score":8}]}`;
+{"clips":[{"start":12,"end":31,"title":"…","why":"…","description":"…","hashtags":["#…","#…"],"score":8}]}`;
 
 // --- préparation -----------------------------------------------------------------------
 
@@ -109,6 +111,32 @@ export function parseClipJson(raw) {
   }
 }
 
+const DEFAULT_TAGS = ['#lisnard', '#politique'];
+/**
+ * Légende TikTok prête à copier-coller : texte court + 2 à 4 hashtags valides (lettres, chiffres, _), sans doublon. Ce que renvoie
+ * le modèle est nettoyé (HTML, retours à la ligne, hashtags dans le texte, liens) ; s'il manque des hashtags, on complète.
+ */
+export function buildCaption(rawDescription, rawHashtags, title) {
+  const tagOf = (t) => {
+    const w = String(t ?? '').replace(/^#+/, '').normalize('NFC').replace(/[^\p{L}\p{N}_]/gu, '').slice(0, 30);
+    return w.length >= 2 ? `#${w}` : null;
+  };
+  const fromText = [...String(rawDescription ?? '').matchAll(/#[\p{L}\p{N}_]+/gu)].map((m) => m[0]);
+  const body = cleanText(String(rawDescription ?? '').replace(/#[\p{L}\p{N}_]+/gu, '').replace(/https?:\/\/\S+/g, ''), 200);
+  const seen = new Set();
+  const tags = [];
+  const add = (t) => {
+    const tag = tagOf(t);
+    if (!tag || seen.has(tag.toLowerCase()) || tags.length >= 4) return;
+    seen.add(tag.toLowerCase());
+    tags.push(tag);
+  };
+  for (const t of [...(Array.isArray(rawHashtags) ? rawHashtags : []), ...fromText]) add(t);
+  for (const t of DEFAULT_TAGS) if (tags.length < 2) add(t); // au moins 2 hashtags : on complète seulement si le modèle en a donné moins
+  const text = (body || title || '').replace(/\s+([,.])/g, '$1').trim();
+  return { text, hashtags: tags, caption: `${text}\n\n${tags.join(' ')}`.trim() };
+}
+
 /** Transforme les numéros de lignes du modèle en extrait : horaires issus de la transcription, durée contrôlée. */
 export function buildClip(raw, segs, [from, to]) {
   let start = Math.round(Number(raw?.start));
@@ -129,6 +157,7 @@ export function buildClip(raw, segs, [from, to]) {
     duration_s: Math.round(dur() * 10) / 10,
     title,
     why: cleanText(raw.why, 220),
+    description: buildCaption(raw.description, raw.hashtags, title).caption,
     score,
     text: segs.slice(start, end + 1).map((s) => s.text).join(' ').slice(0, 1800),
   };

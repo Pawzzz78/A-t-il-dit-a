@@ -746,3 +746,16 @@ test('statistiques : API de l\'admin protégée, chiffres par période, courbe e
   assert.equal(s.retention_days, 90);
   await pool.query('DELETE FROM studio_events');
 });
+
+test('studio : la légende des extraits proposés est transmise au navigateur', { skip: !enabled }, async () => {
+  const { rows } = await pool.query('SELECT id, text_hash FROM videos WHERE youtube_id = $1', [YT]);
+  const clips = [{ start_ms: 1000, end_ms: 9000, duration_s: 8, title: 'Un extrait', why: 'x', score: 7, text: 'abc', description: 'Une légende.\n\n#a1 #b2' }, { start_ms: 20000, end_ms: 30000, duration_s: 10, title: 'Ancien format', why: 'y', score: 5, text: 'def' }];
+  await pool.query('INSERT INTO clip_suggestions (video_id, content, model, text_hash) VALUES ($1, $2::jsonb, $3, $4) ON CONFLICT (video_id) DO UPDATE SET content = EXCLUDED.content', [rows[0].id, JSON.stringify({ prompt_version: 'c4', clips }), 'test', rows[0].text_hash]);
+  try {
+    const d = (await api('GET', `/api/studio/videos/${YT}`)).body;
+    assert.equal(d.suggestions[0].description, 'Une légende.\n\n#a1 #b2');
+    assert.equal(d.suggestions[1].description, null); // extraits générés avant les légendes : pas de légende
+  } finally {
+    await pool.query('DELETE FROM clip_suggestions WHERE video_id = $1', [rows[0].id]);
+  }
+});

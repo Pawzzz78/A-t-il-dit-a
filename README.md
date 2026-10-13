@@ -123,6 +123,16 @@ qu'à choisir les extraits.
   ils sont signalés comme périmés si la transcription change. Modèle : `CLIP_MODEL`, par défaut `openai/gpt-4.1-mini` (sans raisonnement,
   environ 0,01 $ par interview), indépendant du modèle des résumés. Réglages : `CLIP_MAX_SUGGESTIONS` (20), `CLIP_MIN_S` (15),
   `CLIP_MAX_S` (60) ; certains extraits sont écartés ensuite (durée hors limites, chevauchement avec un mieux noté).
+- **Description TikTok prête à copier-coller** : le même appel au modèle écrit, pour chaque extrait, une accroche (1–2 phrases, fidèle à
+  l'extrait) et **2 à 4 hashtags**. Elle est générée **une seule fois**, avec les extraits, et stockée avec eux (aucun appel de plus quand
+  un visiteur ouvre le studio). Les hashtags sont nettoyés côté serveur (2 à 4, sans doublon, repli `#lisnard #politique`). Les
+  extraits générés avant cette version n'ont pas de description : il faut les régénérer depuis l'admin.
+  Dans l'onglet « Créer », le bloc « Description à copier-coller » reprend la description de l'extrait choisi, suivie de la source et des
+  crédits d'images ; elle reste modifiable.
+- **Bouton « Publier sur TikTok »** (une fois le clip prêt) : copie la description puis, sur mobile, ouvre le menu de partage avec la
+  vidéo (TikTok apparaît dans la liste) ; sur ordinateur, ouvre `tiktok.com/upload`, télécharge la vidéo et copie la description. La
+  publication **automatique** n'est pas faite : l'API TikTok « Content Posting » exige une application TikTok validée (audit) et, sans
+  elle, ne publie qu'en privé.
 - **Studio public** (`/studio/`) : les visiteurs choisissent une interview dont l'admin a autorisé les clips, prennent un ou
   plusieurs extraits (jusqu'à 4, 90 s au total : les propositions de l'IA, ou un passage libre dans la transcription), ajustent le
   début et la fin **avec précision**, puis habillent le clip :

@@ -259,3 +259,8 @@
 .st-bfields label { display: flex; align-items: center; justify-content: space-between; gap: .5rem; font-size: .78rem; font-weight: 700; color: var(--color-muted); }
 .st-bfields .st-time { width: 5.4rem; height: 2rem; }
 @media (max-width: 480px) { .st-fxrow:not(.broll) .st-fxword { flex-basis: 100%; order: 5; } }
+
+/* publier sur TikTok */
+.btn.tiktok { background: #0d0f2b; color: #fff; box-shadow: 3px 3px 0 #25f4ee, -3px -3px 0 #fe2c55; }
+.btn.tiktok:hover { background: #000; }
+.st-source-text { resize: vertical; }
