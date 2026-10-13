@@ -54,7 +54,8 @@ test('extrait : horaires de la transcription, durée contrôlée, titre nettoyé
   assert.ok(short.duration_s >= CLIP_LIMITS.minS && short.duration_s <= CLIP_LIMITS.maxS);
   assert.equal(short.start_ms, 50000);
   // beaucoup trop court et rien à prolonger : écarté
-  assert.equal(buildClip({ start: 58, end: 59, title: 'fin' }, segs, win), null);
+  assert.equal(buildClip({ start: 59, end: 59, title: 'fin' }, segs, win), null); // 5 s : sous le minimum toléré (minS − 5)
+  assert.equal(buildClip({ start: 58, end: 59, title: 'fin' }, segs, win).duration_s, 10); // 10 s : encore accepté (minimum 15 s, 5 s de tolérance)
 });
 
 test('fusion : meilleure note d\'abord, pas de chevauchement, nombre borné', () => {
@@ -98,7 +99,14 @@ test('génération : extraits stockés avec les horaires de la transcription, co
   const out = await svc.generateClipSuggestions(videoId, { complete, model: 'faux-modèle' });
   assert.deepEqual(out.clips.map((c) => [c.title, c.start_ms, c.end_ms]), [['Les communes', 100000, 140000], ['Sa position sur la dette', 20000, 60000]]);
   assert.match(seen.system, /David Lisnard/);
-  assert.match(seen.system, /pas pour le caractère polémique/);
+  // consigne virale : TikTok, accroche, moments forts, potentiel viral ; garde-fou de fidélité conservé
+  assert.match(seen.system, /TikTok/);
+  assert.match(seen.system, /viral/);
+  assert.match(seen.system, /accroche immédiate/);
+  assert.match(seen.system, /punchline/);
+  assert.match(seen.system, /au moins un extrait toutes les 2 à 3 minutes/);
+  assert.match(seen.system, /ne coupe jamais avant un « mais », une nuance, une réserve ou une condition/);
+  assert.doesNotMatch(seen.system, /pas pour le caractère polémique/);
   assert.match(seen.system, /ne modifie aucun mot/);
   assert.match(seen.user, /^\[0\] 00:00 phrase 0/); // lignes numérotées avec repère de temps
   const stored = await svc.getClipSuggestions(videoId);
@@ -152,14 +160,15 @@ test('modèle des extraits : propre aux extraits, jamais celui des résumés / t
   }
 });
 
-test('le modèle est invité à proposer jusqu\'à 10 extraits par tranche', async () => {
+test('le modèle est invité à proposer jusqu\'à 20 extraits par tranche', async () => {
   const { suggestClipsFor } = await import('../src/clip-suggestions.js');
-  assert.equal(CLIP_LIMITS.maxSuggestions, 10);
+  assert.equal(CLIP_LIMITS.maxSuggestions, 20);
+  assert.equal(CLIP_LIMITS.minS, 15);
   const seen = [];
   const complete = async ({ system }) => {
     seen.push(Number(/jusqu'à (\d+) extraits/.exec(system)[1]));
     return '{"clips":[]}';
   };
   await suggestClipsFor(rows(240, 5), { complete, model: 'x' });
-  assert.deepEqual(seen, [10]);
+  assert.deepEqual(seen, [20]);
 });

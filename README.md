@@ -102,11 +102,16 @@ qu'à choisir les extraits.
   servi au public (l'aperçu de l'éditeur exige la session admin) ; il disparaît avec la vidéo ou via « Supprimer le fichier ».
 - **Interrupteur « Autoriser les clips pour le public »**, par vidéo : tu choisis ce qui sera exposé, et tu ne dois autoriser que
   des vidéos dont tu peux diffuser des extraits (droits des chaînes d'origine).
-- **Extraits proposés par l'IA** : 20 à 60 s, jusqu'à 8 par vidéo, avec titre factuel, raison et note. Le modèle ne choisit que des
-  **numéros de lignes** de la transcription : les horaires viennent de la transcription et il ne peut pas inventer ni modifier un
-  mot. Consignes éditoriales : extraits compréhensibles seuls, qui commencent et finissent sur une phrase entière sans couper avant
-  une nuance, choisis pour la clarté et non pour le côté polémique. Résultats stockés ; ils sont signalés comme périmés si la
-  transcription change. Modèle : `CLIP_MODEL`, par défaut `openai/gpt-4.1-mini` (sans raisonnement, environ 0,01 $ par interview), indépendant du modèle des résumés. Le modèle est invité à proposer jusqu'à 10 extraits (`CLIP_MAX_SUGGESTIONS`) ; certains sont écartés ensuite (durée hors 20–60 s, chevauchement).
+- **Extraits proposés par l'IA** : les moments les plus susceptibles de devenir **viraux sur TikTok**, de 15 à 60 s, jusqu'à 20 par
+  vidéo (au moins un toutes les 2 à 3 minutes d'interview quand c'est possible), avec titre factuel, raison et potentiel viral noté de 1
+  à 10 ; les 6 premiers sont affichés, le reste sur demande. La consigne du modèle décrit ce qui marche sur TikTok : accroche immédiate,
+  moment fort (position tranchée, émotion, punchline, anecdote, chiffre qui surprend, sujet qui parle à beaucoup de monde), idée courte et
+  complète, idéalement 20 à 45 s. Le modèle ne choisit que des **numéros de lignes** de la transcription : les horaires viennent de la
+  transcription et il ne peut ni inventer ni modifier un mot. Garde-fou de fidélité conservé : un extrait commence et finit sur une
+  phrase entière et ne coupe jamais avant un « mais », une nuance, une réserve ou une condition qui change le sens. Résultats stockés ;
+  ils sont signalés comme périmés si la transcription change. Modèle : `CLIP_MODEL`, par défaut `openai/gpt-4.1-mini` (sans raisonnement,
+  environ 0,01 $ par interview), indépendant du modèle des résumés. Réglages : `CLIP_MAX_SUGGESTIONS` (20), `CLIP_MIN_S` (15),
+  `CLIP_MAX_S` (60) ; certains extraits sont écartés ensuite (durée hors limites, chevauchement avec un mieux noté).
 - **Studio public** (`/studio/`) : les visiteurs choisissent une interview dont l'admin a autorisé les clips, prennent un ou
   plusieurs extraits (jusqu'à 4, 90 s au total : les propositions de l'IA, ou un passage libre dans la transcription), ajustent le
   début et la fin **avec précision**, puis habillent le clip :

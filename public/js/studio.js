@@ -321,6 +321,7 @@ async function openEditor(youtubeId) {
     addExtract(S.lines[i].start_ms, S.lines[b].end_ms, null);
   }
 
+  let suggShown = 6; // extraits proposés affichés d'emblée (les mieux notés d'abord) ; le reste sur demande
   function renderExtracts() {
     const taken = new Set(S.extracts.map((e) => e.from).filter((v) => v != null));
     panelExtracts.replaceChildren(
@@ -329,11 +330,11 @@ async function openEditor(youtubeId) {
       S.extracts.length ? el('ol', { class: 'st-exlist' }, S.extracts.map(extractRow)) : el('p', { class: 'st-help' }, 'Ajoute un extrait ci-dessous : l’aperçu apparaît à gauche.'),
       el('p', { class: totalS() > LIMITS.maxTotalS ? 'st-total err' : 'st-total' }, S.extracts.length ? `Durée : ${minTotalNote()}` : ''),
       note,
-      el('h3', {}, 'Extraits proposés par l’IA'),
+      el('h3', {}, S.suggestions.length ? `Extraits proposés par l’IA (${S.suggestions.length}, du plus au moins viral)` : 'Extraits proposés par l’IA'),
       S.suggestions.length
-        ? el('ul', { class: 'st-sugg' }, S.suggestions.map((sg) =>
+        ? el('ul', { class: 'st-sugg' }, S.suggestions.slice(0, suggShown).map((sg) =>
             el('li', { class: 'st-card' },
-              el('div', { class: 'st-card-head' }, el('strong', {}, sg.title), el('span', { class: 'badge ok', title: 'Note donnée par l’IA' }, `${sg.score}/10`)),
+              el('div', { class: 'st-card-head' }, el('strong', {}, sg.title), el('span', { class: 'badge ok', title: 'Potentiel viral estimé par l’IA' }, `${sg.score}/10`)),
               el('p', { class: 'st-why' }, sg.why),
               el('p', { class: 'st-meta' }, `${mmss(sg.start_ms)} → ${mmss(sg.end_ms)} · ${secs(sg.duration_s)}`),
               el('details', {}, el('summary', {}, 'Lire l’extrait'), el('p', { class: 'st-text' }, sg.text)),
@@ -343,6 +344,7 @@ async function openEditor(youtubeId) {
             )),
           )
         : el('p', { class: 'st-help' }, 'Pas d’extrait proposé pour cette vidéo : choisis un passage dans la transcription.'),
+      ...(S.suggestions.length > suggShown ? [el('button', { class: 'btn secondary small', type: 'button', onclick: () => { suggShown += 8; renderExtracts(); } }, `Voir ${Math.min(8, S.suggestions.length - suggShown)} extrait${S.suggestions.length - suggShown > 1 ? 's' : ''} de plus (${S.suggestions.length - suggShown} restant${S.suggestions.length - suggShown > 1 ? 's' : ''})`)] : []),
       el('h3', {}, 'Choisir un autre passage'),
       el('p', { class: 'st-help' }, 'Touche une ligne : l’extrait démarre là (environ 25 s), puis ajuste le début et la fin au dixième de seconde (ou tape l’instant exact).'),
       search,

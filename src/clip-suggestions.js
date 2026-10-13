@@ -1,11 +1,12 @@
 /**
  * Choix des extraits pour le studio de clips : un LLM (OpenRouter) lit la transcription et propose des passages courts
- * (20 à 60 s) qui se comprennent seuls. Il ne choisit que des NUMÉROS DE LIGNES de la transcription : les horaires viennent
- * donc toujours de la transcription, jamais de lui, et il ne peut ni inventer ni modifier un mot.
+ * (15 à 60 s) qui ont le plus de chances de devenir viraux sur TikTok / Reels : accroche immédiate, moment fort (position
+ * tranchée, émotion, punchline, anecdote, chiffre qui surprend), idée complète qui se comprend seule. Il ne choisit que des
+ * NUMÉROS DE LIGNES de la transcription : les horaires viennent donc toujours de la transcription, jamais de lui, et il ne
+ * peut ni inventer ni modifier un mot.
  *
- * Choix éditorial (le site vérifie des propos, il ne doit pas aider à les détourner) : on demande des extraits clairs et
- * complets, pas les « petites phrases » les plus choquantes, qui commencent et finissent sur une phrase entière sans couper
- * avant une nuance ou une réserve.
+ * Garde-fou conservé (le site vérifie des propos, il ne doit pas aider à les détourner) : un extrait commence et finit sur une
+ * phrase entière et ne coupe jamais avant une nuance, une réserve ou une condition qui change le sens de ce qui est dit.
  */
 import { pool } from './db.js';
 import { HttpError } from './http-error.js';
@@ -13,16 +14,16 @@ import { GPT_MODEL, LlmError, completeWithOpenRouter } from './openrouter.js';
 import { speakerName } from './summarize.js';
 import { formatTimestamp } from './transcripts.js';
 
-export const PROMPT_VERSION = 'c2';
+export const PROMPT_VERSION = 'c3';
 // Modèle dédié aux extraits (à vérifier sur https://openrouter.ai/models) : sans raisonnement, qui suit bien des consignes
 // éditoriales et rend du JSON fiable, pour peu cher (≈ 0,01 $ par interview). Il ne dépend volontairement pas du modèle des
 // résumés / traductions (TRANSLATE_MODEL, SUMMARY_MODEL), qui peut être un modèle « à raisonnement » incapable de répondre ici.
 export const DEFAULT_CLIP_MODEL = GPT_MODEL;
 export const clipModel = () => process.env.CLIP_MODEL || DEFAULT_CLIP_MODEL;
 export const CLIP_LIMITS = {
-  minS: Number(process.env.CLIP_MIN_S) || 20,
+  minS: Number(process.env.CLIP_MIN_S) || 15,
   maxS: Number(process.env.CLIP_MAX_S) || 60,
-  maxSuggestions: Number(process.env.CLIP_MAX_SUGGESTIONS) || 10,
+  maxSuggestions: Number(process.env.CLIP_MAX_SUGGESTIONS) || 20,
 };
 const WINDOW_CHARS = 50_000; // une demande par tranche de transcription de cette taille
 const WINDOW_OVERLAP = 12; // lignes reprises d'une tranche à l'autre
@@ -30,18 +31,23 @@ const OVERLONG_TOLERANCE_S = 15; // au-delà de maxS + ceci, un extrait est éca
 const FALLBACK_LAST_MS = 4000;
 const MAX_GAP_MS = 8000;
 
-const systemPrompt = (perWindow) => `Tu aides à choisir de courts extraits d'une interview de ${speakerName()} pour en faire des vidéos verticales (TikTok, Reels).
-Tu reçois la transcription découpée en lignes numérotées « [n] mm:ss texte ». Choisis jusqu'à ${perWindow} extraits, classés du plus au moins intéressant.
+const systemPrompt = (perWindow) => `Tu es monteur de vidéos virales pour TikTok et Reels. Dans une interview de ${speakerName()}, tu repères les moments qui ont le plus de chances de devenir viraux et de bien marcher sur TikTok.
+Tu reçois la transcription découpée en lignes numérotées « [n] mm:ss texte ». Propose jusqu'à ${perWindow} extraits, classés du plus au moins viral. Propose-en autant que possible : vise au moins un extrait toutes les 2 à 3 minutes d'interview, répartis sur toute la transcription, et ne garde que des moments vraiment forts.
+
+Ce qui fait un extrait qui marche sur TikTok :
+- Une accroche immédiate : dès la première phrase, une affirmation forte, une question, un chiffre ou une image qui donne envie de rester (les 3 premières secondes décident de tout).
+- Un moment fort : une position tranchée et claire, une conviction, un coup de gueule, une émotion, une punchline ou une formule marquante, de l'humour, une anecdote ou un exemple concret, un chiffre ou un fait qui surprend, une explication simple d'un sujet qui concerne les gens.
+- Une idée courte et complète, avec un début, un développement et une chute ou une conclusion nette : elle se comprend seule, sans le reste de l'interview.
+- Un sujet qui parle à beaucoup de monde (argent, sécurité, quotidien, impôts, école, transports...) ou qui donne envie de réagir, de commenter et de partager.
 
 Règles :
-- Un extrait est une suite de lignes consécutives, de la ligne "start" à la ligne "end" incluses, d'une durée de ${CLIP_LIMITS.minS} à ${CLIP_LIMITS.maxS} secondes d'après les repères de temps.
-- Il commence au début d'une phrase ou d'une idée et se termine à la fin d'une phrase. Il ne coupe jamais avant un « mais », une nuance, une réserve ou une condition qui change le sens de ce qui est dit.
-- Il se comprend seul, sans le reste de l'interview : une idée complète, une position claire, un argument ou une anecdote.
-- Choisis pour la clarté et l'intérêt, pas pour le caractère polémique ou choquant : ne cherche pas la « petite phrase ».
+- Un extrait est une suite de lignes consécutives, de la ligne "start" à la ligne "end" incluses, d'une durée de ${CLIP_LIMITS.minS} à ${CLIP_LIMITS.maxS} secondes d'après les repères de temps (idéalement 20 à 45 secondes : plus c'est court et dense, mieux ça marche).
+- Il commence au début d'une phrase ou d'une idée, de préférence sur l'accroche, et se termine à la fin d'une phrase, de préférence sur la chute.
+- Il reste fidèle à ce que dit ${speakerName()} : ne coupe jamais avant un « mais », une nuance, une réserve ou une condition qui change le sens de ce qui est dit.
 - Tu ne fais que choisir des lignes : n'invente rien, ne modifie aucun mot.
-- "title" : titre factuel de 70 caractères maximum qui décrit ce que dit ${speakerName()}, sans exagération, sans point d'exclamation, sans question racoleuse.
-- "why" : une phrase qui explique l'intérêt de l'extrait.
-- "score" : de 1 à 10 (clarté, autonomie, force de l'idée).
+- "title" : titre factuel de 70 caractères maximum qui décrit ce que dit ${speakerName()}, sans point d'exclamation.
+- "why" : une phrase qui explique pourquoi cet extrait peut marcher sur TikTok (accroche, émotion, punchline, sujet qui parle à tous...).
+- "score" : de 1 à 10, le potentiel viral sur TikTok.
 - Les extraits ne se chevauchent pas.
 
 Réponds uniquement par un objet JSON, sans texte autour :
@@ -151,7 +157,7 @@ export async function suggestClipsFor(rows, { complete = completeWithOpenRouter,
   const worker = async () => {
     while (next < windows.length) {
       const win = windows[next++];
-      const raw = await complete({ model, system: systemPrompt(CLIP_LIMITS.maxSuggestions), user: linesFor(segs, win), maxTokens: 3000 }, { maxAttempts: 3, timeoutMs: 120_000 });
+      const raw = await complete({ model, system: systemPrompt(CLIP_LIMITS.maxSuggestions), user: linesFor(segs, win), maxTokens: 6000 }, { maxAttempts: 3, timeoutMs: 120_000 });
       for (const c of parseClipJson(raw)) {
         const clip = buildClip(c, segs, win);
         if (clip) found.push(clip);
