@@ -713,6 +713,14 @@ test('statistiques : le clip créé, le bouton Télécharger et le partage sont 
   assert.equal((await fetch(`${file}?use=share`)).status, 200);
   assert.equal(await count('share', id), 1);
   await (await fetch(`${file}?use=nimporte`)).arrayBuffer(); // valeur inconnue : rien
+  // partage depuis le téléphone (fichier préchargé, sans repasser par le téléchargement) : compté via la route dédiée
+  await pool.query("DELETE FROM studio_events WHERE job_id = $1 AND kind = 'share'", [id]);
+  assert.equal((await api('POST', `/api/studio/render/${id}/used`, { use: 'nimporte' })).status, 400);
+  assert.equal(await count('share', id), 0);
+  assert.equal((await api('POST', `/api/studio/render/${id}/used`, { use: 'share' })).status, 204);
+  assert.equal((await api('POST', `/api/studio/render/${id}/used`, { use: 'share' })).status, 204); // un seul par clip
+  assert.equal(await count('share', id), 1);
+  assert.equal((await api('POST', `/api/studio/render/${'a'.repeat(24)}/used`, { use: 'share' })).status, 404);
   const { rows } = await pool.query("SELECT youtube_id, visitor FROM studio_events WHERE job_id = $1 AND kind = 'download'", [id]);
   assert.equal(rows[0].youtube_id, YT);
   assert.ok(rows[0].visitor);

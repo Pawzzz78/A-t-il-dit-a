@@ -136,10 +136,13 @@ qu'à choisir les extraits.
   `studio_music_hidden`). Les morceaux apparaissent aussitôt dans l'onglet « Musique » du studio ; on peut les masquer, les renommer, les
   recatégoriser ou les supprimer, et masquer les morceaux d'origine. Les musiques « tendance » de TikTok ne sont pas disponibles : elles
   sont réservées à l'application TikTok (on peut les ajouter à la vidéo dans TikTok, après le partage).
-- **Bouton « Publier sur TikTok »** (une fois le clip prêt) : copie la description puis, sur mobile, ouvre le menu de partage avec la
-  vidéo (TikTok apparaît dans la liste) ; sur ordinateur, ouvre `tiktok.com/upload`, télécharge la vidéo et copie la description. La
-  publication **automatique** n'est pas faite : l'API TikTok « Content Posting » exige une application TikTok validée (audit) et, sans
-  elle, ne publie qu'en privé.
+- **Bouton « Publier sur TikTok »** (une fois le clip prêt) : sur téléphone, la vidéo est **préchargée dès qu'elle est prête** (le
+  navigateur n'autorise le partage que dans la seconde qui suit le clic : télécharger le fichier après le clic le faisait échouer) ; le
+  clic copie la description et ouvre aussitôt la fiche de partage du téléphone, où TikTok apparaît avec la vidéo. Si la fiche ne peut pas
+  s'ouvrir, la vidéo est enregistrée et l'appli TikTok est ouverte (lien `snssdk1233://`, avec repli sur le site sous Android). Sur
+  ordinateur, le bouton ouvre `tiktok.com/upload`, télécharge la vidéo et copie la description. Le partage fait depuis le téléphone est
+  compté par `POST /api/studio/render/:id/used`. La publication **automatique** n'est pas faite : l'API TikTok « Content Posting »
+  exige une application TikTok validée (audit) et, sans elle, ne publie qu'en privé.
 - **Studio public** (`/studio/`) : les visiteurs choisissent une interview dont l'admin a autorisé les clips, prennent un ou
   plusieurs extraits (jusqu'à 4, 90 s au total : les propositions de l'IA, ou un passage libre dans la transcription), ajustent le
   début et la fin **avec précision**, puis habillent le clip :

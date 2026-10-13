@@ -187,6 +187,19 @@ studioRouter.get('/render/:id/file', async (req, res, next) => {
   }
 });
 
+/** Le visiteur a récupéré son clip sans passer par le téléchargement du fichier (partage depuis le téléphone, fichier préchargé). */
+studioRouter.post(
+  '/render/:id/used',
+  ah(async (req, res) => {
+    const job = jobOr404(req.params.id);
+    if (job.status !== 'done') throw new HttpError(409, "Le clip n'est pas encore prêt.");
+    const use = req.body?.use === 'download' ? 'download' : req.body?.use === 'share' ? 'share' : null;
+    if (!use) throw new HttpError(400, 'Usage inconnu.');
+    await recordEvent(use, { jobId: job.id, youtubeId: job.youtube_id, ip: req.ip });
+    res.status(204).end();
+  }),
+);
+
 studioRouter.delete(
   '/render/:id',
   ah(async (req, res) => {

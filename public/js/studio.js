@@ -626,6 +626,7 @@ async function openEditor(youtubeId) {
   const makeMsg = el('p', { class: 'st-msg' });
   const jobBox = el('div', { class: 'st-job' });
   let job = null;
+  let ready = null; // vidéo préchargée pour le partage sur téléphone : { id, file, failed }
   let polling = 0;
 
   function renderCreateSummary() {
@@ -669,49 +670,85 @@ async function openEditor(youtubeId) {
     } else if (job.status === 'done') {
       const url = `/api/studio/render/${job.id}/file`;
       const say = (text, kind = 'ok') => { makeMsg.className = `st-msg ${kind === 'ok' ? '' : 'err'}`; makeMsg.textContent = text; };
-      const shareFile = async () => {
-        const blob = await (await fetch(`${url}?use=share`)).blob();
-        const file = new File([blob], job.filename, { type: 'video/mp4' });
-        return navigator.canShare?.({ files: [file] }) ? file : null;
-      };
+      const touch = /Android|iPhone|iPad/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+      const mobile = Boolean(navigator.canShare) && touch;
+      const counted = (use) => api('POST', `/render/${job.id}/used`, { use }).catch(() => {});
+      // Sur téléphone, la vidéo est chargée AVANT le clic : le navigateur n'autorise le partage que dans la seconde qui suit un geste
+      // de l'utilisateur, et refuse si on télécharge d'abord le fichier (le partage échouait alors sans rien dire).
       const share = el('button', { class: 'btn secondary small', type: 'button' }, 'Partager');
+      const publish = el('button', { class: 'btn tiktok', type: 'button' }, 'Publier sur TikTok');
+      const jobId = job.id;
+      if (mobile && ready?.id !== jobId) {
+        const mine = (ready = { id: jobId, file: null, failed: false, refresh: null });
+        fetch(url).then((r) => (r.ok ? r.blob() : Promise.reject(new Error('fichier')))).then((blob) => {
+          const file = new File([blob], job.filename, { type: 'video/mp4' });
+          if (navigator.canShare({ files: [file] })) mine.file = file; else mine.failed = true;
+        }, () => { mine.failed = true; }).finally(() => mine.refresh?.());
+      }
+      const fileReady = () => (ready?.id === jobId ? ready.file : null);
+      function setPublishState() {
+        const waiting = mobile && ready?.id === jobId && !ready.file && !ready.failed;
+        publish.disabled = waiting;
+        share.disabled = waiting;
+        publish.textContent = waiting ? 'Préparation de la vidéo…' : 'Publier sur TikTok';
+      }
+      const saveFile = () => {
+        const a = el('a', { href: `${url}?use=download`, download: job.filename });
+        document.body.append(a);
+        a.click();
+        a.remove();
+      };
+      /** Ouvre l'application TikTok (Android : repli sur le site si elle n'est pas installée). */
+      const openTikTok = () => {
+        if (/Android/i.test(navigator.userAgent)) location.href = 'intent://#Intent;scheme=snssdk1233;package=com.zhiliaoapp.musically;S.browser_fallback_url=https%3A%2F%2Fwww.tiktok.com%2Fupload;end';
+        else location.href = 'snssdk1233://';
+      };
+      // Partage natif : la fiche du téléphone propose TikTok ; la vidéo arrive directement dans l'éditeur de TikTok.
+      const nativeShare = (withText) => {
+        const file = fileReady();
+        if (!file) return null;
+        return navigator.share({ files: [file], title: 'Lisnard Studio', ...(withText ? { text: sourceField.value.split('\n\n')[0] } : {}) });
+      };
       share.addEventListener('click', async () => {
         try {
-          const file = await shareFile();
-          if (file) await navigator.share({ files: [file], title: 'Lisnard Studio' });
-          else say('Le partage direct n’est pas disponible ici : télécharge la vidéo.', 'err');
+          const p = nativeShare(false);
+          if (!p) return say('Le partage direct n’est pas disponible ici : télécharge la vidéo.', 'err');
+          await p;
+          counted('share');
         } catch { /* partage annulé */ }
       });
-      // « Publier sur TikTok » : la description est copiée d'abord (TikTok ne la reçoit pas toujours d'un partage). Sur téléphone, la
-      // fiche de partage ouvre TikTok avec la vidéo ; sur ordinateur, la vidéo est téléchargée et la page d'envoi de TikTok s'ouvre.
-      // (La publication automatique, sans cette étape, demande une application validée par TikTok : voir le README.)
-      const publish = el('button', { class: 'btn tiktok', type: 'button' }, 'Publier sur TikTok');
+      // « Publier sur TikTok » : la description est copiée (TikTok ne la reçoit pas d'un partage), puis le téléphone ouvre sa fiche de
+      // partage avec la vidéo (TikTok y figure) ; sinon la vidéo est enregistrée et l'appli TikTok s'ouvre. Sur ordinateur, la vidéo
+      // est téléchargée et la page d'envoi de TikTok s'ouvre. (La publication automatique demande une application validée par TikTok.)
       publish.addEventListener('click', async () => {
-        const mobile = Boolean(navigator.canShare) && /Android|iPhone|iPad/i.test(navigator.userAgent);
         if (!mobile) {
           window.open('https://www.tiktok.com/upload', '_blank', 'noopener'); // ouvert tout de suite : sinon le navigateur bloque la fenêtre
-          const a = el('a', { href: `${url}?use=download`, download: job.filename });
-          document.body.append(a);
-          a.click();
-          a.remove();
+          saveFile();
+          const copied = await copyText(sourceField.value);
+          return say(`${copied ? 'Description copiée. ' : ''}La vidéo se télécharge et TikTok s’ouvre : choisis le fichier, puis colle la description.`);
         }
-        const copied = await copyText(sourceField.value);
-        if (mobile) {
+        const copying = copyText(sourceField.value); // sans attendre : le partage doit partir dans le geste du clic
+        const sharing = nativeShare(true);
+        if (sharing) {
           try {
-            const file = await shareFile();
-            if (file) {
-              say(copied ? 'Description copiée : choisis TikTok, puis colle-la dans la légende.' : 'Choisis TikTok dans la liste.');
-              await navigator.share({ files: [file], text: sourceField.value.split('\n\n')[0], title: 'Lisnard Studio' });
-            } else say('Le partage vers TikTok n’est pas disponible ici : télécharge la vidéo, puis envoie-la depuis l’appli TikTok.', 'err');
-          } catch { /* partage annulé */ }
-        } else {
-          say(`${copied ? 'Description copiée. ' : ''}La vidéo se télécharge et TikTok s’ouvre : choisis le fichier, puis colle la description.`);
+            await sharing;
+            counted('share');
+            return say((await copying) ? 'Description copiée : colle-la dans la légende de TikTok.' : 'Vidéo envoyée.');
+          } catch (e) {
+            if (e?.name === 'AbortError') return say((await copying) ? 'Partage annulé. La description reste copiée.' : 'Partage annulé.');
+          }
         }
+        // Repli : le partage n'a pas pu s'ouvrir.
+        saveFile();
+        say(`${(await copying) ? 'Description copiée. ' : ''}Vidéo enregistrée : dans TikTok, appuie sur « + », puis choisis-la dans ta galerie.`);
+        setTimeout(openTikTok, 1200);
       });
+      if (ready?.id === jobId) ready.refresh = setPublishState;
+      setPublishState();
       jobBox.replaceChildren(
         el('p', { class: 'st-job-text ok' }, 'Ta vidéo est prête !'),
         el('video', { class: 'st-result', src: url, controls: true, playsinline: '', preload: 'metadata' }),
-        el('div', { class: 'st-job-actions' }, publish, el('a', { class: 'btn secondary', href: `${url}?use=download`, download: job.filename }, 'Télécharger'), navigator.canShare ? share : null,
+        el('div', { class: 'st-job-actions' }, publish, el('a', { class: 'btn secondary', href: `${url}?use=download`, download: job.filename }, 'Télécharger'), mobile ? share : null,
           el('button', { class: 'btn secondary small', type: 'button', onclick: () => { job = null; showJob(); renderCreateSummary(); } }, 'Faire un autre clip')),
         el('p', { class: 'st-help' }, 'Description et source prêtes à coller : « Copier la description » ci-dessus (la vidéo n’affiche pas la source).'));
     } else if (job.status === 'cancelled') {
