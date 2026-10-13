@@ -147,3 +147,25 @@ test('summarizeTranscript : la personne résumée se règle avec SUMMARY_SPEAKER
     delete process.env.SUMMARY_SPEAKER;
   }
 });
+
+test('modèle des résumés : GPT par défaut, jamais celui de la traduction ou de la recherche', async () => {
+  const { summaryModel } = await import('../src/summarize.js');
+  const { GPT_MODEL } = await import('../src/openrouter.js');
+  const keep = { s: process.env.SUMMARY_MODEL, t: process.env.TRANSLATE_MODEL, q: process.env.SEARCH_MODEL };
+  try {
+    process.env.TRANSLATE_MODEL = 'deepseek/deepseek-v4.1-flash';
+    process.env.SEARCH_MODEL = 'deepseek/deepseek-v4.1-flash';
+    delete process.env.SUMMARY_MODEL;
+    assert.equal(summaryModel(), GPT_MODEL);
+    assert.match(summaryModel(), /^openai\/gpt/);
+    process.env.SUMMARY_MODEL = 'google/gemini-2.5-flash-lite';
+    assert.equal(summaryModel(), 'google/gemini-2.5-flash-lite');
+    process.env.SUMMARY_MODEL = '';
+    assert.equal(summaryModel(), GPT_MODEL);
+  } finally {
+    for (const [k, v] of [['SUMMARY_MODEL', keep.s], ['TRANSLATE_MODEL', keep.t], ['SEARCH_MODEL', keep.q]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});

@@ -8,6 +8,10 @@ const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 // Modèle par défaut : à vérifier sur https://openrouter.ai/models ; se change avec TRANSLATE_MODEL.
 export const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
 
+// Modèle GPT des tâches de rédaction fine (résumés, choix des extraits) : sans raisonnement, suit bien des consignes détaillées,
+// JSON fiable, peu cher. Indépendant de TRANSLATE_MODEL / SEARCH_MODEL, qui peuvent être des modèles « à raisonnement ».
+export const GPT_MODEL = 'openai/gpt-4.1-mini';
+
 export const llmConfigured = () => Boolean(process.env.OPENROUTER_API_KEY);
 
 /** code : 'config' | 'auth' | 'quota' | 'upstream' (mêmes valeurs que TranscriptError, pour la synchro) */

@@ -7,11 +7,11 @@
  * un repère de temps qui n'existe pas dans la transcription est supprimé plutôt que de pointer au mauvais endroit.
  * Les vidéos très longues sont résumées en deux étapes (notes par partie, puis synthèse).
  */
-import { DEFAULT_MODEL, LlmError, completeWithOpenRouter } from './openrouter.js';
+import { GPT_MODEL, LlmError, completeWithOpenRouter } from './openrouter.js';
 import { formatTimestamp } from './transcripts.js';
 
-export const summaryModel = () =>
-  process.env.SUMMARY_MODEL ?? process.env.SEARCH_MODEL ?? process.env.TRANSLATE_MODEL ?? DEFAULT_MODEL;
+/** Modèle des résumés : SUMMARY_MODEL, sinon GPT (comme les extraits du studio) ; jamais celui de la traduction ou de la recherche. */
+export const summaryModel = () => process.env.SUMMARY_MODEL || GPT_MODEL;
 
 /** Version des consignes : changer ce numéro fait régénérer les résumés déjà stockés au prochain clic. */
 export const PROMPT_VERSION = 'v2';

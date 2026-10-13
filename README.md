@@ -225,7 +225,7 @@ le bouton **Afficher le résumé** ouvre une fenêtre (fond flouté ; on la ferm
   remplace, après confirmation. Le texte est nettoyé comme celui de l'IA (HTML et liens retirés).
 - Fidélité : le modèle ne doit utiliser que le texte ; les repères de temps inexistants sont supprimés, le HTML retiré, la
   taille bornée. Une mention rappelle que le résumé est généré par IA et peut contenir des erreurs. Vidéos très longues : notes
-  par partie, puis synthèse. Modèle : `SUMMARY_MODEL`, sinon `SEARCH_MODEL`, sinon `TRANSLATE_MODEL`.
+  par partie, puis synthèse. Modèle : `SUMMARY_MODEL`, par défaut GPT (`openai/gpt-4.1-mini`, comme les extraits du studio) ; la traduction et la recherche gardent leurs propres modèles (`TRANSLATE_MODEL`, `SEARCH_MODEL`). Les résumés déjà faits ne sont jamais refaits.
 
 ## Recherche par question
 
