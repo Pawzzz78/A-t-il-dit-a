@@ -9,6 +9,7 @@ import { pool } from '../db.js';
 import { HttpError } from '../http-error.js';
 import { DEFAULT_STYLE, LIMITS, PRESETS } from '../../public/js/studio-core.js';
 import { cancelJob, createPreview, enqueueRender, FONTS, getJob, MUSIC, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
+import { recordEvent } from '../studio/stats.js';
 import { ensureImage, searchPhotos, stockEnabled, stockProvider } from '../studio/stock.js';
 import { parseYoutubeId } from '../youtube.js';
 
@@ -128,6 +129,7 @@ studioRouter.post(
     const v = await loadVideo(req.body?.youtube_id);
     const request = normalizeRequest(req.body, v);
     const job = await enqueueRender({ video: v, req: request, lines: await linesOf(v.id), ip: req.ip });
+    await recordEvent('render', { jobId: job.id, youtubeId: v.youtube_id, ip: req.ip });
     res.status(202).json(publicJob(job));
   }),
 );
@@ -147,10 +149,14 @@ studioRouter.get('/render/:id', (req, res, next) => {
   }
 });
 
-studioRouter.get('/render/:id/file', (req, res, next) => {
+studioRouter.get('/render/:id/file', async (req, res, next) => {
   try {
     const job = jobOr404(req.params.id);
     if (job.status !== 'done') throw new HttpError(409, "Le clip n'est pas encore prêt.");
+    // `?use=download` : le bouton « Télécharger » ; `?use=share` : le partage depuis le téléphone. La lecture dans la page (sans
+    // paramètre) n'est pas un téléchargement.
+    const use = req.query.use === 'download' ? 'download' : req.query.use === 'share' ? 'share' : null;
+    if (use && req.method === 'GET') await recordEvent(use, { jobId: job.id, youtubeId: job.youtube_id, ip: req.ip });
     res.set('Cache-Control', 'no-store');
     res.download(job.out, job.filename, (err) => {
       if (err && !res.headersSent) res.status(404).json({ error: 'Clip expiré.' });

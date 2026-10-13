@@ -170,6 +170,12 @@ qu'à choisir les extraits.
   (ou 720 × 1280). **File d'attente** (`STUDIO_CONCURRENCY` clips à la fois, 1 par défaut ; `STUDIO_MAX_QUEUE`), limites par visiteur
   (2 clips en cours, `STUDIO_RENDERS_PER_HOUR` par heure, `STUDIO_PREVIEWS_PER_HOUR` aperçus), progression, annulation. Les clips
   sont **supprimés une heure** après leur création. Le fichier vidéo d'origine n'est jamais servi : seuls ces extraits sortent.
+- **Statistiques** (admin → « Studio ») : clips créés, **téléchargés** (clic sur « Télécharger »), partagés (partage depuis le téléphone) et
+  personnes ayant récupéré leur clip, pour aujourd'hui, 7 jours, 30 jours et depuis le début, avec la courbe des 14 derniers jours et les
+  interviews les plus utilisées (table `studio_events`). Un clip compte une fois par type, même téléchargé plusieurs fois ; la lecture du
+  clip dans la page n'est pas un téléchargement (le lien porte `?use=download`, le partage `?use=share`). Les personnes sont comptées
+  avec une empreinte irréversible de l'adresse IP (HMAC avec `SESSION_SECRET`) : l'adresse n'est jamais stockée, l'empreinte est effacée
+  après 90 jours (les compteurs restent) ; c'est une approximation (même connexion = une personne). Les mentions légales le décrivent.
 - **Garde-fous** : la vidéo n'affiche plus de bandeau « Source » (choix de l'éditeur : la source va dans la description de la publication) ;
   l'onglet Créer prépare ce texte (« Source : titre · date — lien de l'interview ») avec un bouton Copier. Les sous-titres sont ceux
   de la transcription (corrections éventuelles signalées si elles s'en éloignent), et il faut cocher un engagement à ne pas

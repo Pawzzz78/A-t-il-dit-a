@@ -656,7 +656,7 @@ async function openEditor(youtubeId) {
       const share = el('button', { class: 'btn secondary small', type: 'button' }, 'Partager');
       share.addEventListener('click', async () => {
         try {
-          const blob = await (await fetch(url)).blob();
+          const blob = await (await fetch(`${url}?use=share`)).blob();
           const file = new File([blob], job.filename, { type: 'video/mp4' });
           if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: 'Lisnard Facts' });
           else { makeMsg.className = 'st-msg'; makeMsg.textContent = 'Le partage direct n’est pas disponible ici : télécharge la vidéo.'; }
@@ -665,7 +665,7 @@ async function openEditor(youtubeId) {
       jobBox.replaceChildren(
         el('p', { class: 'st-job-text ok' }, 'Ta vidéo est prête !'),
         el('video', { class: 'st-result', src: url, controls: true, playsinline: '', preload: 'metadata' }),
-        el('div', { class: 'st-job-actions' }, el('a', { class: 'btn', href: url, download: job.filename }, 'Télécharger'), navigator.canShare ? share : null,
+        el('div', { class: 'st-job-actions' }, el('a', { class: 'btn', href: `${url}?use=download`, download: job.filename }, 'Télécharger'), navigator.canShare ? share : null,
           el('button', { class: 'btn secondary small', type: 'button', onclick: () => { job = null; showJob(); renderCreateSummary(); } }, 'Faire un autre clip')),
         el('p', { class: 'st-help' }, 'N’oublie pas de citer la source dans la description (texte à copier dans l’onglet Créer).'));
     } else if (job.status === 'cancelled') {

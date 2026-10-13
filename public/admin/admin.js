@@ -134,6 +134,7 @@ async function route() {
     const m = location.hash.match(/^#\/video\/(\d+)/);
     if (m) await renderEditor(Number(m[1]));
     else if (location.hash === '#/sync') await renderSync();
+    else if (location.hash === '#/studio') await renderStudioStats();
     else await renderList();
   } catch (e) {
     if (e instanceof AuthError) return renderLogin();
@@ -146,6 +147,7 @@ function renderNav() {
   $nav.replaceChildren(
     h('a', { href: '#/' }, 'Vidéos'),
     h('a', { href: '#/sync' }, 'Synchronisation'),
+    h('a', { href: '#/studio' }, 'Studio'),
     h('a', { href: '/' }, 'Voir le site'),
     h(
       'a',
@@ -323,6 +325,58 @@ function addForm(config) {
 // ------------------------------------------------------------- synchronisation
 
 let syncFlash = null; // message affiché après le rechargement de la page
+
+// --------------------------------------------------------------- statistiques du studio
+
+async function renderStudioStats() {
+  const st = await api('GET', '/studio/stats');
+  const periods = [['today', 'Aujourd’hui'], ['d7', '7 jours'], ['d30', '30 jours'], ['all', 'Depuis le début']];
+  let current = 'd7';
+  const plural = (n, one, many) => (n > 1 ? many : one);
+  const stat = (n, label, hint) => h('div', { class: 'stat', title: hint ?? '' }, h('div', { class: 'n' }, String(n)), h('div', { class: 'l' }, label));
+  const grid = h('div', { class: 'stats' });
+  const switcher = h('div', { class: 'pills', role: 'group', 'aria-label': 'Période' });
+  const draw = () => {
+    const p = st.periods[current];
+    const got = p.downloaded + p.shared;
+    switcher.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.p === current)));
+    grid.replaceChildren(
+      stat(p.created, plural(p.created, 'clip créé', 'clips créés'), 'Clips dont la création a été lancée'),
+      stat(p.downloaded, plural(p.downloaded, 'clip téléchargé', 'clips téléchargés'), 'Clics sur « Télécharger » (un clip compte une fois)'),
+      stat(p.shared, plural(p.shared, 'clip partagé', 'clips partagés'), 'Partages depuis le téléphone'),
+      stat(p.people_downloaded, plural(p.people_downloaded, 'personne a récupéré son clip', 'personnes ont récupéré leur clip'), 'Personnes distinctes (approximation par connexion) ayant téléchargé ou partagé'),
+      stat(p.created ? `${Math.round((got / p.created) * 100)} %` : '–', 'clips récupérés', 'Part des clips créés qui ont été téléchargés ou partagés'),
+    );
+  };
+  for (const [key, label] of periods) switcher.append(h('button', { type: 'button', 'data-p': key, onclick: () => { current = key; draw(); } }, label));
+  draw();
+
+  const max = Math.max(1, ...st.daily.map((d) => Math.max(d.created, d.downloaded + d.shared)));
+  const dayRows = [...st.daily].reverse().map((d) =>
+    h('tr', {},
+      h('td', {}, fmtDate(d.day)),
+      h('td', {}, String(d.created)),
+      h('td', {}, String(d.downloaded + d.shared)),
+      h('td', { class: 'bars' }, h('span', { class: 'bar a', style: `width:${(d.created / max) * 100}%` }), h('span', { class: 'bar b', style: `width:${((d.downloaded + d.shared) / max) * 100}%` }))));
+  const videoRows = st.videos.map((v) => h('tr', {}, h('td', {}, v.title || v.youtube_id), h('td', {}, String(v.created)), h('td', {}, String(v.downloaded))));
+
+  $app.replaceChildren(
+    h('section', { class: 'panel' },
+      h('h2', {}, 'Studio TikTok / Reels'),
+      h('p', { class: 'status' }, 'Combien de clips ont été créés, puis téléchargés ou partagés par les visiteurs.'),
+      switcher,
+      grid,
+      h('p', { class: 'status' }, `Les personnes sont comptées d’après une empreinte de leur connexion (l’adresse n’est jamais enregistrée, l’empreinte est effacée après ${st.retention_days} jours) : c’est une approximation.`)),
+    h('section', { class: 'panel' },
+      h('h3', {}, '14 derniers jours'),
+      h('table', { class: 'videos' }, h('thead', {}, h('tr', {}, h('th', {}, 'Jour'), h('th', {}, 'Créés'), h('th', {}, 'Récupérés'), h('th', {}, ''))), h('tbody', {}, dayRows))),
+    h('section', { class: 'panel' },
+      h('h3', {}, 'Interviews les plus utilisées'),
+      videoRows.length
+        ? h('table', { class: 'videos' }, h('thead', {}, h('tr', {}, h('th', {}, 'Interview'), h('th', {}, 'Clips créés'), h('th', {}, 'Clips récupérés'))), h('tbody', {}, videoRows))
+        : h('p', { class: 'status' }, 'Aucun clip pour le moment.')),
+  );
+}
 
 async function renderSync() {
   const o = await api('GET', '/sync/overview');

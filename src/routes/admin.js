@@ -12,6 +12,7 @@ import { pool, replaceSegments, withTransaction } from '../db.js';
 import { HttpError } from '../http-error.js';
 import { clipsAdminRouter } from './clips-admin.js';
 import { removeVideoFiles } from '../media.js';
+import { studioStats } from '../studio/stats.js';
 import { syncRouter } from './sync-admin.js';
 import { YouTubeApiError } from '../youtube.js';
 import { fetchLocalized } from '../localize.js';
@@ -56,6 +57,15 @@ adminRouter.get('/config', (_req, res) =>
 );
 
 adminRouter.use('/sync', syncRouter);
+
+/** Usage du studio : clips créés, téléchargés, partagés, personnes. */
+adminRouter.get(
+  '/studio/stats',
+  (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    studioStats().then((stats) => res.json(stats), next);
+  },
+);
 adminRouter.use('/videos/:id', clipsAdminRouter); // fichier vidéo, clips autorisés, extraits proposés
 
 // --- vidéos ----------------------------------------------------------------

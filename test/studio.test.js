@@ -664,3 +664,85 @@ test('routes des images : recherche et image refusent proprement, état indiqué
     }
   }
 });
+
+// --- statistiques : clips créés, téléchargés, partagés ---------------------------------------------------------------------
+
+test('statistiques : un événement par clip et par type, empreinte des visiteurs, entrées invalides ignorées', { skip: !enabled }, async () => {
+  const stats = await import('../src/studio/stats.js');
+  const job = 'a'.repeat(24);
+  await pool.query("DELETE FROM studio_events WHERE job_id = ANY($1)", [[job, 'b'.repeat(24)]]);
+  assert.equal(await stats.recordEvent('download', { jobId: job, youtubeId: YT, ip: '203.0.113.7' }), true);
+  assert.equal(await stats.recordEvent('download', { jobId: job, youtubeId: YT, ip: '203.0.113.7' }), false); // deuxième téléchargement du même clip : pas recompté
+  assert.equal(await stats.recordEvent('share', { jobId: job, youtubeId: YT, ip: '203.0.113.7' }), true); // un autre type compte à part
+  assert.equal(await stats.recordEvent('inconnu', { jobId: job, ip: 'x' }), false);
+  assert.equal(await stats.recordEvent('download', { jobId: '../etc', ip: 'x' }), false);
+  const { rows } = await pool.query('SELECT kind, visitor FROM studio_events WHERE job_id = $1 ORDER BY kind', [job]);
+  assert.deepEqual(rows.map((r) => r.kind), ['download', 'share']);
+  assert.match(rows[0].visitor, /^[0-9a-f]{16}$/);
+  assert.ok(!rows[0].visitor.includes('203') && rows[0].visitor === stats.visitorHash('203.0.113.7')); // stable pour une même connexion, jamais l'adresse
+  assert.notEqual(stats.visitorHash('203.0.113.8'), rows[0].visitor);
+  // les empreintes de plus de 90 jours sont effacées, les compteurs restent
+  await pool.query("UPDATE studio_events SET created_at = now() - interval '91 days' WHERE job_id = $1 AND kind = 'share'", [job]);
+  await stats.purgeVisitors();
+  const after = await pool.query('SELECT kind, visitor FROM studio_events WHERE job_id = $1 ORDER BY kind', [job]);
+  assert.deepEqual(after.rows.map((r) => [r.kind, r.visitor === null]), [['download', false], ['share', true]]);
+  await pool.query('DELETE FROM studio_events WHERE job_id = $1', [job]);
+});
+
+test('statistiques : le clip créé, le bouton Télécharger et le partage sont comptés, pas la simple lecture', { skip: !enabled }, async () => {
+  const count = async (kind, id) => Number((await pool.query('SELECT count(*) FROM studio_events WHERE job_id = $1 AND kind = $2', [id, kind])).rows[0].count);
+  const r = await api('POST', '/api/studio/render', REQ({ music: null, layout: { fit: 'blur', quality: 'fast' }, extracts: [{ start_ms: 1000, end_ms: 4500 }] }));
+  assert.equal(r.status, 202, JSON.stringify(r.body));
+  const id = r.body.id;
+  assert.equal(await count('render', id), 1);
+  // pas prêt : rien n'est compté
+  const early = await fetch(`${base}/api/studio/render/${id}/file?use=download`);
+  if (early.status === 409) assert.equal(await count('download', id), 0);
+  await waitFor(id, (s) => s.status === 'done');
+  const file = `${base}/api/studio/render/${id}/file`;
+  await (await fetch(file)).arrayBuffer(); // lecture dans la page : pas un téléchargement
+  await fetch(file, { method: 'HEAD' });
+  await (await fetch(`${file}?use=download`, { method: 'HEAD' })).arrayBuffer();
+  assert.equal(await count('download', id), 0);
+  assert.equal((await fetch(`${file}?use=download`)).status, 200);
+  assert.equal(await count('download', id), 1);
+  await (await fetch(`${file}?use=download`)).arrayBuffer(); // même clip téléchargé deux fois : un seul
+  assert.equal(await count('download', id), 1);
+  assert.equal((await fetch(`${file}?use=share`)).status, 200);
+  assert.equal(await count('share', id), 1);
+  await (await fetch(`${file}?use=nimporte`)).arrayBuffer(); // valeur inconnue : rien
+  const { rows } = await pool.query("SELECT youtube_id, visitor FROM studio_events WHERE job_id = $1 AND kind = 'download'", [id]);
+  assert.equal(rows[0].youtube_id, YT);
+  assert.ok(rows[0].visitor);
+  await pool.query('DELETE FROM studio_events WHERE job_id = $1', [id]);
+});
+
+test('statistiques : API de l\'admin protégée, chiffres par période, courbe et interviews', { skip: !enabled }, async () => {
+  assert.equal((await api('GET', '/api/admin/studio/stats')).status, 401);
+  const login = await fetch(`${base}/api/admin/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'pw-test' }) });
+  assert.equal(login.status, 200);
+  const cookie = login.headers.get('set-cookie').split(';')[0];
+  const ids = ['c', 'd', 'e'].map((c) => c.repeat(24));
+  await pool.query('DELETE FROM studio_events');
+  for (const [i, id] of ids.entries()) {
+    await pool.query("INSERT INTO studio_events (kind, job_id, youtube_id, visitor) VALUES ('render', $1, $2, $3)", [id, YT, `v${i % 2}`]);
+  }
+  await pool.query("INSERT INTO studio_events (kind, job_id, youtube_id, visitor) VALUES ('download', $1, $2, 'v0'), ('download', $3, $2, 'v1'), ('share', $4, $2, 'v0')", [ids[0], YT, ids[1], ids[2]]);
+  await pool.query("INSERT INTO studio_events (kind, job_id, youtube_id, visitor, created_at) VALUES ('render', $1, $2, 'v9', now() - interval '20 days'), ('download', $1, $2, 'v9', now() - interval '20 days')", ['f'.repeat(24), YT]);
+  const res = await fetch(`${base}/api/admin/studio/stats`, { headers: { Cookie: cookie } });
+  assert.equal(res.status, 200);
+  const s = await res.json();
+  assert.deepEqual([s.periods.today.created, s.periods.today.downloaded, s.periods.today.shared], [3, 2, 1]);
+  assert.equal(s.periods.today.people_downloaded, 2); // v0 et v1 (v0 a téléchargé et partagé : une personne)
+  assert.equal(s.periods.d7.created, 3);
+  assert.equal(s.periods.d30.created, 4); // le clip de il y a 20 jours entre dans les 30 jours
+  assert.equal(s.periods.d30.people_downloaded, 3);
+  assert.deepEqual([s.periods.all.created, s.periods.all.downloaded], [4, 3]);
+  assert.equal(s.daily.length, 14);
+  assert.deepEqual([s.daily.at(-1).created, s.daily.at(-1).downloaded, s.daily.at(-1).shared], [3, 2, 1]); // aujourd'hui : dernier jour
+  assert.equal(s.videos[0].youtube_id, YT);
+  assert.equal(s.videos[0].title, 'Interview de test du studio');
+  assert.deepEqual([s.videos[0].created, s.videos[0].downloaded], [4, 4]);
+  assert.equal(s.retention_days, 90);
+  await pool.query('DELETE FROM studio_events');
+});

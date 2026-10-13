@@ -106,3 +106,16 @@ CREATE TABLE IF NOT EXISTS clip_suggestions (
   text_hash  TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Studio : statistiques d'usage (clips créés, téléchargés, partagés). Un événement par clip et par type ; `visitor` est une
+-- empreinte irréversible de l'adresse IP (pour compter les personnes), effacée après 90 jours.
+CREATE TABLE IF NOT EXISTS studio_events (
+  id         BIGSERIAL PRIMARY KEY,
+  kind       TEXT NOT NULL,
+  job_id     TEXT NOT NULL,
+  youtube_id TEXT,
+  visitor    TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (job_id, kind)
+);
+CREATE INDEX IF NOT EXISTS studio_events_created_idx ON studio_events (created_at);

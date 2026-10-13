@@ -13,6 +13,7 @@ import path from 'node:path';
 import { BROLL, FPS, LIMITS, OUT, buildAss, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
 import { ensureImage, stockDir, validPhotoId } from './stock.js';
 import { measureBoxes } from './box-probe.js';
+import { purgeVisitors } from './stats.js';
 import { HttpError } from '../http-error.js';
 import { storageDir, videoFilePath } from '../media.js';
 
@@ -424,6 +425,7 @@ export async function enqueueRender({ video, req, lines, ip = 'local' }) {
   const job = {
     id,
     ip,
+    youtube_id: video.youtube_id,
     status: 'queued',
     progress: 0,
     total: req.total,
@@ -522,9 +524,12 @@ export async function cleanup(now = Date.now()) {
 const isActive = async (name) => [...jobs.values()].some((j) => (j.status === 'running' || j.status === 'queued') && name.startsWith(j.id));
 
 let cleanupTimer;
+let purgeTimer;
 export function startStudioCleanup() {
   cleanup().catch(() => {});
+  purgeVisitors().catch(() => {});
   cleanupTimer ??= setInterval(() => cleanup().catch(() => {}), 10 * 60 * 1000).unref();
+  purgeTimer ??= setInterval(() => purgeVisitors().catch(() => {}), 24 * 3600 * 1000).unref();
 }
 
 /** Remet à zéro l'état en mémoire (tests). */
