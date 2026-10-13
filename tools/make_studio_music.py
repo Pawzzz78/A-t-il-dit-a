@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Compose les musiques du studio de clips : 8 boucles ORIGINALES, synthétisées ici (numpy), donc sans droits d'auteur à gérer.
+"""Compose les musiques du studio de clips : boucles ORIGINALES, synthétisées ici (numpy), donc sans droits d'auteur à gérer.
 
-Usage : python3 tools/make_studio_music.py   (nécessite numpy et ffmpeg)
+Usage : python3 tools/make_studio_music.py [id ...]   (nécessite numpy et ffmpeg ; avec des identifiants, seuls ces morceaux sont recomposés)
 Écrit public/music/<id>.mp3 et src/studio/music.json. Les boucles sont « sans couture » (la queue de réverbération est
 repliée sur le début), le serveur les répète tant que le clip dure. Fond sonore sous une voix : mixées à bas volume.
 """
@@ -237,15 +237,63 @@ def acoustic():
         if b % 2 == 1: T.put("drums", snare(0.25), T.bar(b) + 1)
     return finish(T, {"gtr": 1.0, "bass": 0.8, "shaker": 0.7, "drums": 0.7}, {"gtr": (1.3, 0.22)})
 
+def epic():
+    """Épique : cordes graves en ostinato, timbales, cuivres puis chœur, montée en trois temps (calme, puissance, plein)."""
+    T = Track(84, 24, tail=4.0); prog = [(45, "m"), (41, "maj"), (48, "maj"), (43, "maj")]
+    for b in range(24):
+        root, kind = prog[(b // 2) % 4]; notes = chord_notes(root + 12, kind)
+        power = 0 if b < 4 else (1 if b < 12 else 2)
+        for h in range(8):  # ostinato de cordes graves
+            n = int(0.26 * SR); T.put("ostinato", lp(saw(mtof(root - 12 + (7 if h % 4 == 3 else 0)), n, detune=(-6, 6), harmonics=10), 700) * adsr(n, 0.01, 0.1, 0.6, 0.08), T.bar(b) + h * 0.5, 0.5 if h % 2 == 0 else 0.34)
+        if b % 2 == 0:
+            n = int(8 * T.beat * SR + SR)
+            for m in notes:
+                T.put("strings", lp(saw(mtof(m), n, detune=(-12, -4, 4, 12), harmonics=12), 1500) * adsr(n, 1.4, 0.6, 0.85, 1.2), T.bar(b), 0.14 if power else 0.1)
+            if power >= 1:
+                for m in notes + [notes[0] + 12]:
+                    T.put("brass", lp(saw(mtof(m), n, detune=(-7, 0, 7), harmonics=9), 1900) * adsr(n, 0.5, 0.8, 0.8, 0.9), T.bar(b), 0.16 if power == 2 else 0.1)
+            if power == 2:
+                for m in (notes[0] + 24, notes[2] + 24):
+                    T.put("choir", lp(saw(mtof(m), n, detune=(-9, 9), harmonics=6), 1300) * adsr(n, 1.0, 0.8, 0.9, 1.4) * (0.8 + 0.2 * np.sin(2 * np.pi * 5.2 * tt(n))), T.bar(b), 0.1)
+        if b >= 4:
+            T.put("drums", timpani(mtof(root - 12), 1.0), T.bar(b), 0.9); T.put("drums", timpani(mtof(root - 12), 0.8), T.bar(b) + 2, 0.7)
+        if power == 2:
+            T.put("drums", timpani(mtof(root - 12) * 1.5, 0.7), T.bar(b) + 3.5, 0.6); T.put("drums", snare(0.4), T.bar(b) + 1); T.put("drums", snare(0.4), T.bar(b) + 3)
+        if b % 8 == 7: T.put("riser", riser(4 * T.beat, 0.5), T.bar(b), 1.0)
+    return finish(T, {"ostinato": 0.9, "strings": 1.0, "brass": 0.9, "choir": 0.8, "drums": 0.9, "riser": 0.6}, {"strings": (3.0, 0.4), "brass": (2.6, 0.35), "choir": (3.4, 0.5), "drums": (2.4, 0.3)})
+
+def motivation():
+    """Motivation : piano en arpèges, grosse caisse régulière, claps, basse et mélodie qui montent par paliers."""
+    T = Track(100, 24); prog = [(48, "maj"), (43, "maj"), (45, "m"), (41, "maj")]
+    for b in range(24):
+        root, kind = prog[b % 4]; notes = chord_notes(root + 12, kind) + [root + 24]
+        lvl = 0 if b < 4 else (1 if b < 12 else 2)
+        for h in range(8): T.put("piano", fm_ep(mtof(notes[[0, 1, 2, 3, 2, 1, 2, 3][h]]), 1.4), T.bar(b) + h * 0.5, 0.3 if h % 2 == 0 else 0.22)
+        n = int(4 * T.beat * SR + 0.3 * SR)
+        for m in notes[:3]: T.put("pad", lp(saw(mtof(m), n, detune=(-9, 9), harmonics=8), 1700) * adsr(n, 0.3, 0.4, 0.7, 0.4), T.bar(b), 0.1 if lvl else 0.07)
+        if lvl >= 1:
+            for beat in range(4): T.put("drums", kick(vol=0.9), T.bar(b) + beat)
+            for beat in (1, 3): T.put("drums", clap(0.5), T.bar(b) + beat)
+            for h in range(8): T.put("hats", hat(vol=0.2 if h % 2 else 0.09), T.bar(b) + h * 0.5)
+            for h in range(4): T.put("bass", sub_bass(mtof(root - 12), 0.8, 1.6), T.bar(b) + h, 0.55)
+        if lvl == 2:
+            for h, step in enumerate([0, 2, 4, 2]):
+                n2 = int(0.9 * SR); T.put("lead", lp(saw(mtof(notes[step % len(notes)] + 12), n2, detune=(-6, 6), harmonics=10), 3200) * adsr(n2, 0.01, 0.15, 0.5, 0.3), T.bar(b) + h, 0.2)
+        if b % 8 == 7: T.put("riser", riser(4 * T.beat, 0.4), T.bar(b), 1.0)
+    return finish(T, {"piano": 1.0, "pad": 0.9, "drums": 0.85, "hats": 0.7, "bass": 0.8, "lead": 0.85, "riser": 0.5}, {"piano": (1.6, 0.3), "pad": (1.4, 0.25), "lead": (1.4, 0.3)})
+
+# (id, titre, ambiance, tempo, fonction, catégorie)
 TRACKS = [
-    ("lofi-doux", "Lo-fi doux", "Posé, chaleureux", 80, lofi),
-    ("ambiant-calme", "Ambiant calme", "Planant, discret", 60, ambient),
-    ("piano-doux", "Piano doux", "Sobre, réfléchi", 90, piano),
-    ("pop-optimiste", "Pop optimiste", "Entraînant, positif", 110, pop),
-    ("tension-actu", "Tension actualité", "Sérieux, dramatique", 100, tension),
-    ("cinematique", "Cinématique", "Ample, solennel", 70, cinematic),
-    ("electro-motivant", "Électro motivant", "Énergique, rapide", 124, electro),
-    ("acoustique-leger", "Acoustique léger", "Naturel, convivial", 100, acoustic),
+    ("lofi-doux", "Lo-fi doux", "Posé, chaleureux", 80, lofi, "autre"),
+    ("ambiant-calme", "Ambiant calme", "Planant, discret", 60, ambient, "autre"),
+    ("piano-doux", "Piano doux", "Sobre, réfléchi", 90, piano, "autre"),
+    ("pop-optimiste", "Pop optimiste", "Entraînant, positif", 110, pop, "motivant"),
+    ("tension-actu", "Tension actualité", "Sérieux, dramatique", 100, tension, "epique"),
+    ("cinematique", "Cinématique", "Ample, solennel", 70, cinematic, "cinematique"),
+    ("electro-motivant", "Électro motivant", "Énergique, rapide", 124, electro, "motivant"),
+    ("acoustique-leger", "Acoustique léger", "Naturel, convivial", 100, acoustic, "autre"),
+    ("epique-conquete", "Épique : conquête", "Puissant, grandiose", 84, epic, "epique"),
+    ("motivation-ascension", "Motivation : ascension", "Déterminé, qui monte", 100, motivation, "motivant"),
 ]
 
 def write_mp3(sig, path):
@@ -255,15 +303,21 @@ def write_mp3(sig, path):
             w.setnchannels(1); w.setframerate(SR); w.setsampwidth(2); w.writeframes(pcm.tobytes())
         subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", tmp.name, "-ac", "2", "-c:a", "libmp3lame", "-b:a", "128k", str(path)], check=True)
 
-def main():
+def main(only=None):
+    """only : liste d'identifiants à (re)composer ; les autres morceaux et leur entrée du manifeste ne sont pas touchés."""
     OUT.mkdir(parents=True, exist_ok=True); MANIFEST.parent.mkdir(parents=True, exist_ok=True)
+    previous = {m["id"]: m for m in json.loads(MANIFEST.read_text())} if MANIFEST.exists() else {}
     manifest = []
-    for tid, title, mood, bpm, fn in TRACKS:
+    for tid, title, mood, bpm, fn, category in TRACKS:
+        entry = previous.get(tid)
+        if only is not None and tid not in only and entry:
+            entry["category"] = category; manifest.append(entry); continue
         sig = fn(); path = OUT / f"{tid}.mp3"; write_mp3(sig, path)
         dur = round(len(sig) / SR, 1)
-        manifest.append({"id": tid, "title": title, "mood": mood, "bpm": bpm, "duration_s": dur, "file": f"{tid}.mp3", "license": "Création originale, libre de droits (CC0)"})
-        print(f"ok {tid:18s} {dur:5.1f} s  {path.stat().st_size // 1024:5d} Ko  pic {np.abs(sig).max():.2f}  rms {np.sqrt((sig**2).mean()):.3f}")
+        manifest.append({"id": tid, "title": title, "mood": mood, "category": category, "bpm": bpm, "duration_s": dur, "file": f"{tid}.mp3", "license": "Création originale, libre de droits (CC0)"})
+        print(f"ok {tid:22s} {dur:5.1f} s  {path.stat().st_size // 1024:5d} Ko  pic {np.abs(sig).max():.2f}  rms {np.sqrt((sig**2).mean()):.3f}")
     MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
 
 if __name__ == "__main__":
-    main()
+    import sys
+    main(set(sys.argv[1:]) or None)

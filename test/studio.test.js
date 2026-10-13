@@ -90,16 +90,18 @@ after(async () => {
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-test('éléments de l\'éditeur : 22 polices présentes, 8 musiques, 5 styles', async () => {
-  const { FONTS, MUSIC, FONTS_DIR, MUSIC_DIR } = await import('../src/studio/render.js');
+test('éléments de l\'éditeur : 22 polices présentes, 10 musiques, 5 styles', async () => {
+  const { FONTS, FONTS_DIR } = await import('../src/studio/render.js');
+  const { BUILTIN_MUSIC: MUSIC } = await import('../src/studio/music.js');
   assert.equal(FONTS.length, 22);
   assert.equal(new Set(FONTS.map((f) => f.ass_name)).size, 22); // un nom de police unique par fichier
   for (const f of FONTS) assert.ok((await fs.stat(path.join(FONTS_DIR, f.file))).size > 5000, f.file);
-  assert.equal(MUSIC.length, 8);
-  for (const m of MUSIC) assert.ok((await fs.stat(path.join(MUSIC_DIR, m.file))).size > 100_000, m.file);
+  assert.equal(MUSIC.length, 10);
+  for (const m of MUSIC) assert.ok((await fs.stat(m.path)).size > 100_000, m.id);
+  assert.deepEqual([...new Set(MUSIC.map((m) => m.category))].sort(), ['cinematique', 'epique', 'motivant', 'autre'].sort());
   if (!enabled) return;
   const a = (await api('GET', '/api/studio/assets')).body;
-  assert.deepEqual([a.fonts.length, a.music.length, a.presets.length], [22, 8, 5]);
+  assert.deepEqual([a.fonts.length, a.music.length, a.presets.length], [22, 10, 5]);
   assert.equal(a.limits.maxTotalS, 90);
   assert.deepEqual(a.presets.map((p) => p.id), ['hormozi', 'un-mot', 'karaoke', 'classique', 'boite']);
 });

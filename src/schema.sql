@@ -119,3 +119,17 @@ CREATE TABLE IF NOT EXISTS studio_events (
   UNIQUE (job_id, kind)
 );
 CREATE INDEX IF NOT EXISTS studio_events_created_idx ON studio_events (created_at);
+
+-- Studio : bibliothèque de musiques de l'admin (fichiers sur le volume, dans <STORAGE_DIR>/music) et morceaux d'origine masqués.
+CREATE TABLE IF NOT EXISTS studio_music (
+  id         TEXT PRIMARY KEY,
+  title      TEXT NOT NULL,
+  category   TEXT NOT NULL DEFAULT 'autre',
+  credit     TEXT NOT NULL DEFAULT '',
+  duration_s NUMERIC NOT NULL,
+  size_bytes BIGINT NOT NULL DEFAULT 0,
+  file       TEXT NOT NULL,
+  enabled    BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS studio_music_hidden (id TEXT PRIMARY KEY);

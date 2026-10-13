@@ -6,7 +6,8 @@
     "bpm": 80,
     "duration_s": 48.0,
     "file": "lofi-doux.mp3",
-    "license": "Création originale, libre de droits (CC0)"
+    "license": "Création originale, libre de droits (CC0)",
+    "category": "autre"
   },
   {
     "id": "ambiant-calme",
@@ -15,7 +16,8 @@
     "bpm": 60,
     "duration_s": 64.0,
     "file": "ambiant-calme.mp3",
-    "license": "Création originale, libre de droits (CC0)"
+    "license": "Création originale, libre de droits (CC0)",
+    "category": "autre"
   },
   {
     "id": "piano-doux",
@@ -24,7 +26,8 @@
     "bpm": 90,
     "duration_s": 42.7,
     "file": "piano-doux.mp3",
-    "license": "Création originale, libre de droits (CC0)"
+    "license": "Création originale, libre de droits (CC0)",
+    "category": "autre"
   },
   {
     "id": "pop-optimiste",
@@ -33,7 +36,8 @@
     "bpm": 110,
     "duration_s": 52.4,
     "file": "pop-optimiste.mp3",
-    "license": "Création originale, libre de droits (CC0)"
+    "license": "Création originale, libre de droits (CC0)",
+    "category": "motivant"
   },
   {
     "id": "tension-actu",
@@ -42,7 +46,8 @@
     "bpm": 100,
     "duration_s": 57.6,
     "file": "tension-actu.mp3",
-    "license": "Création originale, libre de droits (CC0)"
+    "license": "Création originale, libre de droits (CC0)",
+    "category": "epique"
   },
   {
     "id": "cinematique",
@@ -51,7 +56,8 @@
     "bpm": 70,
     "duration_s": 41.1,
     "file": "cinematique.mp3",
-    "license": "Création originale, libre de droits (CC0)"
+    "license": "Création originale, libre de droits (CC0)",
+    "category": "cinematique"
   },
   {
     "id": "electro-motivant",
@@ -60,7 +66,8 @@
     "bpm": 124,
     "duration_s": 61.9,
     "file": "electro-motivant.mp3",
-    "license": "Création originale, libre de droits (CC0)"
+    "license": "Création originale, libre de droits (CC0)",
+    "category": "motivant"
   },
   {
     "id": "acoustique-leger",
@@ -69,6 +76,27 @@
     "bpm": 100,
     "duration_s": 57.6,
     "file": "acoustique-leger.mp3",
+    "license": "Création originale, libre de droits (CC0)",
+    "category": "autre"
+  },
+  {
+    "id": "epique-conquete",
+    "title": "Épique : conquête",
+    "mood": "Puissant, grandiose",
+    "category": "epique",
+    "bpm": 84,
+    "duration_s": 68.6,
+    "file": "epique-conquete.mp3",
+    "license": "Création originale, libre de droits (CC0)"
+  },
+  {
+    "id": "motivation-ascension",
+    "title": "Motivation : ascension",
+    "mood": "Déterminé, qui monte",
+    "category": "motivant",
+    "bpm": 100,
+    "duration_s": 57.6,
+    "file": "motivation-ascension.mp3",
     "license": "Création originale, libre de droits (CC0)"
   }
 ]

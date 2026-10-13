@@ -13,17 +13,15 @@ import path from 'node:path';
 import { BROLL, FPS, LIMITS, OUT, buildAss, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
 import { ensureImage, stockDir, validPhotoId } from './stock.js';
 import { measureBoxes } from './box-probe.js';
+import { findTrack } from './music.js';
 import { purgeVisitors } from './stats.js';
 import { HttpError } from '../http-error.js';
 import { storageDir, videoFilePath } from '../media.js';
 
 const read = (name) => JSON.parse(readFileSync(new URL(`./${name}`, import.meta.url), 'utf8'));
 export const FONTS = read('fonts.json');
-export const MUSIC = read('music.json');
 export const FONTS_DIR = new URL('../../public/fonts/studio', import.meta.url).pathname;
-export const MUSIC_DIR = new URL('../../public/music', import.meta.url).pathname;
 const fontById = new Map(FONTS.map((f) => [f.id, f]));
-const musicById = new Map(MUSIC.map((m) => [m.id, m]));
 
 export const config = () => ({
   concurrency: Math.max(1, Number(process.env.STUDIO_CONCURRENCY) || 1),
@@ -119,7 +117,7 @@ export function normalizeRequest(body, video) {
   const style = sanitizeStyle(b.style, FONTS.map((f) => f.id));
   let music = null;
   if (b.music && b.music.id) {
-    if (!musicById.has(b.music.id)) throw new HttpError(400, 'Musique inconnue.');
+    if (!findTrack(b.music.id)) throw new HttpError(400, 'Musique inconnue.');
     music = { id: b.music.id, volume: Math.round(Math.min(1, Math.max(0, Number.isFinite(Number(b.music.volume)) ? Number(b.music.volume) : 0.25)) * 100) / 100 };
   }
   const voice = Math.round(Math.min(1.5, Math.max(0, Number.isFinite(Number(b.voice)) ? Number(b.voice) : 1)) * 100) / 100;
@@ -191,9 +189,9 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
   const size = kind === 'preview' ? SIZES.preview : SIZES[req.layout.quality];
   const args = ['-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-y'];
   req.extracts.forEach((e) => args.push('-ss', String(e.start_ms / 1000), '-t', String((e.end_ms - e.start_ms) / 1000), '-i', file));
-  const music = kind === 'final' && req.music ? musicById.get(req.music.id) : null;
+  const music = kind === 'final' && req.music ? findTrack(req.music.id) : null;
   const musicIdx = req.extracts.length;
-  if (music) args.push('-stream_loop', '-1', '-t', String(req.total), '-i', path.join(MUSIC_DIR, music.file));
+  if (music) args.push('-stream_loop', '-1', '-t', String(req.total), '-i', music.path);
   const broll = kind === 'final' ? req.broll ?? [] : [];
   const imageIdx = musicIdx + (music ? 1 : 0);
   broll.forEach((b) => args.push('-loop', '1', '-framerate', String(FPS), '-t', String(b.dur), '-i', images[b.id] ?? path.join(stockDir(), `${b.id}.jpg`)));

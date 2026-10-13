@@ -135,6 +135,7 @@ async function route() {
     if (m) await renderEditor(Number(m[1]));
     else if (location.hash === '#/sync') await renderSync();
     else if (location.hash === '#/studio') await renderStudioStats();
+    else if (location.hash === '#/musique') await renderMusicLibrary();
     else await renderList();
   } catch (e) {
     if (e instanceof AuthError) return renderLogin();
@@ -148,6 +149,7 @@ function renderNav() {
     h('a', { href: '#/' }, 'Vidéos'),
     h('a', { href: '#/sync' }, 'Synchronisation'),
     h('a', { href: '#/studio' }, 'Studio'),
+    h('a', { href: '#/musique' }, 'Musique'),
     h('a', { href: '/' }, 'Voir le site'),
     h(
       'a',
@@ -376,6 +378,110 @@ async function renderStudioStats() {
         ? h('table', { class: 'videos' }, h('thead', {}, h('tr', {}, h('th', {}, 'Interview'), h('th', {}, 'Clips créés'), h('th', {}, 'Clips récupérés'))), h('tbody', {}, videoRows))
         : h('p', { class: 'status' }, 'Aucun clip pour le moment.')),
   );
+}
+
+async function renderMusicLibrary() {
+  let data = await api('GET', '/studio/music');
+  const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1).replace('.', ',')} Mo` : `${Math.max(1, Math.round(b / 1024))} Ko`);
+  const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
+  const catSelect = (value, onchange) =>
+    h('select', { onchange }, data.categories.map((c) => h('option', { value: c.id, selected: c.id === value }, c.label)));
+  const root = h('div');
+  const note = h('p', { class: 'status', role: 'status' });
+
+  async function mutate(method, path, body, okMsg) {
+    try {
+      data = await api(method, `/studio/music${path}`, body);
+      draw();
+      status(note, okMsg ?? 'Enregistré.', 'ok');
+    } catch (e) {
+      if (e instanceof AuthError) throw e;
+      status(note, e.message, 'err');
+    }
+  }
+
+  // --- ajout
+  const file = h('input', { type: 'file', accept: 'audio/*,.mp3,.m4a,.wav,.ogg,.flac,.aac', id: 'mfile' });
+  const title = h('input', { class: 'text', type: 'text', maxlength: '80', placeholder: 'Titre affiché dans le studio', id: 'mtitle' });
+  const category = h('select', { id: 'mcat' }, data.categories.map((c) => h('option', { value: c.id }, c.label)));
+  const credit = h('input', { class: 'text', type: 'text', maxlength: '200', placeholder: 'Ex. : Auteur, site (facultatif)', id: 'mcredit' });
+  const rights = h('input', { type: 'checkbox', id: 'mrights' });
+  const send = h('button', { class: 'btn', type: 'button' }, 'Ajouter à la bibliothèque');
+  const upStatus = h('span', { class: 'status', role: 'status' });
+  file.addEventListener('change', () => {
+    const f = file.files[0];
+    if (f && !title.value) title.value = f.name.replace(/\.[A-Za-z0-9]{2,5}$/, '').replace(/[_-]+/g, ' ').trim().slice(0, 80);
+  });
+  send.addEventListener('click', () => {
+    const f = file.files[0];
+    if (!f) return status(upStatus, 'Choisis d’abord un fichier audio.', 'err');
+    if (!rights.checked) return status(upStatus, 'Coche la case : tu confirmes avoir le droit d’utiliser ce morceau.', 'err');
+    if (f.size > data.limits.maxBytes) return status(upStatus, `Fichier trop lourd (${Math.round(data.limits.maxBytes / 1048576)} Mo au maximum).`, 'err');
+    const q = new URLSearchParams({ title: title.value, category: category.value, credit: credit.value, filename: f.name, rights: '1' });
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `/api/admin/studio/music?${q}`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader('Content-Type', f.type || 'application/octet-stream');
+    send.disabled = true;
+    xhr.upload.onprogress = (e) => e.lengthComputable && status(upStatus, e.loaded < e.total ? `Envoi… ${Math.round((e.loaded / e.total) * 100)} %` : 'Conversion et normalisation du volume…');
+    xhr.onload = () => {
+      send.disabled = false;
+      let body = {};
+      try { body = JSON.parse(xhr.responseText); } catch { /* corps vide */ }
+      if (xhr.status === 401) return route();
+      if (xhr.status >= 400) return status(upStatus, body.error || `Erreur ${xhr.status}`, 'err');
+      data = body;
+      file.value = ''; title.value = ''; credit.value = ''; rights.checked = false;
+      draw();
+      status(note, 'Morceau ajouté : il est disponible dans le studio.', 'ok');
+    };
+    xhr.onerror = () => { send.disabled = false; status(upStatus, 'Envoi interrompu. Réessaie.', 'err'); };
+    status(upStatus, 'Envoi…');
+    xhr.send(f);
+  });
+
+  const row = (t, own) => {
+    const src = own ? `/api/admin/studio/music/${t.id}/file` : t.url;
+    const meta = [mmss(t.duration_s), t.size_bytes ? fmtSize(t.size_bytes) : '', t.bpm ? `${t.bpm} bpm` : '', t.mood].filter(Boolean).join(' · ');
+    const titleInput = h('input', { class: 'text', type: 'text', value: t.title, maxlength: '80', 'aria-label': 'Titre' });
+    const creditInput = h('input', { class: 'text', type: 'text', value: t.credit ?? '', maxlength: '200', placeholder: 'Crédit (facultatif)', 'aria-label': 'Crédit' });
+    return h('li', { class: `mrow${t.enabled ? '' : ' off'}`, 'data-id': t.id },
+      own ? h('div', { class: 'mfields' }, titleInput, creditInput) : h('div', { class: 'mfields' }, h('strong', {}, t.title)),
+      h('small', { class: 'mmeta' }, meta),
+      h('audio', { controls: true, preload: 'none', src }),
+      h('div', { class: 'actions' },
+        own ? catSelect(t.category, (e) => mutate('PATCH', `/${t.id}`, { category: e.target.value })) : h('span', { class: 'badge' }, data.categories.find((c) => c.id === t.category)?.label ?? ''),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: t.enabled, onchange: (e) => mutate('PATCH', `/${t.id}`, { enabled: e.target.checked }, e.target.checked ? 'Morceau visible dans le studio.' : 'Morceau masqué du studio.') }), ' Visible'),
+        own && h('button', { class: 'btn secondary small', type: 'button', onclick: () => { if (titleInput.value !== t.title || creditInput.value !== (t.credit ?? '')) mutate('PATCH', `/${t.id}`, { title: titleInput.value, credit: creditInput.value }); else status(note, 'Aucun changement.'); } }, 'Enregistrer'),
+        own && h('button', { class: 'btn danger small', type: 'button', onclick: () => { if (confirm(`Supprimer « ${t.title} » définitivement ?`)) mutate('DELETE', `/${t.id}`, undefined, 'Morceau supprimé.'); } }, 'Supprimer')));
+  };
+
+  function draw() {
+    root.replaceChildren(
+      h('section', { class: 'panel' },
+        h('h2', {}, 'Ajouter un morceau'),
+        h('p', { class: 'status' }, `MP3, M4A, WAV, OGG ou FLAC, de ${data.limits.minS} s à ${data.limits.maxS / 60} min, ${Math.round(data.limits.maxBytes / 1048576)} Mo au maximum. Le morceau est converti en MP3 et son volume est égalisé pour que tous sonnent pareil sous la voix (les ${data.limits.keepS / 60} premières minutes sont conservées).`),
+        h('div', { class: 'field' }, h('label', { for: 'mfile' }, 'Fichier audio'), file),
+        h('div', { class: 'field' }, h('label', { for: 'mtitle' }, 'Titre'), title),
+        h('div', { class: 'field' }, h('label', { for: 'mcat' }, 'Catégorie'), category),
+        h('div', { class: 'field' }, h('label', { for: 'mcredit' }, 'Crédit à afficher dans la description'), credit,
+          h('small', {}, 'Certaines licences (CC BY, bibliothèque audio YouTube…) demandent de citer l’auteur : le crédit est alors ajouté à la description TikTok.')),
+        h('label', { class: 'check' }, rights, ' Je confirme avoir le droit d’utiliser ce morceau (licence libre de droits, achetée ou créée par moi).'),
+        h('div', { class: 'actions' }, send, upStatus)),
+      note,
+      h('section', { class: 'panel' },
+        h('h2', {}, `Ma bibliothèque (${data.library.length})`),
+        data.library.length
+          ? h('ul', { class: 'mlist' }, data.library.map((t) => row(t, true)))
+          : h('p', { class: 'status' }, 'Aucun morceau ajouté pour le moment. Pour des musiques motivantes, épiques ou cinématiques libres de droits, regarde la bibliothèque audio de YouTube Studio, Pixabay Music, Uppbeat ou Mixkit, puis ajoute ici les fichiers que tu télécharges.')),
+      h('section', { class: 'panel' },
+        h('h2', {}, `Morceaux d’origine (${data.builtin.length})`),
+        h('p', { class: 'status' }, 'Créés pour le site, libres de droits. Décoche « Visible » pour retirer un morceau du studio.'),
+        h('ul', { class: 'mlist' }, data.builtin.map((t) => row(t, false)))),
+    );
+  }
+  draw();
+  $app.replaceChildren(h('section', { class: 'panel' }, h('h2', {}, 'Musiques du studio'), h('p', { class: 'status' }, 'Les morceaux ajoutés ici apparaissent dans l’onglet « Musique » du studio, rangés par catégorie (motivant, épique, cinématique).')), root);
 }
 
 async function renderSync() {

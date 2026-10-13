@@ -8,7 +8,8 @@ import { getClipSuggestions, prepareSegments, CLIP_LIMITS } from '../clip-sugges
 import { pool } from '../db.js';
 import { HttpError } from '../http-error.js';
 import { DEFAULT_STYLE, LIMITS, PRESETS } from '../../public/js/studio-core.js';
-import { cancelJob, createPreview, enqueueRender, FONTS, getJob, MUSIC, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
+import { cancelJob, createPreview, enqueueRender, FONTS, getJob, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
+import { CATEGORIES, ensureMusic, libraryFile, publicTracks } from '../studio/music.js';
 import { recordEvent } from '../studio/stats.js';
 import { ensureImage, searchPhotos, stockEnabled, stockProvider } from '../studio/stock.js';
 import { parseYoutubeId } from '../youtube.js';
@@ -39,17 +40,35 @@ const presentVideo = (v) => ({
 });
 
 /** Éléments de l'éditeur : styles, polices, musiques et limites. */
-studioRouter.get('/assets', (_req, res) => {
-  res.set('Cache-Control', 'public, max-age=300');
-  res.json({
-    presets: Object.entries(PRESETS).map(([id, p]) => ({ id, label: p.label, hint: p.hint, style: p.style })),
-    default_style: DEFAULT_STYLE,
-    fonts: FONTS.map(({ id, label, category, file, em_ratio, cap_em }) => ({ id, label, category, file, em_ratio, cap_em })),
-    music: MUSIC.map(({ id, title, mood, bpm, duration_s, file, license }) => ({ id, title, mood, bpm, duration_s, file, license })),
-    limits: { ...LIMITS, suggestionMinS: CLIP_LIMITS.minS, suggestionMaxS: CLIP_LIMITS.maxS },
-    stock: { enabled: stockEnabled(), provider: stockProvider() },
-  });
-});
+studioRouter.get(
+  '/assets',
+  ah(async (_req, res) => {
+    await ensureMusic();
+    res.set('Cache-Control', 'public, max-age=60');
+    res.json({
+      presets: Object.entries(PRESETS).map(([id, p]) => ({ id, label: p.label, hint: p.hint, style: p.style })),
+      default_style: DEFAULT_STYLE,
+      fonts: FONTS.map(({ id, label, category, file, em_ratio, cap_em }) => ({ id, label, category, file, em_ratio, cap_em })),
+      music: publicTracks(),
+      music_categories: CATEGORIES,
+      limits: { ...LIMITS, suggestionMinS: CLIP_LIMITS.minS, suggestionMaxS: CLIP_LIMITS.maxS },
+      stock: { enabled: stockEnabled(), provider: stockProvider() },
+    });
+  }),
+);
+
+/** Morceau de la bibliothèque (lecture dans l'éditeur) : Range géré pour pouvoir se déplacer dans le morceau. */
+studioRouter.get(
+  '/music/:id',
+  ah(async (req, res) => {
+    await ensureMusic();
+    const file = libraryFile(String(req.params.id));
+    if (!file) throw new HttpError(404, 'Morceau introuvable.');
+    res.sendFile(file, { acceptRanges: true, headers: { 'Cache-Control': 'public, max-age=3600', 'Content-Type': 'audio/mpeg' } }, (err) => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'Morceau introuvable.' });
+    });
+  }),
+);
 
 /** Recherche d'images libres de droits (b-roll). La clé du fournisseur reste sur le serveur. */
 studioRouter.get(
@@ -107,6 +126,7 @@ studioRouter.post(
   '/preview',
   ah(async (req, res) => {
     const v = await loadVideo(req.body?.youtube_id);
+    await ensureMusic();
     const request = normalizeRequest(req.body, v);
     const { key, ext, duration_s } = await createPreview({ video: v, req: request, ip: req.ip });
     res.json({ url: `/api/studio/preview/${key}.${ext}`, duration_s });
@@ -127,6 +147,7 @@ studioRouter.post(
   '/render',
   ah(async (req, res) => {
     const v = await loadVideo(req.body?.youtube_id);
+    await ensureMusic();
     const request = normalizeRequest(req.body, v);
     const job = await enqueueRender({ video: v, req: request, lines: await linesOf(v.id), ip: req.ip });
     await recordEvent('render', { jobId: job.id, youtubeId: v.youtube_id, ip: req.ip });

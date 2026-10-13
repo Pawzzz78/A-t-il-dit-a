@@ -167,7 +167,7 @@ async function openEditor(youtubeId) {
   }
   function applyAudio() {
     const track = assets.music.find((m) => m.id === S.music.id);
-    phone.setAudio({ url: track ? `/music/${track.file}` : null, volume: S.music.volume, voice: S.voice });
+    phone.setAudio({ url: track ? track.url : null, volume: S.music.volume, voice: S.voice });
   }
   async function requestPreview() {
     const mine = ++S.ticket;
@@ -539,16 +539,22 @@ async function openEditor(youtubeId) {
   const panelMusic = el('div', { class: 'st-panel' });
   const audition = new Audio();
   let auditionId = null;
+  let musicCat = 'all'; // catégorie affichée dans la liste
   audition.addEventListener('ended', () => { auditionId = null; renderMusic(); });
+  const catLabel = (id) => (assets.music_categories ?? []).find((c) => c.id === id)?.label ?? '';
   function renderMusic() {
-    const pick = (id) => { S.music.id = id; savePrefs(S); applyAudio(); renderMusic(); };
+    const pick = (id) => { S.music.id = id; savePrefs(S); applyAudio(); updateSource(); renderMusic(); };
     const track = (m) => el('li', { class: m.id === S.music.id ? 'st-track on' : 'st-track' },
       el('button', { type: 'button', class: 'st-playtrack', 'aria-label': auditionId === m.id ? `Arrêter ${m.title}` : `Écouter ${m.title}`, onclick: () => {
-        if (auditionId === m.id) { audition.pause(); auditionId = null; } else { phone.pause(); audition.src = `/music/${m.file}`; audition.volume = 0.6; audition.play().catch(() => {}); auditionId = m.id; }
+        if (auditionId === m.id) { audition.pause(); auditionId = null; } else { phone.pause(); audition.src = m.url; audition.volume = 0.6; audition.play().catch(() => {}); auditionId = m.id; }
         renderMusic();
       } }, auditionId === m.id ? '■' : '▶'),
-      el('button', { type: 'button', class: 'st-trackname', onclick: () => pick(m.id) }, el('strong', {}, m.title), el('small', {}, `${m.mood} · ${m.bpm} bpm`)),
+      el('button', { type: 'button', class: 'st-trackname', onclick: () => pick(m.id) }, el('strong', {}, m.title), el('small', {}, [catLabel(m.category), m.mood, m.bpm ? `${m.bpm} bpm` : '', mmss(m.duration_s * 1000)].filter(Boolean).join(' · '))),
       m.id === S.music.id ? el('span', { class: 'badge ok' }, 'choisie') : null);
+    const cats = (assets.music_categories ?? []).filter((c) => assets.music.some((m) => m.category === c.id));
+    if (musicCat !== 'all' && !cats.some((c) => c.id === musicCat)) musicCat = 'all';
+    const shown = assets.music.filter((m) => musicCat === 'all' || m.category === musicCat);
+    const chip = (id, label, n) => el('button', { type: 'button', class: musicCat === id ? 'st-chip on' : 'st-chip', 'aria-pressed': String(musicCat === id), onclick: () => { musicCat = id; renderMusic(); } }, `${label} (${n})`);
     const vol = (label, key, min, max, get, set) => {
       const out = el('output', {}, `${Math.round(get() * 100)} %`);
       const input = el('input', { type: 'range', min, max, step: '1', value: String(Math.round(get() * 100)), 'aria-label': label });
@@ -557,8 +563,9 @@ async function openEditor(youtubeId) {
     };
     panelMusic.replaceChildren(
       el('h3', {}, 'Musique de fond'),
-      el('p', { class: 'st-help' }, 'Morceaux originaux, libres de droits, joués en boucle sous la voix.'),
-      el('ul', { class: 'st-tracks' }, el('li', { class: S.music.id ? 'st-track' : 'st-track on' }, el('button', { type: 'button', class: 'st-trackname', onclick: () => pick(null) }, el('strong', {}, 'Aucune musique'), el('small', {}, 'Seulement la voix')), S.music.id ? null : el('span', { class: 'badge ok' }, 'choisie')), assets.music.map(track)),
+      el('p', { class: 'st-help' }, 'Motivantes, épiques, cinématiques : le morceau est joué sous la voix (en boucle s’il est plus court que le clip). Appuie sur ▶ pour écouter.'),
+      ...(cats.length > 1 ? [el('div', { class: 'st-chips', role: 'group', 'aria-label': 'Catégorie de musique' }, chip('all', 'Toutes', assets.music.length), cats.map((c) => chip(c.id, c.label, assets.music.filter((m) => m.category === c.id).length)))] : []),
+      el('ul', { class: 'st-tracks' }, el('li', { class: S.music.id ? 'st-track' : 'st-track on' }, el('button', { type: 'button', class: 'st-trackname', onclick: () => pick(null) }, el('strong', {}, 'Aucune musique'), el('small', {}, 'Seulement la voix')), S.music.id ? null : el('span', { class: 'badge ok' }, 'choisie')), shown.map(track)),
       el('h3', {}, 'Volumes'),
       vol('Musique', 'music', 0, 100, () => S.music.volume, (v) => { S.music.volume = v; }),
       vol('Voix', 'voice', 0, 150, () => S.voice, (v) => { S.voice = v; }),
@@ -865,11 +872,13 @@ async function openEditor(youtubeId) {
     if (captionEdited) return;
     const credits = [...new Set(S.broll.map((b) => b.photographer).filter(Boolean))];
     const caption = S.extracts.find((e) => e.caption)?.caption ?? '';
+    const song = assets.music.find((m) => m.id === S.music.id);
     const source =
       `${sourceText(S.video.title, S.video.published_at)} — https://www.youtube.com/watch?v=${S.video.youtube_id}` +
-      (credits.length ? `\nImages : ${credits.join(', ')} (${assets.stock?.provider ?? 'banque d’images'})` : '');
+      (credits.length ? `\nImages : ${credits.join(', ')} (${assets.stock?.provider ?? 'banque d’images'})` : '') +
+      (song?.credit ? `\nMusique : ${song.title} — ${song.credit}` : '');
     sourceField.value = [caption, source].filter(Boolean).join('\n\n');
-    sourceField.rows = caption ? 8 : credits.length ? 3 : 2;
+    sourceField.rows = (caption ? 6 : 1) + 1 + (credits.length ? 1 : 0) + (song?.credit ? 1 : 0);
   }
 
   const timeField = (label, ms, onSet, extra = {}) => {

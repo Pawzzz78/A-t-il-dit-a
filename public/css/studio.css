@@ -264,3 +264,4 @@
 .btn.tiktok { background: #0d0f2b; color: #fff; box-shadow: 3px 3px 0 #25f4ee, -3px -3px 0 #fe2c55; }
 .btn.tiktok:hover { background: #000; }
 .st-source-text { resize: vertical; }
+.st-chip.on { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }

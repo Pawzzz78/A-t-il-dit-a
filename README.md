@@ -129,6 +129,13 @@ qu'à choisir les extraits.
   extraits générés avant cette version n'ont pas de description : il faut les régénérer depuis l'admin.
   Dans l'onglet « Créer », le bloc « Description à copier-coller » reprend la description de l'extrait choisi, suivie de la source et des
   crédits d'images ; elle reste modifiable.
+- **Bibliothèque de musiques** (admin → « Musique ») : l'admin dépose ses propres morceaux (MP3, M4A, WAV, OGG, FLAC ; 8 s à 10 min, 40 Mo),
+  avec titre, catégorie (motivant, épique, cinématique, autres) et crédit facultatif, et confirme avoir le droit de les utiliser. Le
+  serveur vérifie le fichier, le convertit en MP3 stéréo et **égalise le volume** (−16 LUFS, pour que tous sonnent pareil sous la voix ;
+  5 minutes conservées), puis le range sur le volume (`<STORAGE_DIR>/music/`, catalogue dans les tables `studio_music` et
+  `studio_music_hidden`). Les morceaux apparaissent aussitôt dans l'onglet « Musique » du studio ; on peut les masquer, les renommer, les
+  recatégoriser ou les supprimer, et masquer les morceaux d'origine. Les musiques « tendance » de TikTok ne sont pas disponibles : elles
+  sont réservées à l'application TikTok (on peut les ajouter à la vidéo dans TikTok, après le partage).
 - **Bouton « Publier sur TikTok »** (une fois le clip prêt) : copie la description puis, sur mobile, ouvre le menu de partage avec la
   vidéo (TikTok apparaît dans la liste) ; sur ordinateur, ouvre `tiktok.com/upload`, télécharge la vidéo et copie la description. La
   publication **automatique** n'est pas faite : l'API TikTok « Content Posting » exige une application TikTok validée (audit) et, sans
@@ -153,7 +160,9 @@ qu'à choisir les extraits.
     interview, tant que la transcription ne change pas). Un avertissement s'affiche si une ligne s'éloigne beaucoup de la transcription
     (`lineSimilarity` < 60 %, pluriels et accents ignorés) et l'engagement à ne pas déformer les propos couvre les sous-titres corrigés.
     Côté serveur : `edits` = `{ "<début de la ligne en ms>": "texte" }`, 300 lignes et 500 caractères par ligne au maximum ;
-  - **musique** : 8 morceaux originaux libres de droits (`tools/make_studio_music.py`), volumes de la musique et de la voix ;
+  - **musique** : la **bibliothèque de l'admin** (voir ci-dessous) et 10 morceaux originaux libres de droits (`tools/make_studio_music.py`),
+    classés par catégorie (motivant, épique, cinématique, autres) avec écoute ▶, volumes de la musique et de la voix ; le crédit d'un
+    morceau de la bibliothèque est ajouté à la description à copier ;
   - **cadrage 9:16** : vidéo entière sur fond flou, ou **plein écran** recadré : on **glisse la vidéo** vers la gauche ou la droite sur
     l'aperçu pour recentrer sur la personne (un curseur permet d'affiner). L'aperçu plein écran est la vidéo entière recadrée en direct
     par le navigateur avec la même formule que le rendu (`décalage = (largeur de la vidéo − largeur de l'écran) × position`), donc
@@ -373,7 +382,7 @@ src/
 tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéos sans sous-titres, envoyée au site
   openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
-  studio/            studio public : rendu ffmpeg (render.js), mesure du fond des sous-titres (box-probe.js), images libres de droits Pixabay / Pexels (stock.js), polices (fonts.json), musiques (music.json)
+  studio/            studio public : rendu ffmpeg (render.js), mesure du fond des sous-titres (box-probe.js), images libres de droits Pixabay / Pexels (stock.js), polices (fonts.json), musiques d'origine et bibliothèque de l'admin (music.json, music.js)
   media.js           fichiers vidéo du studio : dépôt par morceaux, ffprobe, stockage
   clip-suggestions.js  extraits proposés par le LLM (numéros de lignes, horaires issus de la transcription)
   trends.js          tendances : comptage des mots par mois, mots les plus prononcés, cache et limites

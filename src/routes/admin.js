@@ -12,6 +12,7 @@ import { pool, replaceSegments, withTransaction } from '../db.js';
 import { HttpError } from '../http-error.js';
 import { clipsAdminRouter } from './clips-admin.js';
 import { removeVideoFiles } from '../media.js';
+import { musicAdminRouter } from './music-admin.js';
 import { studioStats } from '../studio/stats.js';
 import { syncRouter } from './sync-admin.js';
 import { YouTubeApiError } from '../youtube.js';
@@ -66,6 +67,7 @@ adminRouter.get(
     studioStats().then((stats) => res.json(stats), next);
   },
 );
+adminRouter.use('/studio/music', musicAdminRouter); // bibliothèque de musiques du studio
 adminRouter.use('/videos/:id', clipsAdminRouter); // fichier vidéo, clips autorisés, extraits proposés
 
 // --- vidéos ----------------------------------------------------------------
