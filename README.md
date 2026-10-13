@@ -1,6 +1,6 @@
 # Lisnard Facts
 
-Site de fact-checking : on saisit une phrase ou une expression, et le site indique si
+Site de fact-checking et de création de TikTok : on saisit une phrase ou une expression, et le site indique si
 David Lisnard l'a prononcée dans l'une de ses interviews YouTube, avec l'extrait
 surligné et un lien vers la vidéo au bon timestamp.
 
