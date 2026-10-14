@@ -38,6 +38,7 @@ a { color: var(--color-primary); }
 .site-header nav { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem 1.5rem; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-caps); }
 .site-header nav a:not(.btn) { color: var(--color-primary); text-decoration: none; }
 .site-header nav a:not(.btn):hover { text-decoration: underline; }
+.site-header nav a[aria-current="page"] { text-decoration: underline; text-decoration-color: var(--color-accent); text-decoration-thickness: 2px; text-underline-offset: .35em; }
 
 /* --- boutons (pilules en capitales, comme le site du parti) -------------- */
 .btn { display: inline-flex; align-items: center; justify-content: center; font: inherit; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-caps); line-height: 1; border: 0; border-radius: var(--radius-pill); padding: .95rem 1.6rem; cursor: pointer; text-decoration: none; background: var(--color-primary); color: var(--color-primary-contrast); transition: background .15s, transform .15s; }

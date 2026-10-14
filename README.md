@@ -397,6 +397,29 @@ police Montserrat (fichiers dans `public/fonts/`). Le logo officiel n'est volont
 *Studio* » (police Fraunces, fichiers dans `public/fonts/`, licence OFL ; « Lisnard » en bleu, « Studio » en rose italique).
 Tout est dans [`public/css/theme.css`](public/css/theme.css) ; `app.css` et `admin.css` n'utilisent que ces variables.
 
+
+## Le mur des clips
+
+Deuxième section du site, `/mur/` : un mur des meilleurs TikToks publiés avec le hashtag **#lisnard2027** (réglable), dans la charte du site.
+
+- **Source** : l'acteur Apify **clockworks/tiktok-scraper** (variable `APIFY_TOKEN`, jeton personnel Apify). Le serveur lance l'exécution
+  (`POST /v2/acts/clockworks~tiktok-scraper/runs`, entrée `hashtags` et `resultsPerPage`, sans téléchargement de vidéos), attend la fin, lit le jeu de
+  données et l'enregistre dans la table `wall_clips` (`src/wall/apify.js`, `src/wall/wall.js`). **Le mur ne parle jamais à Apify** : les visiteurs lisent
+  la base. Sont écartés : les publicités, les vidéos sans le hashtag, les éléments d'erreur de l'acteur. Un clip déjà connu voit ses compteurs mis à jour.
+- **Actualisation** : automatique toutes les `WALL_REFRESH_HOURS` heures (12 par défaut, 0 pour seulement à la demande), et à la demande dans l'admin
+  (onglet « Mur », au plus une toutes les 2 minutes). Un échec n'efface rien : le mur garde ses clips et l'admin voit l'erreur ; on réessaie au bout
+  d'une heure. Coût indicatif (1,70 $ pour 1 000 résultats) : 100 vidéos toutes les 12 h reviennent à environ 10 $ par mois ; l'admin l'affiche.
+- **Classement** : `score = vues × 1 + j'aime × 10 + commentaires × 50` (`WALL_WEIGHTS="1,10,50"`), calculé à la lecture. Le visiteur peut aussi trier par
+  vues, j'aime, commentaires ou date, et limiter aux 30 ou 7 derniers jours ; les trois premiers forment le podium. Adresses partageables :
+  `/mur/?tri=vues&periode=7`.
+- **Affichage** : une carte par clip (vignette verticale, rang, auteur, vues / j'aime / commentaires). Au clic, une fenêtre charge le **lecteur officiel de
+  TikTok** (`tiktok.com/embed/v2/…`, seulement à ce moment-là, avec un avis sur les cookies de TikTok) et un lien « Ouvrir sur TikTok ». Les vignettes sont
+  copiées sur le volume (`<STORAGE_DIR>/wall/covers`, JPEG de 360 px) parce que les adresses de TikTok expirent ; seules les adresses de TikTok et d'Apify
+  en HTTPS sont téléchargées.
+- **Modération** (admin → « Mur ») : masquer un clip ou tous les clips d'un auteur ; le masquage survit aux actualisations. Les légendes sont affichées
+  en texte brut.
+- Tables : `wall_clips`, `wall_hidden_authors` ; dernière actualisation dans `settings` (`wall_last_run`). Tests : `test/wall.test.js` (Apify simulé).
+
 ## Structure
 
 ```
@@ -410,6 +433,7 @@ tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéo
   openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
   studio/            studio public : rendu ffmpeg (render.js), détection et reconnaissance des visages (faces.js, faces-worker.js, yunet.js, sface.js, identity.js, references.js, nn.js), mesure du fond des sous-titres (box-probe.js), images libres de droits Pixabay / Pexels (stock.js), polices (fonts.json), musiques d'origine et bibliothèque de l'admin (music.json, music.js)
+  wall/              mur des clips : client Apify (apify.js), classement, vignettes, actualisation planifiée (wall.js)
   media.js           fichiers vidéo du studio : dépôt par morceaux, ffprobe, stockage
   clip-suggestions.js  extraits proposés par le LLM (numéros de lignes, horaires issus de la transcription)
   trends.js          tendances : comptage des mots par mois, mots les plus prononcés, cache et limites

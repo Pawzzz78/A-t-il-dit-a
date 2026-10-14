@@ -155,3 +155,12 @@ label.check { display: inline-flex; gap: .4rem; align-items: center; font-weight
 .ref img { width: 100%; max-width: 112px; height: auto; border-radius: .4rem; background: #eee; }
 .ref figcaption { display: grid; gap: .3rem; justify-items: center; width: 100%; }
 .ref-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .75rem; color: var(--color-muted); }
+
+/* Mur des clips */
+.wall-table-wrap { overflow-x: auto; }
+.wall-table td { vertical-align: top; }
+.wall-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wall-thumb { width: 36px; height: 64px; object-fit: cover; border-radius: .3rem; background: var(--color-surface-alt); display: block; }
+.wall-thumb.none { display: grid; place-items: center; color: var(--color-muted); }
+.wall-text { max-width: 24rem; margin: .2rem 0 0; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.wall-hidden { opacity: .45; }

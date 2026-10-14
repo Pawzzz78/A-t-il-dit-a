@@ -159,3 +159,27 @@ CREATE TABLE IF NOT EXISTS face_references (
 -- Reconnaissance dans une interview : [indice d'image, indice du visage, ressemblance] ; `ident_version` : jeu de photos utilisé
 ALTER TABLE video_faces ADD COLUMN IF NOT EXISTS ident         JSONB;
 ALTER TABLE video_faces ADD COLUMN IF NOT EXISTS ident_version TEXT;
+
+-- Mur des clips : vidéos TikTok du hashtag suivi (récupérées via Apify), classées par vues, j'aime et commentaires.
+CREATE TABLE IF NOT EXISTS wall_clips (
+  id         TEXT PRIMARY KEY,
+  url        TEXT NOT NULL,
+  author     TEXT NOT NULL,
+  nickname   TEXT NOT NULL DEFAULT '',
+  text       TEXT NOT NULL DEFAULT '',
+  hashtags   JSONB NOT NULL DEFAULT '[]',
+  created_at TIMESTAMPTZ,
+  views      BIGINT NOT NULL DEFAULT 0,
+  likes      BIGINT NOT NULL DEFAULT 0,
+  comments   BIGINT NOT NULL DEFAULT 0,
+  shares     BIGINT NOT NULL DEFAULT 0,
+  saves      BIGINT NOT NULL DEFAULT 0,
+  duration_s INTEGER,
+  cover_url  TEXT,
+  has_cover  BOOLEAN NOT NULL DEFAULT FALSE,
+  hidden     BOOLEAN NOT NULL DEFAULT FALSE,
+  first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_seen  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS wall_clips_created_idx ON wall_clips (created_at DESC);
+CREATE TABLE IF NOT EXISTS wall_hidden_authors (author TEXT PRIMARY KEY);

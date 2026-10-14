@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Le mur des clips – Lisnard Studio</title>
+  <meta name="description" content="Les TikToks les plus vus, aimés et commentés avec le hashtag #lisnard2027, classés automatiquement.">
+  <meta name="theme-color" content="#1d257a">
+  <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/montserrat-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/fraunces-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/fraunces-italic-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/wall.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="Lisnard Studio, accueil"><span class="wordmark" aria-hidden="true"><span class="wm-a">Lisnard</span><span class="wm-b">Studio</span></span></a>
+      <nav aria-label="Sections du site"><a href="/">Studio</a><a href="/mur/" aria-current="page">Le mur</a></nav>
+    </div>
+  </header>
+
+  <section class="hero compact">
+    <div class="wrap">
+      <p class="eyebrow">Le mur</p>
+      <h1>Les meilleurs <em>TikToks</em></h1>
+      <p>Les vidéos les plus vues, aimées et commentées avec <strong>#lisnard2027</strong>. Le classement se met à jour tout seul.</p>
+    </div>
+  </section>
+
+  <main class="wrap wall" id="wall">
+    <div class="wall-bar card" role="group" aria-label="Classement">
+      <div class="pills" id="sorts" role="group" aria-label="Trier par"></div>
+      <label class="wall-period">Période
+        <select id="period">
+          <option value="all">Depuis le début</option>
+          <option value="30">30 derniers jours</option>
+          <option value="7">7 derniers jours</option>
+        </select>
+      </label>
+    </div>
+    <p class="wall-updated" id="updated" aria-live="polite"></p>
+
+    <ol class="podium" id="podium" aria-label="Podium"></ol>
+    <ol class="clip-grid" id="grid"></ol>
+    <p class="wall-empty" id="state" role="status">Chargement du mur…</p>
+    <div class="wall-more"><button class="btn secondary" id="more" type="button" hidden>Voir plus de clips</button></div>
+
+    <aside class="wall-cta card">
+      <div>
+        <p class="eyebrow">À toi de jouer</p>
+        <h2>Crée ton clip et rejoins le mur</h2>
+        <p>Choisis un extrait d’interview dans le studio, ajoute sous-titres et musique, puis publie-le sur TikTok avec <strong>#lisnard2027</strong> : il apparaîtra ici à la prochaine mise à jour.</p>
+      </div>
+      <a class="btn" href="/">Créer mon TikTok</a>
+    </aside>
+    <p class="wall-note" id="explain"></p>
+  </main>
+
+  <dialog class="clip-dialog" id="dialog" aria-labelledby="dialog-title">
+    <form method="dialog" class="dialog-close"><button aria-label="Fermer" class="close">×</button></form>
+    <h2 id="dialog-title"></h2>
+    <p class="dialog-text" id="dialog-text"></p>
+    <div class="dialog-stats" id="dialog-stats"></div>
+    <div class="dialog-player" id="dialog-player"></div>
+    <p class="dialog-note">Le lecteur de TikTok se charge à l’ouverture de cette fenêtre : TikTok peut alors déposer ses propres cookies.</p>
+    <a class="btn secondary small" id="dialog-link" target="_blank" rel="noopener noreferrer">Ouvrir sur TikTok</a>
+  </dialog>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <span class="footer-brand" role="img" aria-label="Lisnard Studio"><span class="wordmark" aria-hidden="true"><span class="wm-a">Lisnard</span><span class="wm-b">Studio</span></span></span>
+      <p>Initiative indépendante de soutiens. Ce site ne dépend ni de Nouvelle Énergie ni de David Lisnard. · <a href="/mentions-legales/">Mentions légales</a></p>
+    </div>
+  </footer>
+  <script src="/js/wall.js" type="module"></script>
+</body>
+</html>

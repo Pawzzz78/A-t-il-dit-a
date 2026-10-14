@@ -5,9 +5,11 @@ import { ffmpegAvailable, storageDir } from './media.js';
 import { adminRouter } from './routes/admin.js';
 import { publicRouter } from './routes/public.js';
 import { studioRouter } from './routes/studio.js';
+import { wallRouter } from './routes/wall.js';
 import { startStudioCleanup, studioCapabilities } from './studio/render.js';
 import { startSummaryScheduler } from './auto-summaries.js';
 import { startScheduler } from './sync.js';
+import { startWallScheduler } from './wall/wall.js';
 
 export function createApp() {
   const app = express();
@@ -26,6 +28,7 @@ export function createApp() {
   const publicDir = new URL('../public', import.meta.url).pathname;
   app.use('/api/admin', express.json({ limit: '10mb' }), adminRouter);
   app.use('/api/studio', studioRouter);
+  app.use('/api/wall', wallRouter);
   app.use('/api', publicRouter);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Route inconnue.' }));
   // anciennes adresses (recherche, vidéos, tendances, studio) : le site ne propose plus que le studio, à la racine
@@ -66,4 +69,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   startScheduler();
   startSummaryScheduler();
   startStudioCleanup();
+  startWallScheduler();
 }

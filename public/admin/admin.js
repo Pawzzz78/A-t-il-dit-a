@@ -137,6 +137,7 @@ async function route() {
     else if (location.hash === '#/studio') await renderStudioStats();
     else if (location.hash === '#/musique') await renderMusicLibrary();
     else if (location.hash === '#/visages') await renderFaceReferences();
+    else if (location.hash === '#/mur') await renderWallAdmin();
     else await renderList();
   } catch (e) {
     if (e instanceof AuthError) return renderLogin();
@@ -152,6 +153,7 @@ function renderNav() {
     h('a', { href: '#/studio' }, 'Studio'),
     h('a', { href: '#/musique' }, 'Musique'),
     h('a', { href: '#/visages' }, 'Reconnaissance'),
+    h('a', { href: '#/mur' }, 'Mur'),
     h('a', { href: '/' }, 'Voir le site'),
     h(
       'a',
@@ -585,6 +587,95 @@ async function renderFaceReferences() {
         h('div', { class: 'actions' }, updateBtn),
         h('p', { class: 'status' }, 'Les vidéos analysées plus tard utilisent automatiquement les photos actuelles. Pour celles déjà analysées, ce bouton relance seulement la reconnaissance (pas la détection des visages).')),
     );
+  }
+  draw();
+  $app.replaceChildren(root);
+}
+
+async function renderWallAdmin() {
+  let data = await api('GET', '/wall');
+  const root = h('div');
+  const note = h('p', { class: 'status', role: 'status' });
+  let timer = 0;
+  const prevCleanup = cleanup;
+  cleanup = () => {
+    prevCleanup();
+    clearTimeout(timer);
+  };
+  const fmtNum = (n) => Number(n).toLocaleString('fr-FR');
+  const when = (iso) => (iso ? new Date(iso).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
+
+  async function reload() {
+    try {
+      data = await api('GET', '/wall');
+    } catch (e) {
+      if (e instanceof AuthError) return route();
+    }
+    draw();
+  }
+  const act = async (fn, okMsg) => {
+    try {
+      await fn();
+      status(note, okMsg, 'ok');
+    } catch (e) {
+      if (e instanceof AuthError) throw e;
+      status(note, e.message, 'err');
+    }
+    await reload();
+  };
+
+  function draw() {
+    clearTimeout(timer);
+    const { config: cfg, last_run: last, counts, busy } = data;
+    const running = Boolean(busy) || last?.status === 'running';
+    const refreshBtn = h('button', { class: 'btn', type: 'button', disabled: running || !cfg.has_token || !cfg.enabled }, running ? 'Actualisation en cours…' : 'Actualiser maintenant');
+    refreshBtn.addEventListener('click', () => act(() => api('POST', '/wall/refresh', {}), 'Actualisation lancée : elle prend quelques minutes (Apify visite TikTok).'));
+    const perRun = cfg.results * 0.0017;
+    const lastText = !last
+      ? 'Jamais actualisé.'
+      : last.status === 'running'
+        ? `Actualisation en cours depuis ${when(last.started_at)}…`
+        : last.status === 'ok'
+          ? `Dernière actualisation réussie : ${when(last.finished_at)} (${last.trigger === 'schedule' ? 'automatique' : 'à la demande'}) : ${fmtNum(last.received ?? 0)} vidéos reçues, ${fmtNum(last.kept ?? 0)} retenues, ${fmtNum(last.added ?? 0)} nouvelle${last.added > 1 ? 's' : ''}, ${fmtNum(last.covers ?? 0)} vignette${last.covers > 1 ? 's' : ''} copiée${last.covers > 1 ? 's' : ''}${last.cost_usd != null ? `, coût Apify ${last.cost_usd.toFixed(2).replace('.', ',')} $` : ''}.`
+          : `Dernière tentative en échec (${when(last.finished_at)}) : ${last.error ?? 'erreur inconnue'}`;
+    const skipped = last?.status === 'ok' && last.skipped ? Object.entries(last.skipped).map(([k, v]) => `${v} ${{ ad: 'publicité(s)', hashtag: 'sans le hashtag', error: 'erreur(s) de l’acteur', invalid: 'illisible(s)' }[k] ?? k}`).join(', ') : '';
+
+    const clipRow = (c) =>
+      h('tr', { class: c.hidden || c.author_hidden ? 'wall-hidden' : '' },
+        h('td', {}, c.cover ? h('img', { src: c.cover, alt: '', width: 36, height: 64, loading: 'lazy', class: 'wall-thumb' }) : h('span', { class: 'wall-thumb none' }, '·')),
+        h('td', {}, h('a', { href: c.url, target: '_blank', rel: 'noopener noreferrer' }, `@${c.author}`), h('div', { class: 'status wall-text' }, c.text)),
+        h('td', { class: 'num' }, fmtNum(c.views)),
+        h('td', { class: 'num' }, fmtNum(c.likes)),
+        h('td', { class: 'num' }, fmtNum(c.comments)),
+        h('td', { class: 'num' }, h('strong', {}, fmtNum(c.score))),
+        h('td', { class: 'actions' },
+          h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/wall/clips/${c.id}`, { hidden: !c.hidden }), c.hidden ? 'Clip rétabli.' : 'Clip masqué.') }, c.hidden ? 'Rétablir' : 'Masquer'),
+          h('button', { class: 'btn secondary small', type: 'button', title: 'Masque tous les clips de cet auteur', onclick: () => act(() => api('PUT', `/wall/authors/${encodeURIComponent(c.author)}`, { hidden: !c.author_hidden }), c.author_hidden ? 'Auteur rétabli.' : 'Auteur masqué.') }, c.author_hidden ? 'Rétablir l’auteur' : 'Masquer l’auteur')));
+
+    root.replaceChildren(
+      h('section', { class: 'panel' },
+        h('h2', {}, 'Mur des clips'),
+        h('p', { class: 'status' }, `Les TikToks publiés avec #${cfg.hashtag} sont récupérés avec Apify (acteur ${cfg.actor}), classés par vues, j’aime et commentaires (score = ${cfg.weights[0]} × vues + ${cfg.weights[1]} × j’aime + ${cfg.weights[2]} × commentaires), et affichés sur la page publique « Le mur ». `, h('a', { href: '/mur/', target: '_blank' }, 'Voir le mur')),
+        !cfg.has_token ? h('p', { class: 'status err' }, 'Jeton Apify absent : ajoute la variable APIFY_TOKEN dans Railway (Apify → Settings → API & Integrations → Personal API token), puis redéploie.') : null,
+        !cfg.enabled ? h('p', { class: 'status err' }, 'Le mur est désactivé (WALL_ENABLED=false).') : null,
+        h('p', { class: 'status' }, lastText),
+        skipped ? h('p', { class: 'status' }, `Écartés : ${skipped}.`) : null,
+        last?.status === 'ok' && last.received > 0 && last.kept === 0 ? h('p', { class: 'status err' }, `Aucune vidéo retenue sur ${last.received} reçues : le format des résultats de l’acteur a peut-être changé. Champs du premier élément : ${(last.sample_keys ?? []).join(', ') || '(aucun)'}.`) : null,
+        last?.status === 'ok' && last.received === 0 ? h('p', { class: 'status err' }, `Apify n’a renvoyé aucune vidéo pour #${cfg.hashtag} : vérifie l’orthographe du hashtag et le crédit Apify.`) : null,
+        h('p', { class: 'status' }, `Actualisation ${cfg.refresh_hours ? `automatique toutes les ${cfg.refresh_hours} h` : 'à la demande seulement'} · ${fmtNum(cfg.results)} vidéos demandées à chaque fois, soit environ ${perRun.toFixed(2).replace('.', ',')} $ d’Apify par actualisation (1,70 $ pour 1 000 résultats)${cfg.refresh_hours ? `, ${(perRun * (24 / cfg.refresh_hours) * 30).toFixed(0)} $ par mois` : ''}.`),
+        h('div', { class: 'actions' }, refreshBtn)),
+      note,
+      h('section', { class: 'panel' },
+        h('h3', {}, `Clips (${fmtNum(counts.total)}, dont ${fmtNum(counts.hidden)} masqué${counts.hidden > 1 ? 's' : ''}, ${fmtNum(counts.covers)} avec vignette)`),
+        data.hidden_authors.length ? h('p', { class: 'status' }, 'Auteurs masqués : ', data.hidden_authors.map((a) => h('button', { class: 'btn secondary small', type: 'button', title: 'Rétablir', onclick: () => act(() => api('PUT', `/wall/authors/${encodeURIComponent(a)}`, { hidden: false }), 'Auteur rétabli.') }, `@${a} ×`))) : null,
+        data.clips.length
+          ? h('div', { class: 'wall-table-wrap' }, h('table', { class: 'videos wall-table' },
+            h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Clip'), h('th', {}, 'Vues'), h('th', {}, 'J’aime'), h('th', {}, 'Comm.'), h('th', {}, 'Score'), h('th', {}, ''))),
+            h('tbody', {}, data.clips.map(clipRow))))
+          : h('p', { class: 'status' }, 'Aucun clip pour le moment : lance une actualisation.'),
+        data.clips.length >= 300 ? h('p', { class: 'status' }, 'Les 300 clips les mieux classés sont listés.') : null),
+    );
+    if (running) timer = setTimeout(reload, 3000);
   }
   draw();
   $app.replaceChildren(root);
