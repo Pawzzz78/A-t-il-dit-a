@@ -124,6 +124,7 @@ test('analyse admin : visages et changement de plan détectés, résultat enregi
   assert.equal(done.status, 'ready', JSON.stringify(done));
   assert.equal(done.summary.seconds, DURATION);
   assert.ok(done.summary.cuts >= 1);
+  assert.ok(done.summary.share > 0.9 && Math.abs(done.summary.median_w - 0.085) < 0.02, JSON.stringify(done.summary)); // qualité de la détection
   const { rows } = await pool.query('SELECT content FROM video_faces WHERE video_id = $1', [videoId]);
   const { frames, cuts, fps, aspect } = rows[0].content;
   assert.deepEqual([fps, Math.round(aspect * 100) / 100], [5, 1.78]);
@@ -135,6 +136,19 @@ test('analyse admin : visages et changement de plan détectés, résultat enregi
     assert.ok(Math.abs(x + w / 2 - FACE_CENTER(t)) < 0.03, `t=${t} : visage en ${x + w / 2}, attendu ${FACE_CENTER(t)}`);
   }
   // la vidéo est proposée avec le cadrage automatique possible
+  assert.equal((await call('GET', `/api/studio/videos/${YT}`)).body.faces.ready, true);
+});
+
+test('détection trop pauvre (visages rarement vus) : le studio annonce que le cadrage automatique est indisponible', { skip: !enabled }, async () => {
+  const { rows } = await pool.query("SELECT content->'stats' AS stats FROM video_faces WHERE video_id = $1", [videoId]);
+  try {
+    await pool.query("UPDATE video_faces SET content = jsonb_set(content, '{stats}', '{\"share\":0.1,\"median_w\":0.03}') WHERE video_id = $1", [videoId]);
+    const poor = (await call('GET', `/api/studio/videos/${YT}`)).body.faces;
+    assert.deepEqual([poor.ready, poor.poor], [false, true]);
+    assert.equal((await call('GET', `/api/admin/videos/${videoId}/clips`)).body.faces.summary.share, 0.1);
+  } finally {
+    await pool.query("UPDATE video_faces SET content = jsonb_set(content, '{stats}', $2::jsonb) WHERE video_id = $1", [videoId, JSON.stringify(rows[0].stats)]);
+  }
   assert.equal((await call('GET', `/api/studio/videos/${YT}`)).body.faces.ready, true);
 });
 
@@ -192,7 +206,7 @@ test('cadrage automatique indisponible sans analyse : le cadre manuel s\'appliqu
   assert.equal((await call('GET', `/api/admin/videos/${videoId}/clips`)).body.faces.status, 'none');
   assert.equal((await call('GET', `/api/studio/videos/${YT}`)).body.faces.ready, false);
   const r = await call('POST', '/api/studio/framing', { youtube_id: YT, extracts: [{ start_ms: 2000, end_ms: 28000 }] });
-  assert.deepEqual(r.body, { segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0, ident_best: null });
+  assert.deepEqual(r.body, { segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0, ident_best: null, reason: 'none', missing: 1 });
   const job = await call('POST', '/api/studio/render', { youtube_id: YT, extracts: [{ start_ms: 2000, end_ms: 8000 }], music: null, layout: { fit: 'crop', cropX: 0.5, quality: 'fast', follow: { on: true } } });
   assert.equal(job.status, 202); // le rendu part quand même, avec le cadre manuel
 });

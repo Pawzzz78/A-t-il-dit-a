@@ -21,6 +21,8 @@ export const FRAMING = {
   samePerson: 0.363, // similarité d'empreintes à partir de laquelle un visage est celui de la personne de référence (seuil SFace d'OpenCV)
   likelyPerson: 0.28, // en dessous du seuil, un visage reste retenu s'il ressemble nettement plus à la personne que les autres visages du plan…
   likelyMargin: 0.1, // … d'au moins cet écart
+  minCoverage: 0.5, // en dessous, le visage est trop peu visible dans l'extrait : pas de cadrage automatique
+  minFaceWidth: 0.04, // en dessous (fraction de la largeur de l'image), le visage est trop petit pour être suivi de façon fiable
 };
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -222,9 +224,11 @@ export function framingForExtract({ frames, fps, aspect, startMs, endMs, subject
   let crowded = 0;
   let recognized = 0;
   let identBest = null;
+  const widths = [];
   const parts = shots.map((sh) => {
     if (!sh.track) return { ...sh, keys: null };
     detected += sh.track.count;
+    for (const p of sh.track.pts) widths.push(p.w);
     faces = Math.max(faces, faceCount(sh.tracks));
     if (faceCount(sh.tracks) > 1) {
       crowded++;
@@ -252,7 +256,8 @@ export function framingForExtract({ frames, fps, aspect, startMs, endMs, subject
     }
   }
   const expected = Math.max(1, Math.round((toS - fromS) * fps));
-  return { keys, faces, coverage: round(Math.min(1, detected / expected), 2), crowded, recognized, identBest };
+  widths.sort((a, b) => a - b);
+  return { keys, faces, coverage: round(Math.min(1, detected / expected), 2), faceW: widths.length ? widths[Math.floor(widths.length / 2)] : 0, crowded, recognized, identBest };
 }
 
 /**
@@ -266,9 +271,19 @@ export function framingForClip({ frames, fps, aspect, extracts, subject = 'auto'
   let crowded = 0;
   let recognized = 0;
   let identBest = null;
+  const off = { none: 0, small: 0, rare: 0 }; // extraits sans cadrage automatique, selon la raison
   const segments = extracts.map((e) => {
     const dur = (e.end_ms - e.start_ms) / 1000;
-    const r = framingForExtract({ frames, fps, aspect, startMs: e.start_ms, endMs: e.end_ms, subject, cuts, ident });
+    let r = framingForExtract({ frames, fps, aspect, startMs: e.start_ms, endMs: e.end_ms, subject, cuts, ident });
+    // visage trop petit ou trop peu visible : mieux vaut le cadre manuel qu'un suivi qui se perd
+    if (!r) off.none++;
+    else if (r.faceW < FRAMING.minFaceWidth) {
+      off.small++;
+      r = null;
+    } else if (r.coverage < FRAMING.minCoverage) {
+      off.rare++;
+      r = null;
+    }
     const seg = { t0: round(t0, 3), t1: round(t0 + dur, 3), keys: r ? r.keys : null };
     t0 += dur;
     if (r) {
@@ -280,7 +295,10 @@ export function framingForClip({ frames, fps, aspect, extracts, subject = 'auto'
     }
     return seg;
   });
-  return { segments, faces, coverage: t0 ? round(covered / t0, 2) : 0, crowded, recognized, identBest: identBest === null ? null : round(identBest, 2) };
+  const missing = off.none + off.small + off.rare;
+  // pourquoi le cadrage automatique manque (le plus fréquent) : « small », « rare » ou « none » (aucun visage)
+  const reason = missing ? Object.entries(off).sort((x, y) => y[1] - x[1])[0][0] : null;
+  return { segments, faces, coverage: t0 ? round(covered / t0, 2) : 0, crowded, recognized, identBest: identBest === null ? null : round(identBest, 2), reason, missing };
 }
 
 /** Position du cadre à l'instant t (secondes depuis le début du segment). */

@@ -104,7 +104,9 @@ studioRouter.get(
 /** Ce que le studio a besoin de savoir des visages d'une vidéo. */
 async function publicFaces(v) {
   const f = await facesStatus(v);
-  return { ready: f.status === 'ready', identified: f.status === 'ready' && f.ident.state === 'ready' };
+  // détection trop pauvre (visages trop petits ou rarement vus dans toute l'interview) : le cadrage automatique est indisponible
+  const poor = f.status === 'ready' && f.summary?.share !== null && f.summary?.share !== undefined && f.summary.share < 0.15;
+  return { ready: f.status === 'ready' && !poor, poor, identified: f.status === 'ready' && !poor && f.ident.state === 'ready' };
 }
 
 /** Une vidéo du studio : extraits proposés et lignes de la transcription (pour ajuster le début et la fin ligne par ligne). */
@@ -141,7 +143,18 @@ studioRouter.post(
     const request = normalizeRequest({ ...req.body, layout: { ...req.body?.layout, fit: 'crop', follow: { on: true, subject: req.body?.subject } } }, v);
     const clip = await framingForRequest(v, request);
     res.set('Cache-Control', 'no-store');
-    res.json(clip ? { segments: clip.segments, faces: clip.faces, coverage: clip.coverage, crowded: clip.crowded, recognized: clip.recognized, ident_best: clip.identBest } : { segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0, ident_best: null });
+    const usable = clip?.segments.some((seg) => seg.keys);
+    res.json({
+      segments: usable ? clip.segments : null,
+      faces: usable ? clip.faces : 0,
+      coverage: usable ? clip.coverage : 0,
+      crowded: usable ? clip.crowded : 0,
+      recognized: usable ? clip.recognized : 0,
+      ident_best: usable ? clip.identBest : null,
+      // pourquoi le cadrage automatique manque, en tout ou pour certains extraits : « small » (visage trop petit), « rare » (trop peu visible), « none »
+      reason: clip ? clip.reason : 'none',
+      missing: clip ? clip.missing : request.extracts.length,
+    });
   }),
 );
 

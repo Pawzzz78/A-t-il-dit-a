@@ -1330,7 +1330,7 @@ async function renderEditor(id) {
       none: 'Pas encore analysée : en plein écran, les visiteurs devront cadrer à la main.',
       queued: `${phase} en attente…`,
       running: `${phase} en cours… ${Math.round((fc.progress ?? 0) * 100)} % (quelques minutes pour une interview d’une heure ; le site reste utilisable).`,
-      ready: `Visages repérés (${fc.summary?.seconds ?? '?'} s analysées à ${fc.summary?.fps ?? '?'} image${fc.summary?.fps > 1 ? 's' : ''} par seconde, ${fc.summary?.cuts ?? 0} changement${fc.summary?.cuts > 1 ? 's' : ''} de plan). En plein écran, le cadre suit la personne qui parle.`,
+      ready: `Visages repérés (${fc.summary?.seconds ?? '?'} s analysées à ${fc.summary?.fps ?? '?'} image${fc.summary?.fps > 1 ? 's' : ''} par seconde, ${fc.summary?.cuts ?? 0} changement${fc.summary?.cuts > 1 ? 's' : ''} de plan).${fc.summary?.share != null ? ` Un visage est détecté sur ${Math.round(fc.summary.share * 100)} % du temps, largeur médiane ${Math.round((fc.summary.median_w ?? 0) * 1000) / 10} % de l’image.` : ''} En plein écran, le cadre suit la personne qui parle.`,
       failed: `L’analyse a échoué : ${fc.error ?? 'erreur inconnue'}`,
       stale: 'La vidéo a été remplacée depuis l’analyse : relance-la.',
     }[fc.status];
@@ -1364,6 +1364,11 @@ async function renderEditor(id) {
     facesBox.replaceChildren(
       h('h3', { class: 'clips-sub' }, 'Cadrage automatique sur le visage'),
       h('p', { class: `status${fc.status === 'failed' ? ' err' : ''}` }, text),
+      fc.status === 'ready' && fc.summary?.share != null && (fc.summary.share < 0.5 || fc.summary.median_w < 0.04)
+        ? h('p', { class: 'status err' }, fc.summary.share < 0.15
+            ? 'Visages trop petits ou rarement visibles dans cette vidéo : le cadrage automatique sera indisponible pour les visiteurs.'
+            : 'Visages petits ou souvent absents dans cette vidéo : le cadrage automatique ne sera proposé que pour les clips où le visage est assez grand et visible (la reconnaissance peut aussi échouer).')
+        : null,
       identText ? h('p', { class: 'status' }, identText) : null,
       h('div', { class: 'actions' }, btn, identBtn));
     if (busy) {

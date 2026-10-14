@@ -126,7 +126,7 @@ async function save(job, { aspect, fps, refs }, result) {
   if (kind === 'identify') {
     await pool.query('UPDATE video_faces SET ident = $2, ident_version = $3 WHERE video_id = $1 AND status = \'ready\' AND file_stamp = $4', [video.id, identJson, identVersion, stampOf(video)]);
   } else {
-    const content = { fps, aspect: Math.round(aspect * 1000) / 1000, model: FACES.model, cuts: result.cuts, frames: result.frames };
+    const content = { fps, aspect: Math.round(aspect * 1000) / 1000, model: FACES.model, cuts: result.cuts, frames: result.frames, stats: detectionStats(result.frames) };
     await pool.query(
       `INSERT INTO video_faces (video_id, status, content, error, file_stamp, analyzed_at, ident, ident_version) VALUES ($1, 'ready', $2, NULL, $3, now(), $4, $5)
        ON CONFLICT (video_id) DO UPDATE SET status = 'ready', content = $2, error = NULL, file_stamp = $3, analyzed_at = now(), ident = $4, ident_version = $5`,
@@ -134,6 +134,12 @@ async function save(job, { aspect, fps, refs }, result) {
     );
   }
   cache.delete(video.id);
+}
+
+/** Qualité de la détection : part du temps où un visage est vu, largeur médiane des visages (fraction de l'image). */
+function detectionStats(frames) {
+  const widths = frames.flatMap((f) => f.map((d) => d[2])).sort((a, b) => a - b);
+  return { share: frames.length ? Math.round((frames.filter((f) => f.length).length / frames.length) * 100) / 100 : 0, median_w: widths.length ? widths[Math.floor(widths.length / 2)] : 0 };
 }
 
 function enqueue(video, kind, content = null) {
@@ -205,7 +211,7 @@ export async function facesStatus(video) {
   if (l) return { status: l.status, kind: l.kind, progress: Math.round(l.progress * 100) / 100, phase: l.phase, ident: { state: refs.count ? 'none' : 'off' } };
   const { rows } = await pool.query(
     `SELECT status, error, file_stamp, analyzed_at, ident_version,
-            jsonb_array_length(content->'frames') AS frames, jsonb_array_length(content->'cuts') AS cuts, (content->>'fps')::float AS fps,
+            jsonb_array_length(content->'frames') AS frames, jsonb_array_length(content->'cuts') AS cuts, (content->>'fps')::float AS fps, content->'stats' AS stats,
             jsonb_array_length(COALESCE(ident, '[]'::jsonb)) AS samples,
             (SELECT count(*) FROM jsonb_array_elements(COALESCE(ident, '[]'::jsonb)) e WHERE (e->>2)::float >= 0.363)::int AS matches
      FROM video_faces WHERE video_id = $1`,
@@ -219,7 +225,7 @@ export async function facesStatus(video) {
   return {
     status: 'ready',
     analyzed_at: r.analyzed_at,
-    summary: { seconds: Math.round(r.frames / (r.fps || 1)), cuts: r.cuts, fps: r.fps },
+    summary: { seconds: Math.round(r.frames / (r.fps || 1)), cuts: r.cuts, fps: r.fps, share: r.stats?.share ?? null, median_w: r.stats?.median_w ?? null },
     ident: { state: identState, samples: r.samples, matches: r.matches },
   };
 }
@@ -246,12 +252,12 @@ export async function loadFaces(video) {
 
 /**
  * Cadrage automatique d'une demande de clip (mode plein écran, suivi activé) :
- * { segments, faces, coverage, crowded, recognized } ou null si indisponible (pas d'analyse, pas de visage).
+ * { segments, faces, coverage, crowded, recognized, reason, missing } ; les extraits sans visage fiable ont `keys: null` (cadre manuel).
+ * null si la vidéo n'a pas été analysée.
  */
 export async function framingForRequest(video, req) {
   if (req.layout.fit !== 'crop' || !req.layout.follow?.on) return null;
   const data = await loadFaces(video);
   if (!data) return null;
-  const clip = framingForClip({ frames: data.frames, fps: data.fps, aspect: data.aspect, extracts: req.extracts, subject: req.layout.follow.subject, cuts: data.cuts, ident: data.ident });
-  return clip.segments.some((s) => s.keys) ? clip : null;
+  return framingForClip({ frames: data.frames, fps: data.fps, aspect: data.aspect, extracts: req.extracts, subject: req.layout.follow.subject, cuts: data.cuts, ident: data.ident });
 }

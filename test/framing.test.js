@@ -212,6 +212,28 @@ test('vidéo longue (une image toutes les 2 s) : même résultat', () => {
   assert.ok(r.coverage > 0.9, String(r.coverage));
 });
 
+test('clip : visage trop petit ou trop peu visible = pas de cadrage automatique pour ces extraits, avec la raison', () => {
+  const clip = (frames, extracts) => framingForClip({ frames, fps: 1, aspect: ASPECT, extracts });
+  const both = [{ start_ms: 0, end_ms: 20000 }, { start_ms: 20000, end_ms: 40000 }];
+  // visage de 3 % de la largeur de l'image : trop petit
+  const small = clip(video(40, () => [[0.5, 0.03]]), both);
+  assert.deepEqual([small.segments.map((s) => s.keys), small.reason, small.missing], [[null, null], 'small', 2]);
+  // visage vu une image sur trois : trop peu visible
+  const rare = clip(Array.from({ length: 41 }, (_, i) => (i % 3 === 0 ? [[0.47, 0.3, 0.06, 0.1, 0.9]] : [])), both);
+  assert.deepEqual([rare.segments.map((s) => s.keys), rare.reason, rare.missing], [[null, null], 'rare', 2]);
+  // aucun visage
+  assert.deepEqual([clip(video(40, () => []), both).reason, clip(video(40, () => []), both).missing], ['none', 2]);
+  // un extrait bon, un mauvais : le bon est suivi, l'autre garde le cadre manuel, et on le signale
+  const frames = video(40, (t) => (t < 20 ? [[0.3]] : [[0.5, 0.025]]));
+  const mixed = clip(frames, both);
+  assert.ok(mixed.segments[0].keys && mixed.segments[1].keys === null);
+  assert.deepEqual([mixed.reason, mixed.missing], ['small', 1]);
+  assert.equal(cropXAtClip(mixed.segments, 30, 0.37), 0.37);
+  // tout va bien : aucune raison
+  const fine = clip(video(40, () => [[0.4]]), both);
+  assert.deepEqual([fine.reason, fine.missing], [null, 0]);
+});
+
 test('suivi des visages : un visage qui passe derrière un autre garde son identité', () => {
   const frames = video(20, (t) => [[0.3 + t * 0.01], [0.8]]);
   const tracks = faceTracks(frames, 1, ASPECT, 0, 20);
