@@ -192,7 +192,7 @@ test('cadrage automatique indisponible sans analyse : le cadre manuel s\'appliqu
   assert.equal((await call('GET', `/api/admin/videos/${videoId}/clips`)).body.faces.status, 'none');
   assert.equal((await call('GET', `/api/studio/videos/${YT}`)).body.faces.ready, false);
   const r = await call('POST', '/api/studio/framing', { youtube_id: YT, extracts: [{ start_ms: 2000, end_ms: 28000 }] });
-  assert.deepEqual(r.body, { segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0 });
+  assert.deepEqual(r.body, { segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0, ident_best: null });
   const job = await call('POST', '/api/studio/render', { youtube_id: YT, extracts: [{ start_ms: 2000, end_ms: 8000 }], music: null, layout: { fit: 'crop', cropX: 0.5, quality: 'fast', follow: { on: true } } });
   assert.equal(job.status, 202); // le rendu part quand même, avec le cadre manuel
 });

@@ -176,7 +176,7 @@ async function openEditor(youtubeId) {
     try {
       const r = await api('POST', '/framing', { youtube_id: S.video.youtube_id, extracts: S.extracts.map(exMs), subject: S.layout.follow.subject });
       if (mine !== framingTicket) return;
-      S.framing = { ...S.framing, segments: r.segments, faces: r.faces, coverage: r.coverage, crowded: r.crowded ?? 0, recognized: r.recognized ?? 0, loading: false };
+      S.framing = { ...S.framing, segments: r.segments, faces: r.faces, coverage: r.coverage, crowded: r.crowded ?? 0, recognized: r.recognized ?? 0, identBest: r.ident_best ?? null, loading: false };
     } catch {
       if (mine !== framingTicket) return;
       S.framing = { ...S.framing, segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0, loading: false };
@@ -618,7 +618,7 @@ async function openEditor(youtubeId) {
         if (S.layout.follow.subject === 'lisnard' && fr.crowded) {
           status = fr.recognized === fr.crowded
             ? `David Lisnard est reconnu dans ${fr.crowded > 1 ? `les ${fr.crowded} plans` : 'le plan'} où plusieurs personnes apparaissent : le cadre le suit (${seen}).`
-            : `David Lisnard est reconnu dans ${fr.recognized} des ${fr.crowded} plans à plusieurs personnes ; ailleurs le cadre suit le plus gros visage (${seen}).`;
+            : `David Lisnard est reconnu dans ${fr.recognized} des ${fr.crowded} plan${fr.crowded > 1 ? 's' : ''} à plusieurs personnes ; ailleurs le cadre suit le plus gros visage${fr.identBest !== null ? ` (ressemblance la plus forte relevée : ${String(fr.identBest).replace('.', ',')}, il en faut 0,36 : ajoute des photos de référence proches de cette interview)` : ' (ce plan n’a pas été comparé aux photos : relance la reconnaissance depuis l’admin)'} (${seen}).`;
         } else status = `${fr.faces > 1 ? `${fr.faces} visages repérés. ` : ''}Le cadre suit ${who} (${seen}).`;
       }
     }

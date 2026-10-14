@@ -10,15 +10,17 @@
 // seule une coupe de montage fait « sauter » le cadre, comme la coupe elle-même.
 
 export const FRAMING = {
-  linkGapS: 3, // un visage perdu moins longtemps que ça garde son identité
+  linkGapS: 6, // un visage perdu moins longtemps que ça (détourné, caché par un geste) garde son identité
   maxGapS: 3, // au-delà, la position est maintenue plutôt qu'interpolée
-  deadWin: 0.12, // zone morte : part de la largeur du cadre où le visage peut bouger sans que le cadre suive
+  deadWin: 0.2, // zone morte : part de la largeur du cadre où le visage peut bouger (hochements, gestes) sans que le cadre suive
   vmaxWin: 0.45, // vitesse maximale du cadre, en largeurs de cadre par seconde
   amaxWin: 0.8, // accélération maximale, en largeurs de cadre par seconde²
   stepS: 0.05, // pas d'observation du visage
   minMoveS: 0.8, // durée minimale d'un déplacement du cadre
   minShare: 0.2, // un visage compte s'il apparaît au moins 20 % du temps du visage le plus présent
   samePerson: 0.363, // similarité d'empreintes à partir de laquelle un visage est celui de la personne de référence (seuil SFace d'OpenCV)
+  likelyPerson: 0.28, // en dessous du seuil, un visage reste retenu s'il ressemble nettement plus à la personne que les autres visages du plan…
+  likelyMargin: 0.1, // … d'au moins cet écart
 };
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -27,13 +29,35 @@ const round = (v, n) => Math.round(v * 10 ** n) / 10 ** n;
 /** Largeur de la fenêtre 9:16 en fraction de la largeur de la source (aspect = largeur / hauteur de la source). */
 export const windowWidth = (aspect) => 9 / 16 / aspect;
 
+/** Limites du plan (entre deux coupes) qui contient [fromS, toS], en secondes ; `total` : durée couverte par les visages. */
+export function shotBounds(fromS, toS, cuts = [], total = Infinity) {
+  const before = cuts.filter((c) => c <= fromS + 1e-9);
+  const after = cuts.filter((c) => c >= toS - 1e-9);
+  return { from: before.length ? Math.max(...before) : 0, to: after.length ? Math.min(...after) : total };
+}
+
+/** Un visage peut-il être le même qu'au dernier point d'un visage suivi ? (distance en hauteurs d'image, taille cohérente) */
+function sameFace(d, last, t, aspect, cx, cy, h) {
+  const gap = t - last.t;
+  if (gap > FRAMING.linkGapS + 1e-9) return null;
+  const ratio = h / last.h;
+  if (ratio < 0.5 || ratio > 2) return null; // un gros visage et un petit ne sont pas le même
+  const dist = Math.hypot((cx - last.cx) * aspect, cy - last.cy);
+  const reach = Math.max(h, last.h) * (0.6 + 0.4 * Math.min(gap, 3)); // un visage ne va pas loin entre deux images, davantage s'il a été perdu un moment
+  return dist < Math.max(0.04, reach) ? dist : null;
+}
+
 /**
- * Regroupe les détections en visages suivis dans le temps. Renvoie [{ pts: [{ t, cx, cy, h, s }], weight, share, meanX }] ;
- * `weight` (taille × netteté × présence dans [fromS, toS]) sert à désigner « le visage le plus gros ».
+ * Regroupe les détections en visages suivis dans le temps. Renvoie [{ pts, weight, share, meanX, ident }] ;
+ * `weight` (taille × netteté × présence) sert à désigner « le visage le plus gros ».
+ * Seuls les points de [fromS, toS[ sont gardés et comptés, mais les visages sont suivis sur `link` ({ from, to } : tout le plan)
+ * et leur ressemblance avec la personne de référence est lue sur tout le plan : les comparaisons ont été faites sur quelques
+ * images du plan, qui n'est pas forcément celles de l'extrait.
  */
-export function faceTracks(frames, fps, aspect, fromS, toS, ident = null) {
-  const i0 = Math.max(0, Math.ceil(fromS * fps - 1e-9));
-  const i1 = Math.min(frames.length - 1, Math.ceil(toS * fps - 1e-9) - 1); // [fromS, toS[ : l'image tombant pile sur la fin appartient au plan suivant
+export function faceTracks(frames, fps, aspect, fromS, toS, ident = null, link = null) {
+  const [linkFrom, linkTo] = [link?.from ?? fromS, link?.to ?? toS];
+  const i0 = Math.max(0, Math.ceil(linkFrom * fps - 1e-9));
+  const i1 = Math.min(frames.length - 1, Math.ceil(linkTo * fps - 1e-9) - 1); // [from, to[ : l'image tombant pile sur la fin appartient au plan suivant
   const tracks = [];
   for (let i = i0; i <= i1; i++) {
     const t = i / fps;
@@ -46,10 +70,8 @@ export function faceTracks(frames, fps, aspect, fromS, toS, ident = null) {
       let bestD = Infinity;
       for (const tr of tracks) {
         if (taken.has(tr)) continue;
-        const last = tr.pts[tr.pts.length - 1];
-        if (t - last.t > FRAMING.linkGapS + 1e-9) continue;
-        const d = Math.hypot((cx - last.cx) * aspect, cy - last.cy); // en hauteurs d'image
-        if (d < Math.max(0.12, 1.5 * Math.max(h, last.h)) && d < bestD) {
+        const d = sameFace(null, tr.pts[tr.pts.length - 1], t, aspect, cx, cy, h);
+        if (d !== null && d < bestD) {
           best = tr;
           bestD = d;
         }
@@ -62,15 +84,16 @@ export function faceTracks(frames, fps, aspect, fromS, toS, ident = null) {
       best.pts.push({ t, cx, cy, h, s, w, fi: i, di });
     }
   }
-  const inRange = () => true;
+  const inRange = (p) => p.t >= fromS - 1e-9 && p.t < toS - 1e-9;
   const out = tracks
     .map((tr) => {
       const mine = tr.pts.filter(inRange);
-      // identité : meilleure similarité avec la personne de référence parmi les points où le visage a été comparé
-      const sims = ident ? tr.pts.map((p) => ident.get(`${p.fi}:${p.di}`)).filter((v) => v !== undefined) : [];
+      // identité : moyenne du tiers supérieur des ressemblances relevées sur le visage (un mauvais cliché ne compte pas, ni un hasard)
+      const sims = ident ? tr.pts.map((p) => ident.get(`${p.fi}:${p.di}`)).filter((v) => v !== undefined).sort((a, b) => b - a) : [];
+      const top = sims.slice(0, Math.max(1, Math.ceil(sims.length / 3)));
       return {
-        ident: sims.length ? Math.max(...sims) : null,
-        pts: tr.pts,
+        ident: sims.length ? top.reduce((a, v) => a + v, 0) / top.length : null,
+        pts: mine,
         count: mine.length,
         weight: mine.reduce((a, p) => a + p.w * aspect * p.h * p.s, 0),
         meanX: mine.length ? mine.reduce((a, p) => a + p.cx, 0) / mine.length : 0.5,
@@ -91,8 +114,15 @@ export function pickTrack(tracks, subject = 'auto') {
   const pool = real.length ? real : tracks.filter((tr) => tr.share === 1);
   if (!pool.length) return null;
   if (subject === 'lisnard') {
-    const hits = pool.filter((tr) => tr.ident !== null && tr.ident >= FRAMING.samePerson).sort((a, b) => b.ident - a.ident);
-    if (hits.length) return hits[0];
+    const known = pool.filter((tr) => tr.ident !== null).sort((a, b) => b.ident - a.ident);
+    if (known.length) {
+      const [first, second] = known;
+      // sûr : la ressemblance atteint le seuil ; probable : elle est plus faible mais nettement au-dessus de celle des autres visages
+      if (first.ident >= FRAMING.samePerson || (first.ident >= FRAMING.likelyPerson && first.ident - (second?.ident ?? 0) >= FRAMING.likelyMargin)) {
+        first.recognized = true;
+        return first;
+      }
+    }
   }
   if (subject === 'left') return pool.reduce((a, b) => (b.meanX < a.meanX ? b : a));
   if (subject === 'right') return pool.reduce((a, b) => (b.meanX > a.meanX ? b : a));
@@ -102,7 +132,8 @@ export function pickTrack(tracks, subject = 'auto') {
 /** Nombre de visages distincts présents de façon significative dans l'extrait. */
 export const faceCount = (tracks) => tracks.filter((tr) => tr.share >= FRAMING.minShare && tr.count >= 2).length;
 
-const median3 = (a) => a.map((_, i) => [a[Math.max(0, i - 1)], a[i], a[Math.min(a.length - 1, i + 1)]].sort((p, q) => p - q)[1]);
+/** Médiane glissante sur 5 valeurs : écarte les détections isolées (visage mal placé sur une image). */
+const median5 = (a) => a.map((_, i) => [-2, -1, 0, 1, 2].map((d) => a[clamp(i + d, 0, a.length - 1)]).sort((p, q) => p - q)[2]);
 
 /** Courbe douce (départ et arrivée à vitesse nulle) entre deux points-clés. */
 const ease = (u) => u * u * (3 - 2 * u);
@@ -119,7 +150,7 @@ export function framingPath(track, fromS, toS, aspect, startX = null) {
   if (cw >= 0.999) return [{ t: 0, x: 0.5 }, { t: round(dur, 3), x: 0.5 }]; // source plus étroite que l'écran : rien à cadrer
   const k = cw / (1 - cw); // largeur de cadre exprimée en unités de cropX
   const pts = track.pts;
-  const target = median3(pts.map((p) => clamp((p.cx - cw / 2) / (1 - cw), 0, 1)));
+  const target = median5(pts.map((p) => clamp((p.cx - cw / 2) / (1 - cw), 0, 1)));
   const at = (t) => {
     if (t <= pts[0].t) return target[0];
     if (t >= pts[pts.length - 1].t) return target[target.length - 1];
@@ -179,7 +210,7 @@ export function splitShots(fromS, toS, cuts = []) {
 export function framingForExtract({ frames, fps, aspect, startMs, endMs, subject = 'auto', cuts = [], ident = null }) {
   const [fromS, toS] = [startMs / 1000, endMs / 1000];
   const shots = splitShots(fromS, toS, cuts).map((sh) => {
-    const tracks = faceTracks(frames, fps, aspect, sh.from, sh.to, ident);
+    const tracks = faceTracks(frames, fps, aspect, sh.from, sh.to, ident, shotBounds(sh.from, sh.to, cuts, frames.length / fps));
     const track = pickTrack(tracks, subject);
     return { ...sh, tracks, track };
   });
@@ -190,13 +221,15 @@ export function framingForExtract({ frames, fps, aspect, startMs, endMs, subject
   // plans à plusieurs visages : combien ont été tranchés grâce à la reconnaissance de la personne de référence
   let crowded = 0;
   let recognized = 0;
+  let identBest = null;
   const parts = shots.map((sh) => {
     if (!sh.track) return { ...sh, keys: null };
     detected += sh.track.count;
     faces = Math.max(faces, faceCount(sh.tracks));
     if (faceCount(sh.tracks) > 1) {
       crowded++;
-      if (sh.track.ident !== null && sh.track.ident >= FRAMING.samePerson) recognized++;
+      if (sh.track.recognized) recognized++;
+      for (const t of sh.tracks) if (t.ident !== null && (identBest === null || t.ident > identBest)) identBest = t.ident; // meilleure ressemblance relevée (pour expliquer un échec)
     }
     const keys = framingPath(sh.track, sh.from, sh.to, aspect, prevEnd);
     prevEnd = keys.at(-1).x;
@@ -219,7 +252,7 @@ export function framingForExtract({ frames, fps, aspect, startMs, endMs, subject
     }
   }
   const expected = Math.max(1, Math.round((toS - fromS) * fps));
-  return { keys, faces, coverage: round(Math.min(1, detected / expected), 2), crowded, recognized };
+  return { keys, faces, coverage: round(Math.min(1, detected / expected), 2), crowded, recognized, identBest };
 }
 
 /**
@@ -232,6 +265,7 @@ export function framingForClip({ frames, fps, aspect, extracts, subject = 'auto'
   let covered = 0;
   let crowded = 0;
   let recognized = 0;
+  let identBest = null;
   const segments = extracts.map((e) => {
     const dur = (e.end_ms - e.start_ms) / 1000;
     const r = framingForExtract({ frames, fps, aspect, startMs: e.start_ms, endMs: e.end_ms, subject, cuts, ident });
@@ -242,10 +276,11 @@ export function framingForClip({ frames, fps, aspect, extracts, subject = 'auto'
       covered += r.coverage * dur;
       crowded += r.crowded;
       recognized += r.recognized;
+      if (r.identBest !== null && (identBest === null || r.identBest > identBest)) identBest = r.identBest;
     }
     return seg;
   });
-  return { segments, faces, coverage: t0 ? round(covered / t0, 2) : 0, crowded, recognized };
+  return { segments, faces, coverage: t0 ? round(covered / t0, 2) : 0, crowded, recognized, identBest: identBest === null ? null : round(identBest, 2) };
 }
 
 /** Position du cadre à l'instant t (secondes depuis le début du segment). */

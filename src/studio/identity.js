@@ -80,23 +80,34 @@ export function similarity(embedding, references) {
 
 // --- identification dans une interview -------------------------------------------------------------------------------------
 
-/** Au plus `n` points d'un visage suivi : les plus grands et les plus nets, espacés d'au moins `gapS` secondes. */
-function samplePoints(track, n = 3, gapS = 1) {
-  const chosen = [];
-  for (const p of [...track.pts].sort((a, b) => b.w * b.h * b.s - a.w * a.h * a.s)) {
-    if (chosen.every((c) => Math.abs(c.t - p.t) >= gapS)) chosen.push(p);
-    if (chosen.length >= n) break;
+/** Version de la méthode de comparaison : un changement marque « à mettre à jour » les reconnaissances déjà faites. */
+export const IDENT_ALGO = 'a2';
+
+/**
+ * Au plus `n` points d'un visage suivi, répartis sur toute sa durée (un par tranche de temps) : le plus grand et le plus net de
+ * chaque tranche. Ainsi la comparaison ne repose ni sur un seul cliché ni sur un seul moment du plan (éclairage, angle…).
+ */
+function samplePoints(track, n = 6) {
+  const pts = [...track.pts].sort((a, b) => a.t - b.t);
+  if (!pts.length) return [];
+  const [t0, t1] = [pts[0].t, pts[pts.length - 1].t];
+  const buckets = Math.min(n, pts.length);
+  const best = new Array(buckets).fill(null);
+  for (const p of pts) {
+    const b = Math.min(buckets - 1, Math.floor(((p.t - t0) / Math.max(1e-6, t1 - t0)) * buckets));
+    const q = p.w * p.h * p.s;
+    if (!best[b] || q > best[b].q) best[b] = { p, q };
   }
-  return chosen;
+  return best.filter(Boolean).map((x) => x.p);
 }
 
-/** Visages à identifier : ceux des plans où l'on hésite (plusieurs visages présents). Renvoie [{ shot, track, points }]. */
+/** Visages à identifier : ceux des plans où l'on hésite (plusieurs visages présents), les quatre plus présents de chaque plan. */
 export function identificationTargets({ frames, fps, aspect, duration, cuts }) {
   const targets = [];
   for (const shot of splitShots(0, duration, cuts)) {
     const tracks = faceTracks(frames, fps, aspect, shot.from, shot.to).filter((t) => t.share >= FRAMING.minShare && t.count >= 2);
     if (tracks.length < 2) continue;
-    for (const track of tracks) targets.push({ shot, track, points: samplePoints(track) });
+    for (const track of tracks.sort((a, b) => b.weight - a.weight).slice(0, 4)) targets.push({ shot, track, points: samplePoints(track) });
   }
   return targets;
 }

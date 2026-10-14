@@ -166,6 +166,45 @@ test('reconnaissance : « lisnard » suit la personne de référence, même plus
   assert.ok(Math.abs(at('lisnard', identMap(0.5, 0.7)).keys[0].x - toX(0.75)) < 1e-3);
 });
 
+test('reconnaissance : l\'identité vaut pour tout le plan, même si les comparaisons sont loin de l\'extrait choisi', () => {
+  // plan de 3 minutes à deux visages (A gros à gauche, B petit à droite) ; B a été comparé seulement dans les 10 premières secondes
+  const frames = video(180, () => [[0.25, 0.09], [0.75, 0.05]], { fps: 5 });
+  const ident = new Map();
+  for (let fi = 0; fi < 50; fi += 10) { ident.set(`${fi}:0`, 0.08); ident.set(`${fi}:1`, 0.62); }
+  const r = framingForExtract({ frames, fps: 5, aspect: ASPECT, startMs: 100000, endMs: 130000, subject: 'lisnard', ident });
+  assert.ok(Math.abs(r.keys[0].x - toX(0.75)) < 1e-3, `le cadre est sur B (reconnu ailleurs dans le plan) : ${r.keys[0].x}`);
+  assert.deepEqual([r.crowded, r.recognized], [1, 1]);
+  // une coupe entre les comparaisons et l'extrait : l'identité d'un autre plan ne compte pas
+  const cut = framingForExtract({ frames, fps: 5, aspect: ASPECT, startMs: 100000, endMs: 130000, subject: 'lisnard', ident, cuts: [60] });
+  assert.equal(cut.recognized, 0);
+  assert.ok(Math.abs(cut.keys[0].x - toX(0.25)) < 1e-3, 'repli sur le plus gros visage');
+});
+
+test('orateur qui bouge naturellement (hochements, gestes, penché en avant) : le cadre reste immobile', () => {
+  let seed = 11;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5) * 2;
+  // 90 s à 5 images par seconde : balancement de ±0,04 de la largeur de l'image, tremblement de détection, un penché de 0,05 pendant 6 s
+  const frames = video(90, (t) => [[0.5 + 0.04 * Math.sin((2 * Math.PI * t) / 4) + 0.008 * rnd() + (t > 40 && t < 46 ? 0.05 : 0)]], { fps: 5 });
+  const r = framingForExtract({ frames, fps: 5, aspect: ASPECT, startMs: 0, endMs: 90000 });
+  assert.equal(r.keys.length, 2, `le cadre bouge ${r.keys.length - 1} fois : ${JSON.stringify(r.keys)}`);
+});
+
+test('un second visage qui apparaît et disparaît à côté ne fait pas sauter le cadre d\'une personne à l\'autre', () => {
+  let seed = 5;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  // A (gros) toujours là en 0,45 ; B (plus petit) juste à côté en 0,58, détecté une image sur deux seulement
+  const frames = video(30, () => [[0.45, 0.1], ...(rnd() < 0.5 ? [[0.58, 0.07]] : [])], { fps: 5 });
+  const r = framingForExtract({ frames, fps: 5, aspect: ASPECT, startMs: 0, endMs: 30000 });
+  assert.equal(r.keys.length, 2, JSON.stringify(r.keys));
+  assert.ok(Math.abs(r.keys[0].x - toX(0.45)) < 1e-3);
+});
+
+test('visage perdu quelques secondes puis retrouvé au même endroit : même personne, pas un second visage', () => {
+  const frames = video(40, (t) => (t > 15 && t < 20.5 ? [] : [[0.4]]), { fps: 5 });
+  const tracks = faceTracks(frames, 5, ASPECT, 0, 40);
+  assert.equal(tracks.length, 1);
+});
+
 test('vidéo longue (une image toutes les 2 s) : même résultat', () => {
   const frames = Array.from({ length: 31 }, (_, i) => [[0.5 - 0.03, 0.3, 0.06, 0.1, 0.9]]); // 62 s à 0,5 image par seconde
   const r = framingForExtract({ frames, fps: 0.5, aspect: ASPECT, startMs: 10000, endMs: 40000 });

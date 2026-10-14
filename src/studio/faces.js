@@ -13,7 +13,11 @@ import { pool } from '../db.js';
 import { HttpError } from '../http-error.js';
 import { videoFilePath } from '../media.js';
 import { framingForClip } from '../../public/js/framing.js';
+import { IDENT_ALGO } from './identity.js';
 import { referenceSet } from './references.js';
+
+/** Étiquette du jeu de photos et de la méthode utilisés pour une reconnaissance (vide s'il n'y a pas de photo). */
+const identTag = (refs) => (refs.count ? `${refs.version}/${IDENT_ALGO}` : '');
 
 // Définition de travail : le grand côté de l'image d'analyse fait maxSide pixels (un visage doit y mesurer ~20 px, soit environ 5 %
 // de la largeur de l'image d'origine). Une image toutes les 0,2 s (5 par seconde), une toutes les 0,4 s au-delà d'une heure et demie.
@@ -118,7 +122,7 @@ async function save(job, { aspect, fps, refs }, result) {
     return;
   }
   const identJson = refs.count ? JSON.stringify(result.ident ?? []) : null;
-  const identVersion = refs.count ? refs.version : null;
+  const identVersion = refs.count ? identTag(refs) : null;
   if (kind === 'identify') {
     await pool.query('UPDATE video_faces SET ident = $2, ident_version = $3 WHERE video_id = $1 AND status = \'ready\' AND file_stamp = $4', [video.id, identJson, identVersion, stampOf(video)]);
   } else {
@@ -169,7 +173,7 @@ export async function identifyAll() {
     `SELECT v.id, v.youtube_id, v.file_name, v.file_size, v.file_uploaded_at, v.file_duration_s, v.file_width, v.file_height, f.content
      FROM video_faces f JOIN videos v ON v.id = f.video_id
      WHERE f.status = 'ready' AND f.ident_version IS DISTINCT FROM $1 ORDER BY v.id`,
-    [refs.version],
+    [identTag(refs)],
   );
   let n = 0;
   for (const r of rows) {
@@ -211,7 +215,7 @@ export async function facesStatus(video) {
   const r = rows[0];
   if (r.file_stamp !== stampOf(video)) return { status: 'stale', ident: { state: 'off' } }; // la vidéo a été remplacée depuis
   if (r.status === 'failed') return { status: 'failed', error: r.error, analyzed_at: r.analyzed_at, ident: { state: 'off' } };
-  const identState = !refs.count ? 'off' : r.ident_version === refs.version ? 'ready' : r.ident_version ? 'stale' : 'none';
+  const identState = !refs.count ? 'off' : r.ident_version === identTag(refs) ? 'ready' : r.ident_version ? 'stale' : 'none';
   return {
     status: 'ready',
     analyzed_at: r.analyzed_at,
@@ -228,14 +232,14 @@ export async function loadFaces(video) {
   const stamp = stampOf(video);
   const refs = await referenceSet();
   const hit = cache.get(video.id);
-  if (hit?.stamp === stamp && hit.version === refs.version) return hit.data;
+  if (hit?.stamp === stamp && hit.version === identTag(refs)) return hit.data;
   const { rows } = await pool.query("SELECT content, ident, ident_version, file_stamp FROM video_faces WHERE video_id = $1 AND status = 'ready'", [video.id]);
   if (!rows.length || rows[0].file_stamp !== stamp) return null;
   const r = rows[0];
   // la reconnaissance n'est utilisée que si elle date du jeu de photos actuel
-  const ident = r.ident && refs.count && r.ident_version === refs.version ? new Map(r.ident.map(([fi, di, sim]) => [`${fi}:${di}`, sim])) : null;
+  const ident = r.ident && refs.count && r.ident_version === identTag(refs) ? new Map(r.ident.map(([fi, di, sim]) => [`${fi}:${di}`, sim])) : null;
   const data = { ...r.content, ident };
-  cache.set(video.id, { stamp, version: refs.version, data });
+  cache.set(video.id, { stamp, version: identTag(refs), data });
   if (cache.size > 8) cache.delete(cache.keys().next().value);
   return data;
 }

@@ -178,7 +178,7 @@ qu'à choisir les extraits.
     suivis). Les **changements de plan** sont repérés en même temps (ffmpeg, `scene`). Ensuite chaque clip n'a plus qu'à calculer la
     trajectoire (`public/js/framing.js`, module pur partagé avec le navigateur) : un visage suivi par plan (David Lisnard s'il est reconnu,
     sinon le plus gros, ou celui de gauche / de droite au choix), un cadre qui reste immobile tant que le visage reste près du centre puis
-    se déplace en douceur (départ et arrivée progressifs, vitesse et accélération bornées), et qui saute directement sur le visage du
+    se déplace en douceur (zone morte large : hochements et gestes ne font pas bouger le cadre ; départ et arrivée progressifs, vitesse et accélération bornées), et qui saute directement sur le visage du
     nouveau plan à chaque coupe de montage. Le rendu applique la même courbe image par image (`crop` avec `exact=1`) ; l'aperçu la rejoue
     en direct. Sans visage trouvé ou sans analyse, le cadre manuel s'applique. Coupure : `STUDIO_FACES=off`. Table `video_faces` (résultat
     par vidéo, invalidé si le fichier est remplacé).
@@ -188,7 +188,7 @@ qu'à choisir les extraits.
     aucune autre est signalée « à vérifier » (mauvaise personne ?). À l'analyse d'une interview, les visages des **plans à plusieurs
     personnes** (journaliste, public) sont comparés aux photos (quelques images de chaque visage, prises dans la vidéo) ; le studio suit
     alors David Lisnard plutôt que le visage le plus gros. Seuil : similarité cosinus 0,363 (valeur recommandée pour SFace) ; la
-    ressemblance d'un visage est la moyenne de ses trois meilleures similarités avec les photos. Quand les photos changent, les vidéos déjà
+    ressemblance d'une photo de la vidéo est la moyenne de ses trois meilleures similarités avec les photos de référence ; celle d'un visage suivi est la moyenne du tiers supérieur de ses comparaisons (six images réparties sur tout le plan, pas seulement l'extrait choisi). Un visage est retenu s'il atteint le seuil, ou s'il atteint 0,28 et dépasse nettement (de 0,10) les autres visages du plan. Quand la personne n'est pas reconnue, le studio affiche la ressemblance la plus forte relevée pour expliquer pourquoi. Quand les photos changent, les vidéos déjà
     analysées passent à « reconnaissance à mettre à jour » : le bouton de l'onglet relance seulement la reconnaissance, sans refaire la
     détection. Tables `face_references` et `video_faces.ident`. La détection et la reconnaissance tournent dans un thread séparé, avec un
     petit moteur de réseaux de neurones écrit pour l'occasion (`nn.js`, noyaux WebAssembly SIMD de `tools/kernels.wat` assemblés par

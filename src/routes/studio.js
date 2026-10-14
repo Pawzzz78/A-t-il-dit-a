@@ -141,7 +141,7 @@ studioRouter.post(
     const request = normalizeRequest({ ...req.body, layout: { ...req.body?.layout, fit: 'crop', follow: { on: true, subject: req.body?.subject } } }, v);
     const clip = await framingForRequest(v, request);
     res.set('Cache-Control', 'no-store');
-    res.json(clip ? { segments: clip.segments, faces: clip.faces, coverage: clip.coverage, crowded: clip.crowded, recognized: clip.recognized } : { segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0 });
+    res.json(clip ? { segments: clip.segments, faces: clip.faces, coverage: clip.coverage, crowded: clip.crowded, recognized: clip.recognized, ident_best: clip.identBest } : { segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0, ident_best: null });
   }),
 );
 
