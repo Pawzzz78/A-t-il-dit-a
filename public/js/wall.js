@@ -14,7 +14,8 @@ const SORT_PARAM = { score: 'classement', views: 'vues', likes: 'jaime', comment
 const PAGE = 60; // le serveur limite de toute façon le classement à son nombre maximal de clips (13)
 
 const $ = (id) => document.getElementById(id);
-const state = { sort: 'score', period: 'all', clips: [], total: 0, max: 13, loading: false, ticket: 0 };
+const DEFAULT_PERIOD = '7'; // le classement affiché d'abord : les 7 derniers jours
+const state = { sort: 'score', period: DEFAULT_PERIOD, clips: [], total: 0, max: 13, loading: false, ticket: 0 };
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -157,7 +158,7 @@ function renderSorts() {
 function sync() {
   const q = new URLSearchParams();
   if (state.sort !== 'score') q.set('tri', SORT_PARAM[state.sort]);
-  if (state.period !== 'all') q.set('periode', state.period);
+  if (state.period !== DEFAULT_PERIOD) q.set('periode', state.period === 'all' ? 'tout' : state.period);
   const query = q.toString();
   history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}`);
   renderSorts();
@@ -195,7 +196,10 @@ async function load() {
     $('stamp').hidden = false;
     $('updated').textContent = data.updated_at ? `Mis à jour ${ago(data.updated_at)}, ${new Date(data.updated_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.` : '';
     $('explain').textContent = `Le mur présente les ${data.max} meilleurs clips ; les onglets les réordonnent. Le classement additionne les vues, ${data.weights.likes} fois les j’aime et ${data.weights.comments} fois les commentaires (${data.weights.views === 1 ? 'les vues comptent pour 1' : `les vues comptent pour ${data.weights.views}`}). Sont repris les clips publiés avec #${data.hashtag}.`;
-    $('state').textContent = state.total ? '' : data.enabled === false ? 'Le mur est désactivé pour le moment.' : state.period === 'all' ? 'Le mur se remplit : aucun clip pour le moment. Sois le premier : publie ton TikTok avec #lisnard2027 !' : 'Aucun clip sur cette période.';
+    if (state.total) $('state').textContent = '';
+    else if (data.enabled === false) $('state').textContent = 'Le mur est désactivé pour le moment.';
+    else if (state.period === 'all') $('state').textContent = 'Le mur se remplit : aucun clip pour le moment. Sois le premier : publie ton TikTok avec #lisnard2027 !';
+    else $('state').replaceChildren(`Aucun clip sur ${state.period === '7' ? 'les 7 derniers jours' : 'les 30 derniers jours'}. `, el('button', { class: 'btn small', type: 'button', onclick: () => { state.period = 'all'; sync(); load(); } }, 'Voir depuis le début'));
     render();
   } catch {
     if (mine !== state.ticket) return;
@@ -211,6 +215,7 @@ const params = new URLSearchParams(location.search);
 const fromParam = Object.entries(SORT_PARAM).find(([, v]) => v === params.get('tri'));
 if (fromParam) state.sort = fromParam[0];
 if (['7', '30'].includes(params.get('periode'))) state.period = params.get('periode');
+else if (params.get('periode') === 'tout') state.period = 'all';
 $('period').addEventListener('change', () => { state.period = $('period').value; sync(); load(); });
 tearMarked();
 sync();
