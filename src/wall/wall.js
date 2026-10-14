@@ -7,7 +7,7 @@
  * TikTok, chargé seulement au clic.
  *
  * Classement : score = vues × a + j'aime × b + commentaires × c (par défaut 1, 10 et 50, réglable avec WALL_WEIGHTS). Le mur ne montre
- * que les 13 meilleurs clips (WALL_MAX) ; les autres tris (vues, j'aime, commentaires, date) réordonnent ces 13 clips.
+ * que les 13 meilleurs clips (WALL_MAX) ; les autres tris (vues, j'aime, commentaires) réordonnent ces 13 clips.
  */
 import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
@@ -21,7 +21,7 @@ import { runActor } from './apify.js';
 
 const run = promisify(execFile);
 
-export const SORTS = { score: 'score DESC', views: 'views DESC', likes: 'likes DESC', comments: 'comments DESC', recent: 'created_at DESC NULLS LAST' };
+export const SORTS = { score: 'score DESC', views: 'views DESC', likes: 'likes DESC', comments: 'comments DESC' };
 export const PERIODS = { all: null, 30: 30, 7: 7 };
 
 const num = (v, fallback) => (v === undefined || v === '' || !Number.isFinite(Number(v)) ? fallback : Number(v));
@@ -171,7 +171,7 @@ export async function listWall({ sort = 'score', period = 'all', limit = 24, off
     `SELECT least(count(*), $2::int)::int AS n FROM wall_clips c WHERE ${VISIBLE} AND ($1::int IS NULL OR c.created_at >= now() - make_interval(days => $1::int))`,
     [days, cfg.max],
   );
-  return { clips: rows.map((r, i) => present(r, sort === 'recent' ? null : off + i + 1)), total: total[0].n, max: cfg.max };
+  return { clips: rows.map((r, i) => present(r, off + i + 1)), total: total[0].n, max: cfg.max };
 }
 
 // --- vignettes ----------------------------------------------------------------------------------------------------------------------

@@ -7,15 +7,17 @@ const SORTS = [
   ['views', 'Vues'],
   ['likes', 'J’aime'],
   ['comments', 'Commentaires'],
-  ['recent', 'Récents'],
 ];
 // adresses lisibles : /mur/?tri=vues&periode=7
-const SORT_PARAM = { score: 'classement', views: 'vues', likes: 'jaime', comments: 'commentaires', recent: 'recents' };
+const SORT_PARAM = { score: 'classement', views: 'vues', likes: 'jaime', comments: 'commentaires' };
 const PAGE = 60; // le serveur limite de toute façon le classement à son nombre maximal de clips (13)
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_PERIOD = '7'; // le classement affiché d'abord : les 7 derniers jours
 const state = { sort: 'score', period: DEFAULT_PERIOD, clips: [], total: 0, max: 13, loading: false, ticket: 0 };
+// Un seul appel au serveur par période : le classement ne compte que 13 clips, les onglets Vues / J'aime / Commentaires les réordonnent ici.
+const loaded = new Map(); // période → réponse du serveur (clips dans l'ordre du score)
+const METRIC = { views: 'views', likes: 'likes', comments: 'comments' };
 
 function el(tag, props = {}, ...children) {
   const node = document.createElement(tag);
@@ -152,7 +154,7 @@ dialog.addEventListener('click', (e) => e.target === dialog && dialog.close()); 
 // --- affichage ------------------------------------------------------------------------------------------------------------------------
 
 function renderSorts() {
-  $('sorts').replaceChildren(...SORTS.map(([key, label]) => el('button', { type: 'button', 'aria-pressed': String(state.sort === key), onclick: () => { state.sort = key; sync(); load(); } }, label)));
+  $('sorts').replaceChildren(...SORTS.map(([key, label]) => el('button', { type: 'button', 'aria-pressed': String(state.sort === key), onclick: () => { state.sort = key; sync(); show(); } }, label)));
 }
 
 function sync() {
@@ -165,42 +167,60 @@ function sync() {
   $('period').value = state.period;
 }
 
-function render() {
-  const ranked = state.sort !== 'recent';
-  const podium = state.sort === 'score' && state.clips.length >= 3 ? state.clips.slice(0, 3) : [];
-  const rest = state.clips.slice(podium.length);
-  $('podium').replaceChildren(...podium.map((c, i) => card(c, i + 1, { podium: true })));
-  $('grid').replaceChildren(...rest.map((c, i) => card(c, ranked ? podium.length + i + 1 : null)));
-  const sub = $('sub');
-  sub.hidden = !rest.length;
-  sub.textContent = podium.length ? `Du ${podium.length + 1}ᵉ au ${state.clips.length}ᵉ rang` : state.sort === 'recent' ? 'Les plus récents d’abord' : 'Tout le classement';
+/** Les clips dans l'ordre de l'onglet choisi (à égalité, l'identifiant le plus grand d'abord, comme le serveur). */
+function ordered() {
+  if (state.sort === 'score') return state.clips;
+  const m = METRIC[state.sort];
+  return [...state.clips].sort((a, b) => b[m] - a[m] || (a.id < b.id ? 1 : -1));
 }
 
+function render() {
+  const all = ordered();
+  const podium = state.sort === 'score' && all.length >= 3 ? all.slice(0, 3) : [];
+  const rest = all.slice(podium.length);
+  $('podium').replaceChildren(...podium.map((c, i) => card(c, i + 1, { podium: true })));
+  $('grid').replaceChildren(...rest.map((c, i) => card(c, podium.length + i + 1)));
+  const sub = $('sub');
+  sub.hidden = !rest.length;
+  sub.textContent = podium.length ? `Du ${podium.length + 1}ᵉ au ${all.length}ᵉ rang` : `Classés par ${{ views: 'vues', likes: 'j’aime', comments: 'commentaires' }[state.sort]}`;
+}
+
+/** Affiche la réponse du serveur pour la période choisie. */
+function show(data) {
+  data ??= loaded.get(state.period);
+  if (!data) return;
+  state.clips = data.clips;
+  state.total = data.total;
+  state.max = data.max ?? state.max;
+  state.loading = false;
+  $('stamp-n').textContent = state.max;
+  $('stamp').hidden = false;
+  $('updated').textContent = data.updated_at ? `Mis à jour ${ago(data.updated_at)}, ${new Date(data.updated_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.` : '';
+  $('explain').textContent = `Le mur présente les ${data.max} meilleurs clips ; les onglets les réordonnent. Le classement additionne les vues, ${data.weights.likes} fois les j’aime et ${data.weights.comments} fois les commentaires (${data.weights.views === 1 ? 'les vues comptent pour 1' : `les vues comptent pour ${data.weights.views}`}). Sont repris les clips publiés avec #${data.hashtag}.`;
+  if (state.total) $('state').textContent = '';
+  else if (data.enabled === false) $('state').textContent = 'Le mur est désactivé pour le moment.';
+  else if (state.period === 'all') $('state').textContent = 'Le mur se remplit : aucun clip pour le moment. Sois le premier : publie ton TikTok avec #lisnard2027 !';
+  else $('state').replaceChildren(`Aucun clip sur ${state.period === '7' ? 'les 7 derniers jours' : 'les 30 derniers jours'}. `, el('button', { class: 'btn small', type: 'button', onclick: () => { state.period = 'all'; sync(); load(); } }, 'Voir depuis le début'));
+  render();
+}
+
+/** Charge la période choisie : un seul appel au serveur par période, les onglets réordonnent ensuite les mêmes clips. */
 async function load() {
   const mine = ++state.ticket;
+  const period = state.period;
+  if (loaded.has(state.period)) return show();
   state.loading = true;
   state.clips = [];
   state.total = 0;
   render();
   $('state').textContent = 'Chargement du mur…';
   try {
-    const res = await fetch(`/api/wall?sort=${state.sort}&period=${state.period}&limit=${PAGE}&offset=0`);
+    const res = await fetch(`/api/wall?period=${period}&limit=${PAGE}&offset=0`);
     if (!res.ok) throw new Error(`Erreur ${res.status}`);
     const data = await res.json();
+    loaded.set(period, data);
     if (mine !== state.ticket) return;
-    state.clips = data.clips;
-    state.total = data.total;
-    state.max = data.max ?? state.max;
-    state.loading = false;
-    $('stamp-n').textContent = state.max;
-    $('stamp').hidden = false;
-    $('updated').textContent = data.updated_at ? `Mis à jour ${ago(data.updated_at)}, ${new Date(data.updated_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.` : '';
-    $('explain').textContent = `Le mur présente les ${data.max} meilleurs clips ; les onglets les réordonnent. Le classement additionne les vues, ${data.weights.likes} fois les j’aime et ${data.weights.comments} fois les commentaires (${data.weights.views === 1 ? 'les vues comptent pour 1' : `les vues comptent pour ${data.weights.views}`}). Sont repris les clips publiés avec #${data.hashtag}.`;
-    if (state.total) $('state').textContent = '';
-    else if (data.enabled === false) $('state').textContent = 'Le mur est désactivé pour le moment.';
-    else if (state.period === 'all') $('state').textContent = 'Le mur se remplit : aucun clip pour le moment. Sois le premier : publie ton TikTok avec #lisnard2027 !';
-    else $('state').replaceChildren(`Aucun clip sur ${state.period === '7' ? 'les 7 derniers jours' : 'les 30 derniers jours'}. `, el('button', { class: 'btn small', type: 'button', onclick: () => { state.period = 'all'; sync(); load(); } }, 'Voir depuis le début'));
-    render();
+    show(data);
   } catch {
     if (mine !== state.ticket) return;
     state.loading = false;

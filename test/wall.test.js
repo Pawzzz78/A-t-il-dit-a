@@ -299,8 +299,8 @@ test('actualisation : résultats d\'Apify enregistrés, filtrés, classés ; vig
   assert.deepEqual((await ids('sort=views')).slice(0, 4), ['3', '1', '2', '4']);
   assert.deepEqual((await ids('sort=likes')).slice(0, 3), ['2', '1', '3']);
   assert.deepEqual((await ids('sort=comments')).slice(0, 2), ['2', '1']);
-  assert.equal((await ids('sort=recent'))[0], '4'); // le plus récent d'abord
-  assert.ok((await call('GET', '/api/wall?sort=recent', undefined, false)).body.clips.every((c) => c.rank === null));
+  assert.equal((await call('GET', '/api/wall?sort=recent', undefined, false)).status, 400); // plus de classement « récents »
+  assert.ok((await call('GET', '/api/wall?sort=views', undefined, false)).body.clips.every((c, i) => c.rank === i + 1));
   assert.deepEqual((await ids('period=7')).sort(), ['1', '4', '7', '9']); // moins de 7 jours : ni le clip de 10 jours (2) ni celui de 40 jours (3)
   const p30 = await ids('period=30');
   assert.ok(p30.includes('2') && !p30.includes('3'));
@@ -406,10 +406,9 @@ test('classement : 13 clips au plus, les meilleurs d\'après le score ; les ongl
   // pages : la dernière est tronquée à 13, pas de 14e clip
   assert.equal((await get('limit=10&offset=10')).clips.length, 3);
   assert.equal((await get('limit=10&offset=13')).clips.length, 0);
-  // « récents » réordonne les mêmes 13 clips (les plus récents des 13 meilleurs d'abord), sans en ajouter
-  const recent = (await get('sort=recent&limit=60')).clips.map(n);
-  assert.deepEqual([...recent].sort((a, b) => a - b), Array.from({ length: 13 }, (_, i) => 18 + i));
-  assert.equal(recent[0], 30);
+  // un autre tri réordonne les mêmes 13 clips, sans en ajouter
+  const byViews = (await get('sort=views&limit=60')).clips.map(n);
+  assert.deepEqual([...byViews].sort((a, b) => a - b), Array.from({ length: 13 }, (_, i) => 18 + i));
   // période : les 13 meilleurs des 7 derniers jours seulement (les clips 25 à 30 ont moins de 7 jours : 6 clips)
   const week = await get('period=7&limit=60');
   assert.deepEqual([week.total, week.clips.map(n)], [6, [30, 29, 28, 27, 26, 25]]); // le clip 24 a exactement 7 jours : trop vieux
