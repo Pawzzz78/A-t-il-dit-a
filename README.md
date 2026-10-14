@@ -406,11 +406,11 @@ Deuxième section du site, `/mur/` : un mur des meilleurs TikToks publiés avec 
   (`POST /v2/acts/clockworks~tiktok-scraper/runs`, entrée `hashtags` et `resultsPerPage`, sans téléchargement de vidéos), attend la fin, lit le jeu de
   données et l'enregistre dans la table `wall_clips` (`src/wall/apify.js`, `src/wall/wall.js`). **Le mur ne parle jamais à Apify** : les visiteurs lisent
   la base. Sont écartés : les publicités, les vidéos sans le hashtag, les éléments d'erreur de l'acteur. Un clip déjà connu voit ses compteurs mis à jour.
-- **Actualisation** : automatique toutes les `WALL_REFRESH_HOURS` heures (12 par défaut, 0 pour seulement à la demande), et à la demande dans l'admin
+- **Actualisation** : automatique toutes les `WALL_REFRESH_HOURS` heures (**24** par défaut, 0 pour seulement à la demande), et à la demande dans l'admin
   (onglet « Mur », au plus une toutes les 2 minutes). Un échec n'efface rien : le mur garde ses clips et l'admin voit l'erreur ; on réessaie au bout
-  d'une heure. Coût indicatif (1,70 $ pour 1 000 résultats) : 100 vidéos toutes les 12 h reviennent à environ 10 $ par mois ; l'admin l'affiche.
-- **Classement** : `score = vues × 1 + j'aime × 10 + commentaires × 50` (`WALL_WEIGHTS="1,10,50"`), calculé à la lecture. Le visiteur peut aussi trier par
-  vues, j'aime, commentaires ou date, et limiter aux 30 ou 7 derniers jours ; les trois premiers forment le podium. Adresses partageables :
+  d'une heure. Coût indicatif (1,70 $ pour 1 000 résultats) : 100 vidéos par jour reviennent à environ 5 $ par mois ; l'admin l'affiche.
+- **Classement** : `score = vues × 1 + j'aime × 10 + commentaires × 50` (`WALL_WEIGHTS="1,10,50"`), calculé à la lecture. **Le mur ne montre que les 20 meilleurs clips** (`WALL_MAX`, 20 par défaut) : les 100 vidéos récupérées servent à les choisir. Le visiteur peut
+  réordonner ces 20 par vues, j'aime, commentaires ou date, ou choisir les 20 meilleurs des 30 ou 7 derniers jours ; les trois premiers du classement forment le podium. Adresses partageables :
   `/mur/?tri=vues&periode=7`.
 - **Affichage** : une carte par clip (vignette verticale, rang, auteur, vues / j'aime / commentaires). Au clic, une fenêtre charge le **lecteur officiel de
   TikTok** (`tiktok.com/embed/v2/…`, seulement à ce moment-là, avec un avis sur les cookies de TikTok) et un lien « Ouvrir sur TikTok ». Les vignettes sont

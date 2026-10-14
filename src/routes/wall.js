@@ -22,6 +22,7 @@ wallRouter.get(
       sort,
       period,
       hashtag: cfg.hashtag,
+      max: cfg.max,
       weights: { views: cfg.weights[0], likes: cfg.weights[1], comments: cfg.weights[2] },
       updated_at: last?.status === 'ok' ? last.finished_at : (last?.finished_at ?? null),
       enabled: cfg.enabled,

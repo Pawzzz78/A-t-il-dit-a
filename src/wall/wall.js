@@ -6,7 +6,8 @@
  * l'admin. Les vignettes sont copiées sur le volume (les adresses de TikTok expirent) ; la vidéo se lit avec le lecteur officiel de
  * TikTok, chargé seulement au clic.
  *
- * Classement : score = vues × a + j'aime × b + commentaires × c (par défaut 1, 10 et 50, réglable avec WALL_WEIGHTS).
+ * Classement : score = vues × a + j'aime × b + commentaires × c (par défaut 1, 10 et 50, réglable avec WALL_WEIGHTS). Le mur ne montre
+ * que les 20 meilleurs clips (WALL_MAX) ; les autres tris (vues, j'aime, commentaires, date) réordonnent ces 20 clips.
  */
 import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
@@ -33,8 +34,9 @@ export function wallConfig() {
     actor: process.env.APIFY_TIKTOK_ACTOR || 'clockworks/tiktok-scraper',
     baseUrl: process.env.APIFY_BASE_URL || 'https://api.apify.com',
     hashtag: String(process.env.WALL_HASHTAG ?? 'lisnard2027').replace(/^#/, '').trim().toLowerCase() || 'lisnard2027',
+    max: Math.min(60, Math.max(3, Math.trunc(num(process.env.WALL_MAX, 20)))), // taille du classement : les N meilleurs clips
     results: Math.min(1000, Math.max(10, Math.trunc(num(process.env.WALL_RESULTS, 100)))),
-    refreshHours: Math.max(0, num(process.env.WALL_REFRESH_HOURS, 12)), // 0 : seulement à la demande
+    refreshHours: Math.max(0, num(process.env.WALL_REFRESH_HOURS, 24)), // 0 : seulement à la demande
     weights: w.length === 3 && w.every((x) => Number.isFinite(x) && x >= 0) ? w : [1, 10, 50],
   };
 }
@@ -144,23 +146,32 @@ const present = (r, rank) => ({
 
 const VISIBLE = `NOT c.hidden AND NOT EXISTS (SELECT 1 FROM wall_hidden_authors a WHERE a.author = lower(c.author))`;
 
-/** Le mur : clips visibles, triés (`score` par défaut), sur une période, par pages. */
+/**
+ * Le mur : les `max` (20) meilleurs clips visibles sur la période, d'après le score, puis réordonnés selon `sort` (`score` par défaut) ;
+ * par pages de `limit`.
+ */
 export async function listWall({ sort = 'score', period = 'all', limit = 24, offset = 0 } = {}) {
   const order = SORTS[sort] ?? SORTS.score;
   const days = PERIODS[period] ?? null;
-  const [a, b, c] = wallConfig().weights;
+  const cfg = wallConfig();
+  const [a, b, c] = cfg.weights;
   const lim = Math.min(60, Math.max(1, Math.trunc(Number(limit)) || 24));
   const off = Math.max(0, Math.trunc(Number(offset)) || 0);
-  const where = `${VISIBLE} AND ($1::int IS NULL OR c.created_at >= now() - make_interval(days => $1::int))`;
-  const [{ rows }, { rows: total }] = await Promise.all([
-    pool.query(
-      `SELECT c.*, (c.views * $2::numeric + c.likes * $3::numeric + c.comments * $4::numeric)::bigint AS score
-       FROM wall_clips c WHERE ${where} ORDER BY ${order}, c.id DESC LIMIT $5 OFFSET $6`,
-      [days, a, b, c, lim, off],
-    ),
-    pool.query(`SELECT count(*)::int AS n FROM wall_clips c WHERE ${where}`, [days]),
-  ]);
-  return { clips: rows.map((r, i) => present(r, sort === 'recent' ? null : off + i + 1)), total: total[0].n };
+  const { rows } = await pool.query(
+    `WITH best AS (
+       SELECT c.*, (c.views * $2::numeric + c.likes * $3::numeric + c.comments * $4::numeric)::bigint AS score
+       FROM wall_clips c
+       WHERE ${VISIBLE} AND ($1::int IS NULL OR c.created_at >= now() - make_interval(days => $1::int))
+       ORDER BY score DESC, c.id DESC LIMIT $5
+     )
+     SELECT * FROM best c ORDER BY ${order}, c.id DESC LIMIT $6 OFFSET $7`,
+    [days, a, b, c, cfg.max, lim, off],
+  );
+  const { rows: total } = await pool.query(
+    `SELECT least(count(*), $2::int)::int AS n FROM wall_clips c WHERE ${VISIBLE} AND ($1::int IS NULL OR c.created_at >= now() - make_interval(days => $1::int))`,
+    [days, cfg.max],
+  );
+  return { clips: rows.map((r, i) => present(r, sort === 'recent' ? null : off + i + 1)), total: total[0].n, max: cfg.max };
 }
 
 // --- vignettes ----------------------------------------------------------------------------------------------------------------------
@@ -345,7 +356,7 @@ export async function wallOverview() {
     pool.query('SELECT author FROM wall_hidden_authors ORDER BY author'),
   ]);
   return {
-    config: { enabled: cfg.enabled, has_token: Boolean(cfg.token), actor: cfg.actor, hashtag: cfg.hashtag, results: cfg.results, refresh_hours: cfg.refreshHours, weights: cfg.weights },
+    config: { enabled: cfg.enabled, has_token: Boolean(cfg.token), actor: cfg.actor, hashtag: cfg.hashtag, results: cfg.results, refresh_hours: cfg.refreshHours, weights: cfg.weights, max: cfg.max },
     busy: wallBusy(),
     last_run: last,
     counts: counts.rows[0],

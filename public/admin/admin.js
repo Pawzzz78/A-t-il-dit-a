@@ -655,7 +655,7 @@ async function renderWallAdmin() {
     root.replaceChildren(
       h('section', { class: 'panel' },
         h('h2', {}, 'Mur des clips'),
-        h('p', { class: 'status' }, `Les TikToks publiés avec #${cfg.hashtag} sont récupérés avec Apify (acteur ${cfg.actor}), classés par vues, j’aime et commentaires (score = ${cfg.weights[0]} × vues + ${cfg.weights[1]} × j’aime + ${cfg.weights[2]} × commentaires), et affichés sur la page publique « Le mur ». `, h('a', { href: '/mur/', target: '_blank' }, 'Voir le mur')),
+        h('p', { class: 'status' }, `Les TikToks publiés avec #${cfg.hashtag} sont récupérés avec Apify (acteur ${cfg.actor}), classés par vues, j’aime et commentaires (score = ${cfg.weights[0]} × vues + ${cfg.weights[1]} × j’aime + ${cfg.weights[2]} × commentaires), et les ${cfg.max} meilleurs sont affichés sur la page publique « Le mur ». `, h('a', { href: '/mur/', target: '_blank' }, 'Voir le mur')),
         !cfg.has_token ? h('p', { class: 'status err' }, 'Jeton Apify absent : ajoute la variable APIFY_TOKEN dans Railway (Apify → Settings → API & Integrations → Personal API token), puis redéploie.') : null,
         !cfg.enabled ? h('p', { class: 'status err' }, 'Le mur est désactivé (WALL_ENABLED=false).') : null,
         h('p', { class: 'status' }, lastText),

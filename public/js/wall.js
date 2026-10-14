@@ -9,8 +9,7 @@ const SORTS = [
 ];
 // adresses lisibles : /mur/?tri=vues&periode=7
 const SORT_PARAM = { score: 'classement', views: 'vues', likes: 'jaime', comments: 'commentaires', recent: 'recents' };
-const FIRST_PAGE = 27; // 3 du podium + 24 dans la grille
-const PAGE = 24;
+const PAGE = 20; // le classement entier tient sur une page (20 clips au plus)
 
 const $ = (id) => document.getElementById(id);
 const state = { sort: 'score', period: 'all', clips: [], total: 0, loading: false, ticket: 0 };
@@ -127,7 +126,7 @@ async function load(reset) {
     $('state').textContent = 'Chargement du mur…';
   }
   const offset = state.clips.length;
-  const limit = state.sort === 'score' && offset === 0 ? FIRST_PAGE : PAGE;
+  const limit = PAGE;
   try {
     const res = await fetch(`/api/wall?sort=${state.sort}&period=${state.period}&limit=${limit}&offset=${offset}`);
     if (!res.ok) throw new Error(`Erreur ${res.status}`);
@@ -137,7 +136,7 @@ async function load(reset) {
     state.total = data.total;
     state.loading = false;
     $('updated').textContent = data.updated_at ? `Mis à jour ${ago(data.updated_at) === 'aujourd’hui' ? 'aujourd’hui' : ago(data.updated_at)}, ${new Date(data.updated_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.` : '';
-    $('explain').textContent = `Le classement additionne les vues, ${data.weights.likes} fois les j’aime et ${data.weights.comments} fois les commentaires (${data.weights.views === 1 ? 'les vues comptent pour 1' : `les vues comptent pour ${data.weights.views}`}). Sont repris les clips publiés avec #${data.hashtag}.`;
+    $('explain').textContent = `Le mur présente les ${data.max} meilleurs clips ; les onglets les réordonnent. Le classement additionne les vues, ${data.weights.likes} fois les j’aime et ${data.weights.comments} fois les commentaires (${data.weights.views === 1 ? 'les vues comptent pour 1' : `les vues comptent pour ${data.weights.views}`}). Sont repris les clips publiés avec #${data.hashtag}.`;
     $('state').textContent = state.total ? '' : data.enabled === false ? 'Le mur est désactivé pour le moment.' : state.period === 'all' ? 'Le mur se remplit : aucun clip pour le moment. Sois le premier : publie ton TikTok avec #lisnard2027 !' : 'Aucun clip sur cette période.';
     render();
   } catch {
