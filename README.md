@@ -409,10 +409,10 @@ Deuxième section du site, `/mur/` : un mur des meilleurs TikToks publiés avec 
 - **Actualisation** : automatique toutes les `WALL_REFRESH_HOURS` heures (**24** par défaut, 0 pour seulement à la demande), et à la demande dans l'admin
   (onglet « Mur », au plus une toutes les 2 minutes). Un échec n'efface rien : le mur garde ses clips et l'admin voit l'erreur ; on réessaie au bout
   d'une heure. Coût indicatif (1,70 $ pour 1 000 résultats) : 100 vidéos par jour reviennent à environ 5 $ par mois ; l'admin l'affiche.
-- **Classement** : `score = vues × 1 + j'aime × 10 + commentaires × 50` (`WALL_WEIGHTS="1,10,50"`), calculé à la lecture. **Le mur ne montre que les 20 meilleurs clips** (`WALL_MAX`, 20 par défaut) : les 100 vidéos récupérées servent à les choisir. Le visiteur peut
-  réordonner ces 20 par vues, j'aime, commentaires ou date, ou choisir les 20 meilleurs des 30 ou 7 derniers jours ; les trois premiers du classement forment le podium. Adresses partageables :
+- **Classement** : `score = vues × 1 + j'aime × 10 + commentaires × 50` (`WALL_WEIGHTS="1,10,50"`), calculé à la lecture. **Le mur ne montre que les 13 meilleurs clips** (`WALL_MAX`, 13 par défaut) : les 100 vidéos récupérées servent à les choisir. Le visiteur peut
+  réordonner ces 13 par vues, j'aime, commentaires ou date, ou choisir les 13 meilleurs des 30 ou 7 derniers jours ; les trois premiers du classement forment le podium. Adresses partageables :
   `/mur/?tri=vues&periode=7`.
-- **Affichage** : une carte par clip (vignette verticale, rang, auteur, vues / j'aime / commentaires). Au clic, une fenêtre charge le **lecteur officiel de
+- **Affichage** : un collage d'affiches, dans la charte du site (bleu, rose, chamois, Montserrat, Fraunces pour les chiffres du rang comme pour le logotype) : chaque clip est une affiche de papier blanc **aux bords déchirés**, un peu penchée, tenue par un morceau de scotch, avec une pastille de rang collée sur le coin ; le podium (1er au centre, plus grand) puis le reste en vrac ; la bannière et la bande d'appel ont elles aussi un bord déchiré. Le découpage et l'inclinaison sont tirés au hasard **à partir de l'identifiant du clip** (stables d'une visite à l'autre, `public/js/wall.js`). Chaque affiche montre la vignette verticale, l'auteur et les vues / j'aime / commentaires. Au clic, une fenêtre charge le **lecteur officiel de
   TikTok** (`tiktok.com/embed/v2/…`, seulement à ce moment-là, avec un avis sur les cookies de TikTok) et un lien « Ouvrir sur TikTok ». Les vignettes sont
   copiées sur le volume (`<STORAGE_DIR>/wall/covers`, JPEG de 360 px) parce que les adresses de TikTok expirent ; seules les adresses de TikTok et d'Apify
   en HTTPS sont téléchargées.

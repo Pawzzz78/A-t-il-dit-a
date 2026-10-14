@@ -85,7 +85,7 @@ test('réglages : valeurs par défaut et poids du classement', () => {
     for (const k of ['WALL_HASHTAG', 'WALL_RESULTS', 'WALL_REFRESH_HOURS', 'WALL_WEIGHTS', 'APIFY_TIKTOK_ACTOR']) delete process.env[k];
     delete process.env.WALL_MAX;
     const d = wallConfig();
-    assert.deepEqual([d.hashtag, d.results, d.refreshHours, d.weights, d.actor, d.max], ['lisnard2027', 100, 24, [1, 10, 50], 'clockworks/tiktok-scraper', 20]);
+    assert.deepEqual([d.hashtag, d.results, d.refreshHours, d.weights, d.actor, d.max], ['lisnard2027', 100, 24, [1, 10, 50], 'clockworks/tiktok-scraper', 13]);
     Object.assign(process.env, { WALL_HASHTAG: '#Lisnard2028', WALL_RESULTS: '5000', WALL_REFRESH_HOURS: '0', WALL_WEIGHTS: '2, 20, 100', WALL_MAX: '500' });
     const c = wallConfig();
     assert.deepEqual([c.hashtag, c.results, c.refreshHours, c.weights, c.max], ['lisnard2028', 1000, 0, [2, 20, 100], 60]);
@@ -386,7 +386,7 @@ test('actualisation : une seule à la fois, pas trop rapprochées, échec d\'Api
   await wall.wallIdle();
 });
 
-test('classement : 20 clips au plus, les meilleurs d\'après le score ; les onglets réordonnent ces 20 ; la période choisit les 20 de la période', { skip: !enabled }, async () => {
+test('classement : 13 clips au plus, les meilleurs d\'après le score ; les onglets réordonnent ces 13 ; la période choisit les 13 de la période', { skip: !enabled }, async () => {
   await pool.query('DELETE FROM wall_clips');
   // 30 clips : le n° i a i × 1 000 vues (score croissant avec i) ; les plus récents sont les moins bons
   for (let i = 1; i <= 30; i++) {
@@ -398,19 +398,19 @@ test('classement : 20 clips au plus, les meilleurs d\'après le score ; les ongl
   const get = async (q = '') => (await call('GET', `/api/wall?${q}`, undefined, false)).body;
   const n = (c) => Number(BigInt(c.id) - 8000000000000000000n);
   const top = await get('limit=60');
-  assert.equal(top.total, 20);
-  assert.equal(top.max, 20);
-  assert.equal(top.clips.length, 20);
-  assert.deepEqual(top.clips.map(n), Array.from({ length: 20 }, (_, i) => 30 - i)); // du 30 au 11 : les 10 moins bons n'apparaissent pas
-  assert.deepEqual(top.clips.map((c) => c.rank), Array.from({ length: 20 }, (_, i) => i + 1));
-  // pages : la dernière est tronquée à 20, pas de 21e clip
-  assert.equal((await get('limit=15&offset=15')).clips.length, 5);
-  assert.equal((await get('limit=15&offset=20')).clips.length, 0);
-  // « récents » réordonne les mêmes 20 clips (les plus récents des 20 meilleurs d'abord), sans en ajouter
+  assert.equal(top.total, 13);
+  assert.equal(top.max, 13);
+  assert.equal(top.clips.length, 13);
+  assert.deepEqual(top.clips.map(n), Array.from({ length: 13 }, (_, i) => 30 - i)); // du 30 au 18 : les 17 moins bons n'apparaissent pas
+  assert.deepEqual(top.clips.map((c) => c.rank), Array.from({ length: 13 }, (_, i) => i + 1));
+  // pages : la dernière est tronquée à 13, pas de 14e clip
+  assert.equal((await get('limit=10&offset=10')).clips.length, 3);
+  assert.equal((await get('limit=10&offset=13')).clips.length, 0);
+  // « récents » réordonne les mêmes 13 clips (les plus récents des 13 meilleurs d'abord), sans en ajouter
   const recent = (await get('sort=recent&limit=60')).clips.map(n);
-  assert.deepEqual([...recent].sort((a, b) => a - b), Array.from({ length: 20 }, (_, i) => 11 + i));
+  assert.deepEqual([...recent].sort((a, b) => a - b), Array.from({ length: 13 }, (_, i) => 18 + i));
   assert.equal(recent[0], 30);
-  // période : les 20 meilleurs des 7 derniers jours seulement (les clips 25 à 30 ont moins de 7 jours : 6 clips)
+  // période : les 13 meilleurs des 7 derniers jours seulement (les clips 25 à 30 ont moins de 7 jours : 6 clips)
   const week = await get('period=7&limit=60');
   assert.deepEqual([week.total, week.clips.map(n)], [6, [30, 29, 28, 27, 26, 25]]); // le clip 24 a exactement 7 jours : trop vieux
   // réglage : un mur plus petit

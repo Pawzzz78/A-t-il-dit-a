@@ -22,16 +22,18 @@
     </div>
   </header>
 
-  <section class="hero compact">
+  <section class="hero compact wall-hero">
     <div class="wrap">
       <p class="eyebrow">Le mur</p>
       <h1>Les meilleurs <em>TikToks</em></h1>
       <p>Les vidéos les plus vues, aimées et commentées avec <strong>#lisnard2027</strong>. Le classement se met à jour tout seul.</p>
+      <div class="hero-stamp" id="stamp" aria-hidden="true" hidden><span>Top</span><strong id="stamp-n">13</strong></div>
     </div>
+    <div class="torn-edge" data-torn="t" aria-hidden="true"></div>
   </section>
 
   <main class="wrap wall" id="wall">
-    <div class="wall-bar card" role="group" aria-label="Classement">
+    <div class="wall-bar" role="group" aria-label="Classement">
       <div class="pills" id="sorts" role="group" aria-label="Trier par"></div>
       <label class="wall-period">Période
         <select id="period">
@@ -44,22 +46,24 @@
     <p class="wall-updated" id="updated" aria-live="polite"></p>
 
     <ol class="podium" id="podium" aria-label="Podium"></ol>
+    <h2 class="wall-sub" id="sub" hidden></h2>
     <ol class="clip-grid" id="grid"></ol>
     <p class="wall-empty" id="state" role="status">Chargement du mur…</p>
-    <div class="wall-more"><button class="btn secondary" id="more" type="button" hidden>Voir plus de clips</button></div>
 
-    <aside class="wall-cta card">
+    <aside class="wall-cta" data-torn="tb">
+      <span class="tape tape-l" aria-hidden="true"></span><span class="tape tape-r" aria-hidden="true"></span>
       <div>
         <p class="eyebrow">À toi de jouer</p>
         <h2>Crée ton clip et rejoins le mur</h2>
         <p>Choisis un extrait d’interview dans le studio, ajoute sous-titres et musique, puis publie-le sur TikTok avec <strong>#lisnard2027</strong> : il apparaîtra ici à la prochaine mise à jour.</p>
       </div>
-      <a class="btn" href="/">Créer mon TikTok</a>
+      <a class="btn pink" href="/">Créer mon TikTok</a>
     </aside>
     <p class="wall-note" id="explain"></p>
   </main>
 
   <dialog class="clip-dialog" id="dialog" aria-labelledby="dialog-title">
+    <span class="tape" aria-hidden="true"></span>
     <form method="dialog" class="dialog-close"><button aria-label="Fermer" class="close">×</button></form>
     <h2 id="dialog-title"></h2>
     <p class="dialog-text" id="dialog-text"></p>

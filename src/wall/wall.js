@@ -7,7 +7,7 @@
  * TikTok, chargé seulement au clic.
  *
  * Classement : score = vues × a + j'aime × b + commentaires × c (par défaut 1, 10 et 50, réglable avec WALL_WEIGHTS). Le mur ne montre
- * que les 20 meilleurs clips (WALL_MAX) ; les autres tris (vues, j'aime, commentaires, date) réordonnent ces 20 clips.
+ * que les 13 meilleurs clips (WALL_MAX) ; les autres tris (vues, j'aime, commentaires, date) réordonnent ces 13 clips.
  */
 import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
@@ -34,7 +34,7 @@ export function wallConfig() {
     actor: process.env.APIFY_TIKTOK_ACTOR || 'clockworks/tiktok-scraper',
     baseUrl: process.env.APIFY_BASE_URL || 'https://api.apify.com',
     hashtag: String(process.env.WALL_HASHTAG ?? 'lisnard2027').replace(/^#/, '').trim().toLowerCase() || 'lisnard2027',
-    max: Math.min(60, Math.max(3, Math.trunc(num(process.env.WALL_MAX, 20)))), // taille du classement : les N meilleurs clips
+    max: Math.min(60, Math.max(3, Math.trunc(num(process.env.WALL_MAX, 13)))), // taille du classement : les N meilleurs clips
     results: Math.min(1000, Math.max(10, Math.trunc(num(process.env.WALL_RESULTS, 100)))),
     refreshHours: Math.max(0, num(process.env.WALL_REFRESH_HOURS, 24)), // 0 : seulement à la demande
     weights: w.length === 3 && w.every((x) => Number.isFinite(x) && x >= 0) ? w : [1, 10, 50],
@@ -147,7 +147,7 @@ const present = (r, rank) => ({
 const VISIBLE = `NOT c.hidden AND NOT EXISTS (SELECT 1 FROM wall_hidden_authors a WHERE a.author = lower(c.author))`;
 
 /**
- * Le mur : les `max` (20) meilleurs clips visibles sur la période, d'après le score, puis réordonnés selon `sort` (`score` par défaut) ;
+ * Le mur : les `max` (13) meilleurs clips visibles sur la période, d'après le score, puis réordonnés selon `sort` (`score` par défaut) ;
  * par pages de `limit`.
  */
 export async function listWall({ sort = 'score', period = 'all', limit = 24, offset = 0 } = {}) {
