@@ -19,7 +19,7 @@ import {
   videoFilePath,
 } from '../media.js';
 import { LlmError, llmConfigured } from '../openrouter.js';
-import { autoAnalyze, facesStatus, removeFaces, startAnalysis } from '../studio/faces.js';
+import { autoAnalyze, facesStatus, removeFaces, startAnalysis, startIdentification } from '../studio/faces.js';
 import { studioCapabilities } from '../studio/render.js';
 
 export const clipsAdminRouter = Router({ mergeParams: true });
@@ -133,6 +133,15 @@ clipsAdminRouter.post(
   ah(async (req, res) => {
     const v = await loadVideo(req);
     await startAnalysis(v);
+    res.json(await state(await loadVideo(req)));
+  }),
+);
+
+clipsAdminRouter.post(
+  '/faces/identify',
+  ah(async (req, res) => {
+    const v = await loadVideo(req);
+    await startIdentification(v);
     res.json(await state(await loadVideo(req)));
   }),
 );

@@ -145,6 +145,27 @@ test('expression ffmpeg : même courbe que le calcul', () => {
   assert.ok(cropXExpr(r.keys).length < 4000);
 });
 
+test('reconnaissance : « lisnard » suit la personne de référence, même plus petite ; sans elle, le plus gros', () => {
+  // deux visages : A (gros, à gauche) en position 0 de chaque image, B (petit, à droite) en position 1
+  const frames = video(20, () => [[0.25, 0.09], [0.75, 0.05]]);
+  const identMap = (a, b) => new Map(frames.flatMap((_, fi) => [[`${fi}:0`, a], [`${fi}:1`, b]]));
+  const at = (subject, ident) => framingForExtract({ frames, fps: 1, aspect: ASPECT, startMs: 0, endMs: 20000, subject, ident });
+  const sameB = at('lisnard', identMap(0.1, 0.9));
+  assert.ok(Math.abs(sameB.keys[0].x - toX(0.75)) < 1e-3, 'B reconnu : le cadre est sur lui');
+  assert.deepEqual([sameB.crowded, sameB.recognized], [1, 1]);
+  assert.ok(Math.abs(at('auto', identMap(0.1, 0.9)).keys[0].x - toX(0.25)) < 1e-3, 'auto ignore la reconnaissance');
+  const sameA = at('lisnard', identMap(0.8, 0.2));
+  assert.ok(Math.abs(sameA.keys[0].x - toX(0.25)) < 1e-3);
+  // personne reconnue (tout sous le seuil), ou pas de reconnaissance : repli sur le plus gros visage
+  for (const ident of [identMap(0.1, 0.2), null]) {
+    const r = at('lisnard', ident);
+    assert.ok(Math.abs(r.keys[0].x - toX(0.25)) < 1e-3);
+    assert.equal(r.recognized, 0);
+  }
+  // les deux ressemblent : la meilleure ressemblance l'emporte
+  assert.ok(Math.abs(at('lisnard', identMap(0.5, 0.7)).keys[0].x - toX(0.75)) < 1e-3);
+});
+
 test('vidéo longue (une image toutes les 2 s) : même résultat', () => {
   const frames = Array.from({ length: 31 }, (_, i) => [[0.5 - 0.03, 0.3, 0.06, 0.1, 0.9]]); // 62 s à 0,5 image par seconde
   const r = framingForExtract({ frames, fps: 0.5, aspect: ASPECT, startMs: 10000, endMs: 40000 });

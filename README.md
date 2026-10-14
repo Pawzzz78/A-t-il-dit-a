@@ -172,16 +172,28 @@ qu'à choisir les extraits.
     aucun calcul serveur pendant le glissement ;
   - **cadrage automatique sur le visage** (plein écran) : le cadre **suit la personne** au lieu de rester fixe. Les visages sont repérés
     **une fois par interview**, côté serveur (admin → fiche de la vidéo → « Cadrage automatique sur le visage » ; lancé tout seul au dépôt
-    de la vidéo, à relancer pour les vidéos déjà déposées). Détecteur YuNet (OpenCV Zoo, licence MIT, `src/studio/models/`), exécuté en
-    JavaScript pur dans un thread séparé (`yunet.js`, `faces-worker.js`) : aucune bibliothèque native. Une image par seconde (une toutes
-    les 2 s au-delà de 30 min) en 384 px, soit environ 0,2 s de calcul par seconde de vidéo ; un visage doit faire au moins ~5 % de la
-    largeur de l'image (les plans très larges ne sont pas suivis). Les **changements de plan** sont repérés en même temps (ffmpeg, `scene`).
-    Ensuite chaque clip n'a plus qu'à calculer la trajectoire (`public/js/framing.js`, module pur partagé avec le navigateur) : un visage
-    suivi par plan (le plus gros, ou celui de gauche / de droite au choix), un cadre qui reste immobile tant que le visage reste près du
-    centre puis se déplace en douceur (départ et arrivée progressifs, vitesse et accélération bornées), et qui saute directement sur le
-    visage du nouveau plan à chaque coupe de montage. Le rendu applique la même courbe image par image (`crop` avec `exact=1`) ; l'aperçu
-    la rejoue en direct. Sans visage trouvé ou sans analyse, le cadre manuel s'applique. Coupure : `STUDIO_FACES=off`. Tables :
-    `video_faces` (résultat par vidéo, invalidé si le fichier est remplacé).
+    de la vidéo, à relancer pour les vidéos déjà déposées). Détecteur YuNet (OpenCV Zoo, licence MIT) : **une image toutes les 0,2 s**
+    (une toutes les 0,4 s au-delà d'1 h 30) en 384 px, soit environ 0,2 s de calcul par seconde de vidéo (une heure d'interview : une
+    douzaine de minutes en arrière-plan) ; un visage doit faire au moins ~5 % de la largeur de l'image (les plans très larges ne sont pas
+    suivis). Les **changements de plan** sont repérés en même temps (ffmpeg, `scene`). Ensuite chaque clip n'a plus qu'à calculer la
+    trajectoire (`public/js/framing.js`, module pur partagé avec le navigateur) : un visage suivi par plan (David Lisnard s'il est reconnu,
+    sinon le plus gros, ou celui de gauche / de droite au choix), un cadre qui reste immobile tant que le visage reste près du centre puis
+    se déplace en douceur (départ et arrivée progressifs, vitesse et accélération bornées), et qui saute directement sur le visage du
+    nouveau plan à chaque coupe de montage. Le rendu applique la même courbe image par image (`crop` avec `exact=1`) ; l'aperçu la rejoue
+    en direct. Sans visage trouvé ou sans analyse, le cadre manuel s'applique. Coupure : `STUDIO_FACES=off`. Table `video_faces` (résultat
+    par vidéo, invalidé si le fichier est remplacé).
+  - **reconnaissance de David Lisnard** : dans l'admin, onglet « Reconnaissance », on donne une vingtaine de photos de lui (une personne par
+    photo, visage d'au moins 50 px). Chaque photo est réduite à une **empreinte de 128 nombres** (modèle SFace d'OpenCV Zoo, licence Apache
+    2.0) et à une vignette redressée pour vérification ; les photos elles-mêmes ne sont pas conservées. Une photo qui ne ressemble à
+    aucune autre est signalée « à vérifier » (mauvaise personne ?). À l'analyse d'une interview, les visages des **plans à plusieurs
+    personnes** (journaliste, public) sont comparés aux photos (quelques images de chaque visage, prises dans la vidéo) ; le studio suit
+    alors David Lisnard plutôt que le visage le plus gros. Seuil : similarité cosinus 0,363 (valeur recommandée pour SFace) ; la
+    ressemblance d'un visage est la moyenne de ses trois meilleures similarités avec les photos. Quand les photos changent, les vidéos déjà
+    analysées passent à « reconnaissance à mettre à jour » : le bouton de l'onglet relance seulement la reconnaissance, sans refaire la
+    détection. Tables `face_references` et `video_faces.ident`. La détection et la reconnaissance tournent dans un thread séparé, avec un
+    petit moteur de réseaux de neurones écrit pour l'occasion (`nn.js`, noyaux WebAssembly SIMD de `tools/kernels.wat` assemblés par
+    `tools/build_kernels.mjs`) : aucune bibliothèque native à installer, 7 fois plus rapide que du JavaScript seul, mêmes résultats
+    qu'ONNX Runtime (à 10⁻⁶ près, vérifié).
   - **miroir** : retourne l'image gauche-droite. Il est appliqué après le cadrage et avant l'incrustation : les sous-titres
     ne sont jamais retournés (en revanche les textes visibles dans l'image le sont). Il ne change pas les droits sur la
     vidéo d'origine ;
@@ -397,7 +409,7 @@ src/
 tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéos sans sous-titres, envoyée au site
   openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
-  studio/            studio public : rendu ffmpeg (render.js), détection des visages (faces.js, faces-worker.js, yunet.js), mesure du fond des sous-titres (box-probe.js), images libres de droits Pixabay / Pexels (stock.js), polices (fonts.json), musiques d'origine et bibliothèque de l'admin (music.json, music.js)
+  studio/            studio public : rendu ffmpeg (render.js), détection et reconnaissance des visages (faces.js, faces-worker.js, yunet.js, sface.js, identity.js, references.js, nn.js), mesure du fond des sous-titres (box-probe.js), images libres de droits Pixabay / Pexels (stock.js), polices (fonts.json), musiques d'origine et bibliothèque de l'admin (music.json, music.js)
   media.js           fichiers vidéo du studio : dépôt par morceaux, ffprobe, stockage
   clip-suggestions.js  extraits proposés par le LLM (numéros de lignes, horaires issus de la transcription)
   trends.js          tendances : comptage des mots par mois, mots les plus prononcés, cache et limites

@@ -115,7 +115,7 @@ export function normalizeRequest(body, video) {
     quality: l.quality === 'fast' ? 'fast' : 'hd',
     mirror: l.mirror === true, // image retournée gauche-droite (après le cadrage ; les sous-titres ne sont jamais retournés)
     // plein écran : le cadre suit le visage (si l'interview a été analysée) ; `subject` : visage suivi quand il y en a plusieurs
-    follow: { on: l.follow?.on === true, subject: l.follow?.subject === 'left' || l.follow?.subject === 'right' ? l.follow.subject : 'auto' },
+    follow: { on: l.follow?.on === true, subject: ['left', 'right', 'lisnard'].includes(l.follow?.subject) ? l.follow.subject : 'auto' },
   };
   const style = sanitizeStyle(b.style, FONTS.map((f) => f.id));
   let music = null;

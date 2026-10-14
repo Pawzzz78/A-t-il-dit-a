@@ -136,6 +136,7 @@ async function route() {
     else if (location.hash === '#/sync') await renderSync();
     else if (location.hash === '#/studio') await renderStudioStats();
     else if (location.hash === '#/musique') await renderMusicLibrary();
+    else if (location.hash === '#/visages') await renderFaceReferences();
     else await renderList();
   } catch (e) {
     if (e instanceof AuthError) return renderLogin();
@@ -150,6 +151,7 @@ function renderNav() {
     h('a', { href: '#/sync' }, 'Synchronisation'),
     h('a', { href: '#/studio' }, 'Studio'),
     h('a', { href: '#/musique' }, 'Musique'),
+    h('a', { href: '#/visages' }, 'Reconnaissance'),
     h('a', { href: '/' }, 'Voir le site'),
     h(
       'a',
@@ -482,6 +484,110 @@ async function renderMusicLibrary() {
   }
   draw();
   $app.replaceChildren(h('section', { class: 'panel' }, h('h2', {}, 'Musiques du studio'), h('p', { class: 'status' }, 'Les morceaux ajoutés ici apparaissent dans l’onglet « Musique » du studio, rangés par catégorie (motivant, épique, cinématique).')), root);
+}
+
+async function renderFaceReferences() {
+  let data = await api('GET', '/faces/references');
+  const root = h('div');
+  const note = h('p', { class: 'status', role: 'status' });
+  const results = h('ul', { class: 'upload-results' });
+  const input = h('input', { type: 'file', accept: 'image/*,.jpg,.jpeg,.png,.webp', multiple: true, id: 'ref-files' });
+  const sendBtn = h('button', { class: 'btn', type: 'button' }, 'Ajouter les photos');
+
+  async function sendOne(file) {
+    const li = h('li', {}, `${file.name} : envoi…`);
+    results.append(li);
+    try {
+      const res = await fetch(`/api/admin/faces/references?name=${encodeURIComponent(file.name)}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });
+      const body = await res.json().catch(() => ({}));
+      if (res.status === 401) throw new AuthError();
+      if (!res.ok) throw new Error(body.error || `Erreur ${res.status}`);
+      data = body;
+      li.className = 'ok';
+      li.textContent = `${file.name} : ajoutée.`;
+    } catch (e) {
+      if (e instanceof AuthError) throw e;
+      li.className = 'err';
+      li.textContent = `${file.name} : ${e.message}`;
+    }
+  }
+
+  sendBtn.addEventListener('click', async () => {
+    const files = [...(input.files ?? [])];
+    if (!files.length) return status(note, 'Choisis d’abord une ou plusieurs photos.', 'err');
+    sendBtn.disabled = true;
+    results.replaceChildren();
+    try {
+      for (const [i, f] of files.entries()) {
+        status(note, `Analyse des photos… ${i + 1} / ${files.length} (environ une seconde par photo)`);
+        await sendOne(f);
+      }
+      input.value = '';
+      draw();
+      const ok = results.querySelectorAll('li.ok').length;
+      status(note, `${ok} photo${ok > 1 ? 's' : ''} ajoutée${ok > 1 ? 's' : ''} sur ${files.length}. Pense à mettre à jour les vidéos déjà analysées.`, ok ? 'ok' : 'err');
+    } catch (e) {
+      if (e instanceof AuthError) return route();
+      status(note, e.message, 'err');
+    } finally {
+      sendBtn.disabled = false;
+    }
+  });
+
+  async function remove(r) {
+    if (!confirm('Retirer cette photo de la liste ?')) return;
+    try {
+      data = await api('DELETE', `/faces/references/${r.id}`);
+      draw();
+      status(note, 'Photo retirée. Pense à mettre à jour les vidéos déjà analysées.', 'ok');
+    } catch (e) {
+      status(note, e.message, 'err');
+    }
+  }
+
+  const updateBtn = h('button', { class: 'btn secondary', type: 'button' }, 'Mettre à jour les vidéos déjà analysées');
+  updateBtn.addEventListener('click', async () => {
+    updateBtn.disabled = true;
+    try {
+      const r = await api('POST', '/faces/identify-all', {});
+      status(note, r.queued ? `Reconnaissance relancée pour ${r.queued} vidéo${r.queued > 1 ? 's' : ''} (en arrière-plan, quelques minutes chacune).` : 'Toutes les vidéos analysées sont déjà à jour.', 'ok');
+    } catch (e) {
+      status(note, e.message, 'err');
+    } finally {
+      updateBtn.disabled = false;
+    }
+  });
+
+  function draw() {
+    const n = data.count;
+    root.replaceChildren(
+      h('section', { class: 'panel' },
+        h('h2', {}, 'Reconnaissance de David Lisnard'),
+        h('p', { class: 'status' }, 'Donne des photos de David Lisnard : dans les interviews où plusieurs personnes apparaissent (journaliste, public), le cadrage automatique du studio suivra lui plutôt que la personne la plus visible. Seules les empreintes des visages sont conservées, pas les photos.'),
+        data.enabled ? null : h('p', { class: 'status err' }, 'Le cadrage automatique est désactivé sur ce serveur (STUDIO_FACES=off).'),
+        h('ul', { class: 'tips' },
+          h('li', {}, 'Une vingtaine de photos, variées : de face et de trois quarts, avec et sans lunettes, en intérieur et en extérieur, à différentes années.'),
+          h('li', {}, `Une seule personne par photo, visage net et assez grand (au moins ${data.minFacePx} pixels de large) ; la photo est refusée sinon.`),
+          h('li', {}, 'Évite les photos retouchées, très sombres ou de profil, et les images où il porte un masque ou des lunettes de soleil.')),
+        h('div', { class: 'field' }, h('label', { for: 'ref-files' }, 'Photos (plusieurs à la fois)'), input),
+        h('div', { class: 'actions' }, sendBtn),
+        results),
+      note,
+      h('section', { class: 'panel' },
+        h('h2', {}, `Photos de référence (${n} sur ${data.max} au maximum)`),
+        n === 0 ? h('p', { class: 'status' }, 'Aucune photo pour le moment.') : n < 10 ? h('p', { class: 'status' }, `Il vaut mieux au moins 10 photos pour une reconnaissance fiable (${n} pour l’instant).`) : h('p', { class: 'status ok' }, `${n} photos : bonne base pour la reconnaissance.`),
+        data.references.some((r) => r.suspicious) ? h('p', { class: 'status err' }, 'Les photos marquées « à vérifier » ne ressemblent à aucune autre de la liste : est-ce bien David Lisnard ? Une mauvaise photo dégrade la reconnaissance.') : null,
+        h('div', { class: 'ref-grid' }, data.references.map((r) =>
+          h('figure', { class: `ref${r.suspicious ? ' suspicious' : ''}` },
+            h('img', { src: `/api/admin/faces/references/${r.id}/thumb`, alt: r.name || `Photo ${r.id}`, width: 112, height: 112, loading: 'lazy' }),
+            h('figcaption', {}, h('span', { class: 'ref-name', title: r.name }, r.name || `Photo ${r.id}`), r.suspicious ? h('span', { class: 'badge warn' }, 'à vérifier') : null,
+              h('button', { class: 'btn danger small', type: 'button', onclick: () => remove(r) }, 'Retirer'))))),
+        h('div', { class: 'actions' }, updateBtn),
+        h('p', { class: 'status' }, 'Les vidéos analysées plus tard utilisent automatiquement les photos actuelles. Pour celles déjà analysées, ce bouton relance seulement la reconnaissance (pas la détection des visages).')),
+    );
+  }
+  draw();
+  $app.replaceChildren(root);
 }
 
 async function renderSync() {
@@ -1218,14 +1324,33 @@ async function renderEditor(id) {
     const fc = clipState?.faces;
     if (!clipState?.file || !fc || fc.status === 'off') return facesBox.replaceChildren();
     const busy = fc.status === 'queued' || fc.status === 'running';
+    const phase = fc.phase === 'identify' ? 'Reconnaissance de David Lisnard' : 'Analyse';
+    const id2 = fc.ident ?? { state: 'off' };
     const text = {
       none: 'Pas encore analysée : en plein écran, les visiteurs devront cadrer à la main.',
-      queued: 'Analyse en attente…',
-      running: `Analyse en cours… ${Math.round((fc.progress ?? 0) * 100)} % (quelques minutes pour une interview d’une heure ; le site reste utilisable).`,
-      ready: `Visages repérés (${fc.summary?.seconds ?? '?'} s analysées, ${fc.summary?.cuts ?? 0} changement${fc.summary?.cuts > 1 ? 's' : ''} de plan). En plein écran, le cadre suit la personne qui parle.`,
+      queued: `${phase} en attente…`,
+      running: `${phase} en cours… ${Math.round((fc.progress ?? 0) * 100)} % (quelques minutes pour une interview d’une heure ; le site reste utilisable).`,
+      ready: `Visages repérés (${fc.summary?.seconds ?? '?'} s analysées à ${fc.summary?.fps ?? '?'} image${fc.summary?.fps > 1 ? 's' : ''} par seconde, ${fc.summary?.cuts ?? 0} changement${fc.summary?.cuts > 1 ? 's' : ''} de plan). En plein écran, le cadre suit la personne qui parle.`,
       failed: `L’analyse a échoué : ${fc.error ?? 'erreur inconnue'}`,
       stale: 'La vidéo a été remplacée depuis l’analyse : relance-la.',
     }[fc.status];
+    const identText = fc.status !== 'ready' ? null : {
+      off: 'Reconnaissance de David Lisnard : aucune photo de référence (onglet « Reconnaissance »).',
+      none: 'Reconnaissance de David Lisnard : pas encore faite.',
+      stale: 'Reconnaissance de David Lisnard : à mettre à jour (les photos de référence ont changé).',
+      ready: `Reconnaissance de David Lisnard : à jour (${id2.matches ?? 0} visage${id2.matches > 1 ? 's' : ''} reconnu${id2.matches > 1 ? 's' : ''} sur ${id2.samples ?? 0} comparé${id2.samples > 1 ? 's' : ''}, dans les plans à plusieurs personnes).`,
+    }[id2.state];
+    const identBtn = fc.status === 'ready' && (id2.state === 'none' || id2.state === 'stale')
+      ? h('button', { class: 'btn secondary small', type: 'button', onclick: async (e) => {
+        e.target.disabled = true;
+        try {
+          clipState = await api('POST', `/videos/${id}/faces/identify`, {});
+        } catch (err) {
+          status(clipMsg, err.message, 'err');
+        }
+        drawFaces();
+      } }, 'Lancer la reconnaissance')
+      : null;
     const btn = h('button', { class: 'btn secondary small', type: 'button', disabled: busy }, fc.status === 'ready' || fc.status === 'failed' || fc.status === 'stale' ? 'Relancer l’analyse' : 'Analyser les visages');
     btn.addEventListener('click', async () => {
       btn.disabled = true;
@@ -1239,7 +1364,8 @@ async function renderEditor(id) {
     facesBox.replaceChildren(
       h('h3', { class: 'clips-sub' }, 'Cadrage automatique sur le visage'),
       h('p', { class: `status${fc.status === 'failed' ? ' err' : ''}` }, text),
-      h('div', { class: 'actions' }, btn));
+      identText ? h('p', { class: 'status' }, identText) : null,
+      h('div', { class: 'actions' }, btn, identBtn));
     if (busy) {
       facesTimer = setTimeout(async () => {
         try {

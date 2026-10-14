@@ -142,3 +142,16 @@ progress { width: 100%; height: .6rem; margin-top: .6rem; accent-color: var(--co
 .mrow audio { width: 100%; height: 2.4rem; }
 label.check { display: inline-flex; gap: .4rem; align-items: center; font-weight: 600; cursor: pointer; }
 .field small { display: block; margin-top: .3rem; color: var(--color-muted); }
+
+/* Reconnaissance : photos de référence */
+.tips { margin: .5rem 0 1rem 1.2rem; padding: 0; color: var(--color-muted); font-size: .9rem; line-height: 1.5; }
+.upload-results { list-style: none; margin: .8rem 0 0; padding: 0; font-size: .88rem; }
+.upload-results li { padding: .2rem 0; color: var(--color-muted); }
+.upload-results li.ok { color: var(--color-success); }
+.upload-results li.err { color: var(--color-danger); font-weight: 600; }
+.ref-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr)); gap: .8rem; margin: 1rem 0; }
+.ref { margin: 0; padding: .5rem; border: 1px solid var(--color-border); border-radius: var(--radius); background: var(--color-surface); display: grid; gap: .4rem; justify-items: center; }
+.ref.suspicious { border-color: var(--color-danger); }
+.ref img { width: 100%; max-width: 112px; height: auto; border-radius: .4rem; background: #eee; }
+.ref figcaption { display: grid; gap: .3rem; justify-items: center; width: 100%; }
+.ref-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .75rem; color: var(--color-muted); }

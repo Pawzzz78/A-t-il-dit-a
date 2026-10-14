@@ -1,2 +1,5 @@
-`face_detection_yunet_2023mar.onnx` : détecteur de visages YuNet (Shiqi Yu et al.), tel que publié dans OpenCV Zoo
-(https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet), licence MIT. Exécuté en JavaScript pur par `../yunet.js`.
+Modèles de visages d'OpenCV Zoo (https://github.com/opencv/opencv_zoo), exécutés par `../nn.js` :
+
+- `face_detection_yunet_2023mar.onnx` : détecteur YuNet (Shiqi Yu et al.), licence MIT.
+- `face_recognition_sface_2021dec.onnx` : reconnaissance SFace (Zhong et al., « SFace: Sigmoid-Constrained Hypersphere Loss for Robust Face
+  Recognition »), licence Apache 2.0.

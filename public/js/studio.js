@@ -100,8 +100,8 @@ async function openEditor(youtubeId) {
     style: sanitizeStyle(prefs.style, fontIds),
     music: { id: assets.music.some((m) => m.id === prefs.music?.id) ? prefs.music.id : null, volume: Number.isFinite(prefs.music?.volume) ? prefs.music.volume : 0.25 },
     voice: Number.isFinite(prefs.voice) ? prefs.voice : 1,
-    layout: { fit: prefs.layout?.fit === 'crop' ? 'crop' : 'blur', cropX: 0.5, quality: prefs.layout?.quality === 'fast' ? 'fast' : 'hd', mirror: prefs.layout?.mirror === true, follow: { on: prefs.layout?.follow?.on !== false, subject: 'auto' } }, // follow : le cadre suit le visage (plein écran)
-    framing: { ready: detail.faces?.ready === true, segments: null, faces: 0, coverage: 0, loading: false }, // cadrage automatique : trajectoire reçue du serveur
+    layout: { fit: prefs.layout?.fit === 'crop' ? 'crop' : 'blur', cropX: 0.5, quality: prefs.layout?.quality === 'fast' ? 'fast' : 'hd', mirror: prefs.layout?.mirror === true, follow: { on: prefs.layout?.follow?.on !== false, subject: detail.faces?.identified ? 'lisnard' : 'auto' } }, // follow : le cadre suit le visage (plein écran) ; « lisnard » : la personne de référence quand elle est reconnue
+    framing: { ready: detail.faces?.ready === true, identified: detail.faces?.identified === true, segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0, loading: false }, // cadrage automatique : trajectoire reçue du serveur
     zoom: { on: false, auto: true, ...sanitizeZoom({ strength: prefs.zoom?.strength, focus: prefs.zoom?.focus }), events: [], picking: false }, // zooms : événements { t, kind } en secondes du clip
     broll: [], // images : { id, start, dur, thumb, photographer, page, alt }
     stock: { q: '', photos: [], page: 0, next: false, busy: false, error: '' },
@@ -167,7 +167,7 @@ async function openEditor(youtubeId) {
   async function refreshFraming() {
     const mine = ++framingTicket;
     if (!(S.layout.fit === 'crop' && S.layout.follow.on && S.framing.ready && S.extracts.length)) {
-      S.framing = { ...S.framing, segments: null, faces: 0, coverage: 0, loading: false };
+      S.framing = { ...S.framing, segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0, loading: false };
       pushFraming();
       if (S.layout.fit === 'crop') renderFrame();
       return;
@@ -176,10 +176,10 @@ async function openEditor(youtubeId) {
     try {
       const r = await api('POST', '/framing', { youtube_id: S.video.youtube_id, extracts: S.extracts.map(exMs), subject: S.layout.follow.subject });
       if (mine !== framingTicket) return;
-      S.framing = { ...S.framing, segments: r.segments, faces: r.faces, coverage: r.coverage, loading: false };
+      S.framing = { ...S.framing, segments: r.segments, faces: r.faces, coverage: r.coverage, crowded: r.crowded ?? 0, recognized: r.recognized ?? 0, loading: false };
     } catch {
       if (mine !== framingTicket) return;
-      S.framing = { ...S.framing, segments: null, faces: 0, coverage: 0, loading: false };
+      S.framing = { ...S.framing, segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0, loading: false };
     }
     pushFraming();
     renderFrame();
@@ -612,7 +612,15 @@ async function openEditor(youtubeId) {
       if (!S.extracts.length) status = 'Ajoute un extrait : le cadre suivra la personne qui parle.';
       else if (fr.loading && !fr.segments) status = 'Recherche du visage…';
       else if (!fr.segments) status = 'Aucun visage repéré dans ces extraits : règle le cadrage à la main ci-dessous.';
-      else status = `${fr.faces > 1 ? `${fr.faces} visages repérés. ` : ''}Le cadre suit ${S.layout.follow.subject === 'left' ? 'le visage de gauche' : S.layout.follow.subject === 'right' ? 'le visage de droite' : fr.faces > 1 ? 'le plus gros visage' : 'le visage'} (repéré sur ${Math.round(fr.coverage * 100)} % de la durée).`;
+      else {
+        const who = { lisnard: fr.crowded ? 'David Lisnard' : 'le visage', left: 'le visage de gauche', right: 'le visage de droite' }[S.layout.follow.subject] ?? (fr.faces > 1 ? 'le plus gros visage' : 'le visage');
+        const seen = `repéré sur ${Math.round(fr.coverage * 100)} % de la durée`;
+        if (S.layout.follow.subject === 'lisnard' && fr.crowded) {
+          status = fr.recognized === fr.crowded
+            ? `David Lisnard est reconnu dans ${fr.crowded > 1 ? `les ${fr.crowded} plans` : 'le plan'} où plusieurs personnes apparaissent : le cadre le suit (${seen}).`
+            : `David Lisnard est reconnu dans ${fr.recognized} des ${fr.crowded} plans à plusieurs personnes ; ailleurs le cadre suit le plus gros visage (${seen}).`;
+        } else status = `${fr.faces > 1 ? `${fr.faces} visages repérés. ` : ''}Le cadre suit ${who} (${seen}).`;
+      }
     }
     const manual = !(S.layout.follow.on && fr.ready && fr.segments);
     return el('div', { class: 'st-sub-block' },
@@ -620,7 +628,7 @@ async function openEditor(youtubeId) {
         ? el('label', { class: 'st-check' }, follow, 'Suivre automatiquement le visage')
         : el('p', { class: 'st-help' }, 'Le suivi automatique du visage n’est pas disponible pour cette interview : règle le cadrage à la main.'),
       status ? el('p', { class: 'st-help', role: 'status' }, status) : null,
-      fr.ready && S.layout.follow.on && fr.faces > 1 ? el('div', { class: 'st-chips', role: 'group', 'aria-label': 'Visage à suivre' }, subject('auto', 'Le plus gros'), subject('left', 'Celui de gauche'), subject('right', 'Celui de droite')) : null,
+      fr.ready && S.layout.follow.on && fr.faces > 1 ? el('div', { class: 'st-chips', role: 'group', 'aria-label': 'Visage à suivre' }, fr.identified ? subject('lisnard', 'David Lisnard') : null, subject('auto', 'Le plus gros'), subject('left', 'Celui de gauche'), subject('right', 'Celui de droite')) : null,
       fr.ready && S.layout.follow.on && fr.segments && fr.coverage < 0.5 ? el('p', { class: 'st-help warn' }, 'Le visage est peu visible dans ces extraits : le cadrage peut être approximatif. Vérifie l’aperçu.') : null,
       manual
         ? el('div', {},

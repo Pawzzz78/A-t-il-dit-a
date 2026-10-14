@@ -126,11 +126,12 @@ test('analyse admin : visages et changement de plan détectés, résultat enregi
   assert.ok(done.summary.cuts >= 1);
   const { rows } = await pool.query('SELECT content FROM video_faces WHERE video_id = $1', [videoId]);
   const { frames, cuts, fps, aspect } = rows[0].content;
-  assert.deepEqual([fps, Math.round(aspect * 100) / 100], [1, 1.78]);
+  assert.deepEqual([fps, Math.round(aspect * 100) / 100], [5, 1.78]);
+  assert.ok(frames.length >= DURATION * fps - 1 && frames.length <= DURATION * fps + 1, `${frames.length} images pour ${DURATION} s à ${fps} images par seconde`);
   assert.ok(cuts.some((c) => Math.abs(c - 20) < 0.6), `coupes ${cuts}`);
   for (const t of [1, 4, 10, 14, 19, 22, 28]) {
-    assert.equal(frames[t].length, 1, `t=${t}`);
-    const [x, , w] = frames[t][0];
+    assert.equal(frames[t * fps].length, 1, `t=${t}`);
+    const [x, , w] = frames[t * fps][0];
     assert.ok(Math.abs(x + w / 2 - FACE_CENTER(t)) < 0.03, `t=${t} : visage en ${x + w / 2}, attendu ${FACE_CENTER(t)}`);
   }
   // la vidéo est proposée avec le cadrage automatique possible
@@ -191,7 +192,7 @@ test('cadrage automatique indisponible sans analyse : le cadre manuel s\'appliqu
   assert.equal((await call('GET', `/api/admin/videos/${videoId}/clips`)).body.faces.status, 'none');
   assert.equal((await call('GET', `/api/studio/videos/${YT}`)).body.faces.ready, false);
   const r = await call('POST', '/api/studio/framing', { youtube_id: YT, extracts: [{ start_ms: 2000, end_ms: 28000 }] });
-  assert.deepEqual(r.body, { segments: null, faces: 0, coverage: 0 });
+  assert.deepEqual(r.body, { segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0 });
   const job = await call('POST', '/api/studio/render', { youtube_id: YT, extracts: [{ start_ms: 2000, end_ms: 8000 }], music: null, layout: { fit: 'crop', cropX: 0.5, quality: 'fast', follow: { on: true } } });
   assert.equal(job.status, 202); // le rendu part quand même, avec le cadre manuel
 });

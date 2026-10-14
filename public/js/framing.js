@@ -18,6 +18,7 @@ export const FRAMING = {
   stepS: 0.05, // pas d'observation du visage
   minMoveS: 0.8, // durée minimale d'un déplacement du cadre
   minShare: 0.2, // un visage compte s'il apparaît au moins 20 % du temps du visage le plus présent
+  samePerson: 0.363, // similarité d'empreintes à partir de laquelle un visage est celui de la personne de référence (seuil SFace d'OpenCV)
 };
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -30,15 +31,15 @@ export const windowWidth = (aspect) => 9 / 16 / aspect;
  * Regroupe les détections en visages suivis dans le temps. Renvoie [{ pts: [{ t, cx, cy, h, s }], weight, share, meanX }] ;
  * `weight` (taille × netteté × présence dans [fromS, toS]) sert à désigner « le visage le plus gros ».
  */
-export function faceTracks(frames, fps, aspect, fromS, toS) {
+export function faceTracks(frames, fps, aspect, fromS, toS, ident = null) {
   const i0 = Math.max(0, Math.ceil(fromS * fps - 1e-9));
   const i1 = Math.min(frames.length - 1, Math.ceil(toS * fps - 1e-9) - 1); // [fromS, toS[ : l'image tombant pile sur la fin appartient au plan suivant
   const tracks = [];
   for (let i = i0; i <= i1; i++) {
     const t = i / fps;
-    const dets = [...(frames[i] ?? [])].sort((a, b) => b[2] * b[3] - a[2] * a[3]);
+    const dets = (frames[i] ?? []).map((d, di) => [...d.slice(0, 5), di]).sort((a, b) => b[2] * b[3] - a[2] * a[3]);
     const taken = new Set();
-    for (const [x, y, w, h, s] of dets) {
+    for (const [x, y, w, h, s, di] of dets) {
       const cx = x + w / 2;
       const cy = y + h / 2;
       let best = null;
@@ -58,14 +59,17 @@ export function faceTracks(frames, fps, aspect, fromS, toS) {
         tracks.push(best);
       }
       taken.add(best);
-      best.pts.push({ t, cx, cy, h, s, w });
+      best.pts.push({ t, cx, cy, h, s, w, fi: i, di });
     }
   }
   const inRange = () => true;
   const out = tracks
     .map((tr) => {
       const mine = tr.pts.filter(inRange);
+      // identité : meilleure similarité avec la personne de référence parmi les points où le visage a été comparé
+      const sims = ident ? tr.pts.map((p) => ident.get(`${p.fi}:${p.di}`)).filter((v) => v !== undefined) : [];
       return {
+        ident: sims.length ? Math.max(...sims) : null,
         pts: tr.pts,
         count: mine.length,
         weight: mine.reduce((a, p) => a + p.w * aspect * p.h * p.s, 0),
@@ -78,11 +82,18 @@ export function faceTracks(frames, fps, aspect, fromS, toS) {
   return out;
 }
 
-/** Visage à suivre : « auto » = le plus gros ; « left » / « right » = le plus à gauche / à droite parmi les visages présents. */
+/**
+ * Visage à suivre : « lisnard » = celui qui ressemble à la personne de référence (sinon le plus gros) ; « auto » = le plus gros ;
+ * « left » / « right » = le plus à gauche / à droite parmi les visages présents.
+ */
 export function pickTrack(tracks, subject = 'auto') {
   const real = tracks.filter((tr) => tr.share >= FRAMING.minShare && tr.count >= 2);
   const pool = real.length ? real : tracks.filter((tr) => tr.share === 1);
   if (!pool.length) return null;
+  if (subject === 'lisnard') {
+    const hits = pool.filter((tr) => tr.ident !== null && tr.ident >= FRAMING.samePerson).sort((a, b) => b.ident - a.ident);
+    if (hits.length) return hits[0];
+  }
   if (subject === 'left') return pool.reduce((a, b) => (b.meanX < a.meanX ? b : a));
   if (subject === 'right') return pool.reduce((a, b) => (b.meanX > a.meanX ? b : a));
   return pool.reduce((a, b) => (b.weight > a.weight ? b : a));
@@ -165,10 +176,10 @@ export function splitShots(fromS, toS, cuts = []) {
  * ou null si aucun visage n'a été trouvé. Chaque plan de l'interview (entre deux coupes de montage) est cadré séparément ;
  * à la coupe le cadre saute directement sur le visage du nouveau plan, comme le fait la coupe elle-même.
  */
-export function framingForExtract({ frames, fps, aspect, startMs, endMs, subject = 'auto', cuts = [] }) {
+export function framingForExtract({ frames, fps, aspect, startMs, endMs, subject = 'auto', cuts = [], ident = null }) {
   const [fromS, toS] = [startMs / 1000, endMs / 1000];
   const shots = splitShots(fromS, toS, cuts).map((sh) => {
-    const tracks = faceTracks(frames, fps, aspect, sh.from, sh.to);
+    const tracks = faceTracks(frames, fps, aspect, sh.from, sh.to, ident);
     const track = pickTrack(tracks, subject);
     return { ...sh, tracks, track };
   });
@@ -176,10 +187,17 @@ export function framingForExtract({ frames, fps, aspect, startMs, endMs, subject
   let detected = 0;
   let faces = 0;
   let prevEnd = null;
+  // plans à plusieurs visages : combien ont été tranchés grâce à la reconnaissance de la personne de référence
+  let crowded = 0;
+  let recognized = 0;
   const parts = shots.map((sh) => {
     if (!sh.track) return { ...sh, keys: null };
     detected += sh.track.count;
     faces = Math.max(faces, faceCount(sh.tracks));
+    if (faceCount(sh.tracks) > 1) {
+      crowded++;
+      if (sh.track.ident !== null && sh.track.ident >= FRAMING.samePerson) recognized++;
+    }
     const keys = framingPath(sh.track, sh.from, sh.to, aspect, prevEnd);
     prevEnd = keys.at(-1).x;
     return { ...sh, keys };
@@ -201,29 +219,33 @@ export function framingForExtract({ frames, fps, aspect, startMs, endMs, subject
     }
   }
   const expected = Math.max(1, Math.round((toS - fromS) * fps));
-  return { keys, faces, coverage: round(Math.min(1, detected / expected), 2) };
+  return { keys, faces, coverage: round(Math.min(1, detected / expected), 2), crowded, recognized };
 }
 
 /**
  * Cadrage de tout le clip : un segment par extrait, sur la ligne de temps du clip (t0, t1 en secondes ; les points-clés restent
  * relatifs à t0). `keys` vaut null quand aucun visage n'a été trouvé : le cadre manuel s'applique alors à ce segment.
  */
-export function framingForClip({ frames, fps, aspect, extracts, subject = 'auto', cuts = [] }) {
+export function framingForClip({ frames, fps, aspect, extracts, subject = 'auto', cuts = [], ident = null }) {
   let t0 = 0;
   let faces = 0;
   let covered = 0;
+  let crowded = 0;
+  let recognized = 0;
   const segments = extracts.map((e) => {
     const dur = (e.end_ms - e.start_ms) / 1000;
-    const r = framingForExtract({ frames, fps, aspect, startMs: e.start_ms, endMs: e.end_ms, subject, cuts });
+    const r = framingForExtract({ frames, fps, aspect, startMs: e.start_ms, endMs: e.end_ms, subject, cuts, ident });
     const seg = { t0: round(t0, 3), t1: round(t0 + dur, 3), keys: r ? r.keys : null };
     t0 += dur;
     if (r) {
       faces = Math.max(faces, r.faces);
       covered += r.coverage * dur;
+      crowded += r.crowded;
+      recognized += r.recognized;
     }
     return seg;
   });
-  return { segments, faces, coverage: t0 ? round(covered / t0, 2) : 0 };
+  return { segments, faces, coverage: t0 ? round(covered / t0, 2) : 0, crowded, recognized };
 }
 
 /** Position du cadre à l'instant t (secondes depuis le début du segment). */

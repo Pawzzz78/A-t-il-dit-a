@@ -144,3 +144,18 @@ CREATE TABLE IF NOT EXISTS video_faces (
   file_stamp  TEXT,
   analyzed_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Studio : photos de référence d'une personne à reconnaître (David Lisnard) : empreinte du visage (128 nombres) et vignette redressée.
+CREATE TABLE IF NOT EXISTS face_references (
+  id         SERIAL PRIMARY KEY,
+  label      TEXT NOT NULL DEFAULT 'lisnard',
+  name       TEXT NOT NULL DEFAULT '',
+  embedding  JSONB NOT NULL,
+  thumb      BYTEA NOT NULL,
+  score      REAL,
+  face_px    INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Reconnaissance dans une interview : [indice d'image, indice du visage, ressemblance] ; `ident_version` : jeu de photos utilisé
+ALTER TABLE video_faces ADD COLUMN IF NOT EXISTS ident         JSONB;
+ALTER TABLE video_faces ADD COLUMN IF NOT EXISTS ident_version TEXT;

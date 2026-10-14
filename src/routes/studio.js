@@ -101,6 +101,12 @@ studioRouter.get(
   }),
 );
 
+/** Ce que le studio a besoin de savoir des visages d'une vidéo. */
+async function publicFaces(v) {
+  const f = await facesStatus(v);
+  return { ready: f.status === 'ready', identified: f.status === 'ready' && f.ident.state === 'ready' };
+}
+
 /** Une vidéo du studio : extraits proposés et lignes de la transcription (pour ajuster le début et la fin ligne par ligne). */
 studioRouter.get(
   '/videos/:youtubeId',
@@ -113,7 +119,7 @@ studioRouter.get(
       video: { ...presentVideo(v), width: v.file_width, height: v.file_height, has_audio: v.file_has_audio },
       suggestions: (sg?.clips ?? []).map(({ start_ms, end_ms, duration_s, title, why, score, text, description }) => ({ start_ms, end_ms, duration_s, title, why, score, text, description: description ?? null })),
       lines,
-      faces: { ready: (await facesStatus(v)).status === 'ready' }, // cadrage automatique possible
+      faces: await publicFaces(v), // cadrage automatique possible ; reconnaissance de la personne de référence disponible
     });
   }),
 );
@@ -135,7 +141,7 @@ studioRouter.post(
     const request = normalizeRequest({ ...req.body, layout: { ...req.body?.layout, fit: 'crop', follow: { on: true, subject: req.body?.subject } } }, v);
     const clip = await framingForRequest(v, request);
     res.set('Cache-Control', 'no-store');
-    res.json(clip ? { segments: clip.segments, faces: clip.faces, coverage: clip.coverage } : { segments: null, faces: 0, coverage: 0 });
+    res.json(clip ? { segments: clip.segments, faces: clip.faces, coverage: clip.coverage, crowded: clip.crowded, recognized: clip.recognized } : { segments: null, faces: 0, coverage: 0, crowded: 0, recognized: 0 });
   }),
 );
 
