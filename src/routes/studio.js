@@ -10,6 +10,7 @@ import { HttpError } from '../http-error.js';
 import { DEFAULT_STYLE, LIMITS, PRESETS } from '../../public/js/studio-core.js';
 import { cancelJob, createPreview, enqueueRender, FONTS, getJob, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
 import { CATEGORIES, ensureMusic, libraryFile, publicTracks } from '../studio/music.js';
+import { facesStatus, framingForRequest } from '../studio/faces.js';
 import { recordEvent } from '../studio/stats.js';
 import { ensureImage, searchPhotos, stockEnabled, stockProvider } from '../studio/stock.js';
 import { parseYoutubeId } from '../youtube.js';
@@ -112,6 +113,7 @@ studioRouter.get(
       video: { ...presentVideo(v), width: v.file_width, height: v.file_height, has_audio: v.file_has_audio },
       suggestions: (sg?.clips ?? []).map(({ start_ms, end_ms, duration_s, title, why, score, text, description }) => ({ start_ms, end_ms, duration_s, title, why, score, text, description: description ?? null })),
       lines,
+      faces: { ready: (await facesStatus(v)).status === 'ready' }, // cadrage automatique possible
     });
   }),
 );
@@ -121,6 +123,21 @@ async function linesOf(videoId) {
   const { rows } = await pool.query('SELECT start_ms, duration_ms, text FROM segments WHERE video_id = $1 ORDER BY position', [videoId]);
   return prepareSegments(rows);
 }
+
+/**
+ * Trajectoire du cadre qui suit le visage (mode plein écran), pour l'aperçu en direct :
+ * { segments: [{ t0, t1, keys }], faces, coverage } ; `segments` vaut null si le suivi n'est pas disponible pour ce clip.
+ */
+studioRouter.post(
+  '/framing',
+  ah(async (req, res) => {
+    const v = await loadVideo(req.body?.youtube_id);
+    const request = normalizeRequest({ ...req.body, layout: { ...req.body?.layout, fit: 'crop', follow: { on: true, subject: req.body?.subject } } }, v);
+    const clip = await framingForRequest(v, request);
+    res.set('Cache-Control', 'no-store');
+    res.json(clip ? { segments: clip.segments, faces: clip.faces, coverage: clip.coverage } : { segments: null, faces: 0, coverage: 0 });
+  }),
+);
 
 studioRouter.post(
   '/preview',
@@ -149,6 +166,7 @@ studioRouter.post(
     const v = await loadVideo(req.body?.youtube_id);
     await ensureMusic();
     const request = normalizeRequest(req.body, v);
+    request.framing = await framingForRequest(v, request);
     const job = await enqueueRender({ video: v, req: request, lines: await linesOf(v.id), ip: req.ip });
     await recordEvent('render', { jobId: job.id, youtubeId: v.youtube_id, ip: req.ip });
     res.status(202).json(publicJob(job));

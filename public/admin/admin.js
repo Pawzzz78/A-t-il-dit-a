@@ -1204,6 +1204,53 @@ async function renderEditor(id) {
   // --- clips TikTok / Reels : fichier vidéo, autorisation, extraits proposés
   const clipsPanel = h('section', { class: 'panel' });
   let clipsPreview = null; // <video> d'aperçu (pour « Voir » un extrait)
+
+  // --- cadrage automatique : détection des visages dans la vidéo (le studio s'en sert en mode plein écran)
+  const facesBox = h('div');
+  let facesTimer = 0;
+  const prevCleanup = cleanup;
+  cleanup = () => {
+    prevCleanup();
+    clearTimeout(facesTimer);
+  };
+  function drawFaces() {
+    clearTimeout(facesTimer);
+    const fc = clipState?.faces;
+    if (!clipState?.file || !fc || fc.status === 'off') return facesBox.replaceChildren();
+    const busy = fc.status === 'queued' || fc.status === 'running';
+    const text = {
+      none: 'Pas encore analysée : en plein écran, les visiteurs devront cadrer à la main.',
+      queued: 'Analyse en attente…',
+      running: `Analyse en cours… ${Math.round((fc.progress ?? 0) * 100)} % (quelques minutes pour une interview d’une heure ; le site reste utilisable).`,
+      ready: `Visages repérés (${fc.summary?.seconds ?? '?'} s analysées, ${fc.summary?.cuts ?? 0} changement${fc.summary?.cuts > 1 ? 's' : ''} de plan). En plein écran, le cadre suit la personne qui parle.`,
+      failed: `L’analyse a échoué : ${fc.error ?? 'erreur inconnue'}`,
+      stale: 'La vidéo a été remplacée depuis l’analyse : relance-la.',
+    }[fc.status];
+    const btn = h('button', { class: 'btn secondary small', type: 'button', disabled: busy }, fc.status === 'ready' || fc.status === 'failed' || fc.status === 'stale' ? 'Relancer l’analyse' : 'Analyser les visages');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        clipState = await api('POST', `/videos/${id}/faces`, {});
+      } catch (e) {
+        status(clipMsg, e.message, 'err');
+      }
+      drawFaces();
+    });
+    facesBox.replaceChildren(
+      h('h3', { class: 'clips-sub' }, 'Cadrage automatique sur le visage'),
+      h('p', { class: `status${fc.status === 'failed' ? ' err' : ''}` }, text),
+      h('div', { class: 'actions' }, btn));
+    if (busy) {
+      facesTimer = setTimeout(async () => {
+        try {
+          clipState = await api('GET', `/videos/${id}/clips`);
+        } catch (e) {
+          if (e instanceof AuthError) return;
+        }
+        drawFaces();
+      }, 3000);
+    }
+  }
   let uploading = null; // { abort, ... } pendant un dépôt
   const mo = (bytes) => `${(bytes / 1024 / 1024).toFixed(bytes > 99 * 1024 * 1024 ? 0 : 1)} Mo`;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -1399,6 +1446,7 @@ async function renderEditor(id) {
         progressText,
         h('label', { class: 'switch-row' }, toggle, h('span', {}, 'Autoriser les clips pour le public')),
         h('p', { class: 'status' }, 'Les visiteurs pourront créer des TikToks à partir de cette vidéo. N’autorise que des vidéos dont tu peux diffuser des extraits.'),
+        facesBox,
         h('h3', { class: 'clips-sub' }, 'Extraits proposés par l’IA'),
         sg?.outdated ? h('p', { class: 'status err' }, 'La transcription a changé depuis : régénère les extraits.') : null,
         cards.length ? h('div', { class: 'clip-list' }, cards) : h('p', { class: 'status' }, st.llm ? 'Pas encore d’extraits.' : 'OPENROUTER_API_KEY manquante : impossible de proposer des extraits.'),
@@ -1406,6 +1454,7 @@ async function renderEditor(id) {
         clipMsg,
       ),
     );
+    drawFaces();
   }
   renderClips();
 

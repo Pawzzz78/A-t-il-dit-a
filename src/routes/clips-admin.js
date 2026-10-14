@@ -19,6 +19,7 @@ import {
   videoFilePath,
 } from '../media.js';
 import { LlmError, llmConfigured } from '../openrouter.js';
+import { autoAnalyze, facesStatus, removeFaces, startAnalysis } from '../studio/faces.js';
 import { studioCapabilities } from '../studio/render.js';
 
 export const clipsAdminRouter = Router({ mergeParams: true });
@@ -65,6 +66,7 @@ async function state(v) {
     llm: llmConfigured(),
     max_mb: Math.round(maxVideoBytes() / 1024 / 1024),
     chunk_bytes: CHUNK_BYTES,
+    faces: await facesStatus(v), // détection des visages (cadrage automatique en plein écran)
   };
 }
 
@@ -106,7 +108,10 @@ clipsAdminRouter.post(
          file_has_audio = $7, file_uploaded_at = now() WHERE id = $1`,
       [v.id, meta.name, meta.size, meta.duration_s, meta.width, meta.height, meta.has_audio],
     );
-    res.json(await state(await loadVideo(req)));
+    const fresh = await loadVideo(req);
+    await removeFaces(fresh.id); // l'ancienne analyse ne correspond plus au fichier
+    autoAnalyze(fresh);
+    res.json(await state(fresh));
   }),
 );
 
@@ -122,11 +127,31 @@ clipsAdminRouter.get(
   }),
 );
 
+/** Détection des visages (cadrage automatique) : lance ou relance l'analyse, ou efface son résultat. */
+clipsAdminRouter.post(
+  '/faces',
+  ah(async (req, res) => {
+    const v = await loadVideo(req);
+    await startAnalysis(v);
+    res.json(await state(await loadVideo(req)));
+  }),
+);
+
+clipsAdminRouter.delete(
+  '/faces',
+  ah(async (req, res) => {
+    const v = await loadVideo(req);
+    await removeFaces(v.id);
+    res.json(await state(v));
+  }),
+);
+
 clipsAdminRouter.delete(
   '/file',
   ah(async (req, res) => {
     const v = await loadVideo(req);
     await removeVideoFiles(v.youtube_id);
+    await removeFaces(v.id);
     await pool.query(
       `UPDATE videos SET file_name = NULL, file_size = NULL, file_duration_s = NULL, file_width = NULL, file_height = NULL,
          file_has_audio = NULL, file_uploaded_at = NULL, clips_enabled = FALSE WHERE id = $1`,

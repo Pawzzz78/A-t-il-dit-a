@@ -133,3 +133,14 @@ CREATE TABLE IF NOT EXISTS studio_music (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS studio_music_hidden (id TEXT PRIMARY KEY);
+
+-- Studio : visages détectés dans une interview (cadrage automatique en plein écran). `file_stamp` : version du fichier vidéo
+-- analysé ; si la vidéo est remplacée, le résultat n'est plus utilisé.
+CREATE TABLE IF NOT EXISTS video_faces (
+  video_id    INTEGER PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+  status      TEXT NOT NULL,
+  content     JSONB,
+  error       TEXT,
+  file_stamp  TEXT,
+  analyzed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

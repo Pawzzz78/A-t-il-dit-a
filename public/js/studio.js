@@ -42,7 +42,7 @@ const loadPrefs = () => {
 };
 const savePrefs = (S) => {
   try {
-    localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror }, step: S.step, zoom: { strength: S.zoom.strength, focus: S.zoom.focus } }));
+    localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror, follow: { on: S.layout.follow.on } }, step: S.step, zoom: { strength: S.zoom.strength, focus: S.zoom.focus } }));
   } catch {
     // stockage indisponible : sans importance
   }
@@ -100,7 +100,8 @@ async function openEditor(youtubeId) {
     style: sanitizeStyle(prefs.style, fontIds),
     music: { id: assets.music.some((m) => m.id === prefs.music?.id) ? prefs.music.id : null, volume: Number.isFinite(prefs.music?.volume) ? prefs.music.volume : 0.25 },
     voice: Number.isFinite(prefs.voice) ? prefs.voice : 1,
-    layout: { fit: prefs.layout?.fit === 'crop' ? 'crop' : 'blur', cropX: 0.5, quality: prefs.layout?.quality === 'fast' ? 'fast' : 'hd', mirror: prefs.layout?.mirror === true },
+    layout: { fit: prefs.layout?.fit === 'crop' ? 'crop' : 'blur', cropX: 0.5, quality: prefs.layout?.quality === 'fast' ? 'fast' : 'hd', mirror: prefs.layout?.mirror === true, follow: { on: prefs.layout?.follow?.on !== false, subject: 'auto' } }, // follow : le cadre suit le visage (plein écran)
+    framing: { ready: detail.faces?.ready === true, segments: null, faces: 0, coverage: 0, loading: false }, // cadrage automatique : trajectoire reçue du serveur
     zoom: { on: false, auto: true, ...sanitizeZoom({ strength: prefs.zoom?.strength, focus: prefs.zoom?.focus }), events: [], picking: false }, // zooms : événements { t, kind } en secondes du clip
     broll: [], // images : { id, start, dur, thumb, photographer, page, alt }
     stock: { q: '', photos: [], page: 0, next: false, busy: false, error: '' },
@@ -158,7 +159,31 @@ async function openEditor(youtubeId) {
       if (cropSlider) cropSlider.value = String(Math.round(cropX * 100));
     },
   });
-  const pushFraming = () => phone.setFraming({ fit: S.layout.fit, cropX: S.layout.cropX, mirror: S.layout.mirror });
+  /** Le cadre suit le visage : plein écran, suivi demandé, interview analysée et trajectoire reçue. */
+  const following = () => S.layout.fit === 'crop' && S.layout.follow.on && S.framing.ready && Boolean(S.framing.segments);
+  const pushFraming = () => phone.setFraming({ fit: S.layout.fit, cropX: S.layout.cropX, mirror: S.layout.mirror, follow: following() ? S.framing.segments : null });
+  let framingTicket = 0;
+  /** Demande au serveur où placer le cadre pour les extraits actuels (rapide : les visages sont déjà analysés). */
+  async function refreshFraming() {
+    const mine = ++framingTicket;
+    if (!(S.layout.fit === 'crop' && S.layout.follow.on && S.framing.ready && S.extracts.length)) {
+      S.framing = { ...S.framing, segments: null, faces: 0, coverage: 0, loading: false };
+      pushFraming();
+      if (S.layout.fit === 'crop') renderFrame();
+      return;
+    }
+    S.framing.loading = true;
+    try {
+      const r = await api('POST', '/framing', { youtube_id: S.video.youtube_id, extracts: S.extracts.map(exMs), subject: S.layout.follow.subject });
+      if (mine !== framingTicket) return;
+      S.framing = { ...S.framing, segments: r.segments, faces: r.faces, coverage: r.coverage, loading: false };
+    } catch {
+      if (mine !== framingTicket) return;
+      S.framing = { ...S.framing, segments: null, faces: 0, coverage: 0, loading: false };
+    }
+    pushFraming();
+    renderFrame();
+  }
   /** Mots horodatés du clip, corrections de texte comprises. */
   const clipWords = () => wordsForExtracts(S.edits.size ? S.lines.map((l) => (S.edits.has(l.start_ms) ? { ...l, text: S.edits.get(l.start_ms).text } : l)) : S.lines, S.extracts.map(exMs)).words;
   function rebuildSubtitles() {
@@ -171,6 +196,7 @@ async function openEditor(youtubeId) {
   }
   async function requestPreview() {
     const mine = ++S.ticket;
+    refreshFraming();
     if (!S.extracts.length) {
       phone.setBusy('Ajoute un extrait pour voir l’aperçu');
       return;
@@ -575,6 +601,34 @@ async function openEditor(youtubeId) {
 
   // ============================================================ onglet Cadrage
   const panelFrame = el('div', { class: 'st-panel' });
+  /** Réglages du plein écran : suivi automatique du visage (si l'interview a été analysée) et position manuelle. */
+  function cropBlock() {
+    const fr = S.framing;
+    const follow = el('input', { type: 'checkbox', checked: S.layout.follow.on });
+    follow.addEventListener('change', () => { S.layout.follow.on = follow.checked; savePrefs(S); refreshFraming(); pushFraming(); renderFrame(); });
+    const subject = (value, label) => el('button', { type: 'button', class: S.layout.follow.subject === value ? 'st-chip on' : 'st-chip', 'aria-pressed': String(S.layout.follow.subject === value), onclick: () => { S.layout.follow.subject = value; refreshFraming(); renderFrame(); } }, label);
+    let status = null;
+    if (S.layout.follow.on && fr.ready) {
+      if (!S.extracts.length) status = 'Ajoute un extrait : le cadre suivra la personne qui parle.';
+      else if (fr.loading && !fr.segments) status = 'Recherche du visage…';
+      else if (!fr.segments) status = 'Aucun visage repéré dans ces extraits : règle le cadrage à la main ci-dessous.';
+      else status = `${fr.faces > 1 ? `${fr.faces} visages repérés. ` : ''}Le cadre suit ${S.layout.follow.subject === 'left' ? 'le visage de gauche' : S.layout.follow.subject === 'right' ? 'le visage de droite' : fr.faces > 1 ? 'le plus gros visage' : 'le visage'} (repéré sur ${Math.round(fr.coverage * 100)} % de la durée).`;
+    }
+    const manual = !(S.layout.follow.on && fr.ready && fr.segments);
+    return el('div', { class: 'st-sub-block' },
+      fr.ready
+        ? el('label', { class: 'st-check' }, follow, 'Suivre automatiquement le visage')
+        : el('p', { class: 'st-help' }, 'Le suivi automatique du visage n’est pas disponible pour cette interview : règle le cadrage à la main.'),
+      status ? el('p', { class: 'st-help', role: 'status' }, status) : null,
+      fr.ready && S.layout.follow.on && fr.faces > 1 ? el('div', { class: 'st-chips', role: 'group', 'aria-label': 'Visage à suivre' }, subject('auto', 'Le plus gros'), subject('left', 'Celui de gauche'), subject('right', 'Celui de droite')) : null,
+      fr.ready && S.layout.follow.on && fr.segments && fr.coverage < 0.5 ? el('p', { class: 'st-help warn' }, 'Le visage est peu visible dans ces extraits : le cadrage peut être approximatif. Vérifie l’aperçu.') : null,
+      manual
+        ? el('div', {},
+            el('p', { class: 'st-help' }, 'Glisse la vidéo vers la gauche ou la droite sur l’aperçu pour recentrer le cadrage sur la personne. Le curseur permet de régler plus finement.'),
+            el('div', { class: 'st-row' }, el('label', {}, 'Position du cadrage'), el('div', { class: 'st-row-ctl' }, el('span', { class: 'st-end' }, 'gauche'), cropSlider, el('span', { class: 'st-end' }, 'droite'))),
+            el('button', { type: 'button', class: 'st-mini wide', onclick: () => { S.layout.cropX = 0.5; cropSlider.value = '50'; pushFraming(); } }, 'Recentrer'))
+        : el('p', { class: 'st-help' }, 'Pour régler le cadrage à la main, décoche le suivi du visage.'));
+  }
   function renderFrame() {
     const opt = (value, title, text) => el('label', { class: S.layout.fit === value ? 'st-opt on' : 'st-opt' },
       el('input', { type: 'radio', name: 'fit', value, checked: S.layout.fit === value, onchange: () => { S.layout.fit = value; savePrefs(S); pushFraming(); renderFrame(); schedulePreview(); renderCreateSummary(); } }),
@@ -586,12 +640,7 @@ async function openEditor(youtubeId) {
     panelFrame.replaceChildren(
       el('h3', {}, 'Cadrage de la vidéo'),
       el('div', { class: 'st-opts' }, opt('blur', 'Vidéo entière', 'Sur un fond flou fait avec la vidéo'), opt('crop', 'Plein écran', 'La vidéo est recadrée pour remplir l’écran')),
-      S.layout.fit === 'crop'
-        ? el('div', { class: 'st-sub-block' },
-            el('p', { class: 'st-help' }, 'Glisse la vidéo vers la gauche ou la droite sur l’aperçu pour recentrer le cadrage sur la personne. Le curseur permet de régler plus finement.'),
-            el('div', { class: 'st-row' }, el('label', {}, 'Position du cadrage'), el('div', { class: 'st-row-ctl' }, el('span', { class: 'st-end' }, 'gauche'), cropSlider, el('span', { class: 'st-end' }, 'droite'))),
-            el('button', { type: 'button', class: 'st-mini wide', onclick: () => { S.layout.cropX = 0.5; cropSlider.value = '50'; pushFraming(); } }, 'Recentrer'))
-        : null,
+      S.layout.fit === 'crop' ? cropBlock() : null,
       el('h3', {}, 'Miroir'),
       el('label', { class: 'st-check' }, mirror, 'Retourner l’image horizontalement (miroir)'),
       el('p', { class: 'st-help' }, 'L’image est retournée gauche-droite ; les sous-titres ne le sont jamais. Attention : les textes visibles dans l’image (panneaux, logos, bandeaux de chaîne) apparaîtront à l’envers. Le miroir ne change pas les droits sur la vidéo d’origine.'),
@@ -637,7 +686,7 @@ async function openEditor(youtubeId) {
       el('li', {}, el('strong', {}, 'Musique : '), track ? track.title : 'aucune'),
       ...(editedInClip() ? [el('li', {}, el('strong', {}, 'Texte : '), `${editedInClip()} ligne${editedInClip() > 1 ? 's' : ''} de sous-titres corrigée${editedInClip() > 1 ? 's' : ''}`)] : []),
       ...(S.zoom.on && S.zoom.events.some((e) => e.kind === 'in') || S.broll.length ? [el('li', {}, el('strong', {}, 'B-roll : '), [S.zoom.on && S.zoom.events.some((e) => e.kind === 'in') ? `${S.zoom.events.filter((e) => e.kind === 'in').length} zoom${S.zoom.events.filter((e) => e.kind === 'in').length > 1 ? 's' : ''}` : '', S.broll.length ? `${S.broll.length} image${S.broll.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(', '))] : []),
-      el('li', {}, el('strong', {}, 'Cadrage : '), `${S.layout.fit === 'blur' ? 'vidéo entière sur fond flou' : 'plein écran'}${S.layout.mirror ? ', en miroir' : ''}`)));
+      el('li', {}, el('strong', {}, 'Cadrage : '), `${S.layout.fit === 'blur' ? 'vidéo entière sur fond flou' : following() ? 'plein écran, suit le visage' : 'plein écran'}${S.layout.mirror ? ', en miroir' : ''}`)));
     makeBtn.disabled = !S.extracts.length || !pledge.checked || Boolean(job && ['queued', 'running'].includes(job.status));
   }
   const quality = (value, title, text) => el('label', { class: S.layout.quality === value ? 'st-opt on' : 'st-opt' },

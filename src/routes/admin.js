@@ -13,6 +13,7 @@ import { HttpError } from '../http-error.js';
 import { clipsAdminRouter } from './clips-admin.js';
 import { removeVideoFiles } from '../media.js';
 import { musicAdminRouter } from './music-admin.js';
+import { cancelAnalysis } from '../studio/faces.js';
 import { studioStats } from '../studio/stats.js';
 import { syncRouter } from './sync-admin.js';
 import { YouTubeApiError } from '../youtube.js';
@@ -378,6 +379,7 @@ adminRouter.delete(
   '/videos/:id',
   ah(async (req, res) => {
     const id = videoId(req);
+    cancelAnalysis(id); // une analyse des visages en cours s'arrête avec la vidéo
     // On mémorise l'exclusion pour que la synchronisation ne la remette pas demain.
     const found = await withTransaction(async (client) => {
       const { rows } = await client.query('DELETE FROM videos WHERE id = $1 RETURNING youtube_id', [id]);

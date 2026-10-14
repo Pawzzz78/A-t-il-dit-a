@@ -13,6 +13,7 @@ import path from 'node:path';
 import { BROLL, FPS, LIMITS, OUT, buildAss, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
 import { ensureImage, stockDir, validPhotoId } from './stock.js';
 import { measureBoxes } from './box-probe.js';
+import { cropXExpr } from '../../public/js/framing.js';
 import { findTrack } from './music.js';
 import { purgeVisitors } from './stats.js';
 import { HttpError } from '../http-error.js';
@@ -113,6 +114,8 @@ export function normalizeRequest(body, video) {
     cropX: Math.round(Math.min(1, Math.max(0, Number.isFinite(Number(l.cropX)) ? Number(l.cropX) : 0.5)) * 100) / 100,
     quality: l.quality === 'fast' ? 'fast' : 'hd',
     mirror: l.mirror === true, // image retournée gauche-droite (après le cadrage ; les sous-titres ne sont jamais retournés)
+    // plein écran : le cadre suit le visage (si l'interview a été analysée) ; `subject` : visage suivi quand il y en a plusieurs
+    follow: { on: l.follow?.on === true, subject: l.follow?.subject === 'left' || l.follow?.subject === 'right' ? l.follow.subject : 'auto' },
   };
   const style = sanitizeStyle(b.style, FONTS.map((f) => f.id));
   let music = null;
@@ -163,12 +166,15 @@ export function normalizeBroll(input, total) {
 const esc = (p) => String(p).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
 const even = (n) => Math.max(2, Math.round(n / 2) * 2);
 
-function layoutChain(i, { w, h }, layout, kind) {
+/** `keys` : trajectoire du cadre (cadrage automatique) de cet extrait, ou null pour le cadre manuel. */
+function layoutChain(i, { w, h }, layout, kind, keys = null) {
   const flip = kind === 'final' && layout.mirror ? ',hflip' : ''; // l'aperçu est retourné par le navigateur, instantanément
   if (layout.fit === 'crop') {
     // Aperçu : la vidéo entière à la hauteur de l'écran, SANS recadrage : le navigateur la recadre en direct (glissement du doigt)
     // avec la même formule que le rendu : décalage = (largeur de la vidéo − largeur de l'écran) × cropX.
     if (kind === 'preview') return `[${i}:v]fps=30,scale=-2:${h},setsar=1[v${i}]`;
+    // cadrage automatique : la position change à chaque image (variable t) ; exact=1 pour un décalage au pixel près, sans à-coups
+    if (keys) return `[${i}:v]fps=30,scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}:x='(iw-ow)*(${cropXExpr(keys)})':y='(ih-oh)*0.5':exact=1,setsar=1${flip}[v${i}]`;
     return `[${i}:v]fps=30,scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h}:(iw-ow)*${layout.cropX}:(ih-oh)*0.5,setsar=1${flip}[v${i}]`;
   }
   // « fit » : la vidéo entière, centrée, sur un fond flou fait avec elle-même (calculé en petit pour rester rapide)
@@ -199,7 +205,7 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
   const f = [];
   req.extracts.forEach((e, i) => {
     const dur = (e.end_ms - e.start_ms) / 1000;
-    f.push(layoutChain(i, size, req.layout, kind));
+    f.push(layoutChain(i, size, req.layout, kind, kind === 'final' ? req.framing?.segments?.[i]?.keys ?? null : null));
     f.push(
       hasAudio
         ? `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,apad,atrim=0:${dur},asetpts=PTS-STARTPTS[a${i}]`

@@ -1,6 +1,7 @@
 // Aperçu en direct du clip : cadre 9:16 avec la vidéo (cadrage seul, préparé par le serveur), les sous-titres dessinés par le
 // navigateur avec exactement les mêmes groupes, horaires, tailles et réductions que le rendu final (studio-core.js), la musique
 // synchronisée. Les sous-titres se déplacent au doigt ou à la souris. Aucun innerHTML : tout est posé en nœuds.
+import { cropXAtClip } from './framing.js';
 import { OUT, activeAt, boxPad, boxPath, brollOpacity, displayText, fitScale, kenBurnsAt, usableWidth, zoomAt, zoomOrigin } from './studio-core.js';
 
 /** Crée un élément (propriétés, style, événements « on… »). */
@@ -187,7 +188,7 @@ export function createPhone({ onMove, onCrop, onPick }) {
 
   /** Cadrage appliqué en direct : position (plein écran) et miroir, sans demander de nouvel aperçu au serveur. */
   function applyFraming() {
-    video.style.objectPosition = framing.fit === 'crop' ? `${framing.cropX * 100}% 50%` : '50% 50%';
+    video.style.objectPosition = framing.fit === 'crop' ? `${(framing.follow ? cropXAtClip(framing.follow, video.currentTime || 0, framing.cropX) : framing.cropX) * 100}% 50%` : '50% 50%';
     video.style.transform = framing.mirror ? 'scaleX(-1)' : '';
     video.classList.toggle('panning', framing.fit === 'crop');
   }
@@ -212,6 +213,7 @@ export function createPhone({ onMove, onCrop, onPick }) {
   }
 
   function tick() {
+    if (framing.fit === 'crop' && framing.follow) applyFraming(); // le cadre suit le visage : même trajectoire que le rendu
     renderFx(video.currentTime || 0);
     renderSub();
     const d = video.duration || 0;
@@ -238,7 +240,7 @@ export function createPhone({ onMove, onCrop, onPick }) {
     const dx = e.clientX - pan.x;
     if (!pan.moved && Math.abs(dx) < 5) return;
     pan.moved = true;
-    if (framing.fit !== 'crop' || !video.videoWidth) return;
+    if (framing.fit !== 'crop' || framing.follow || !video.videoWidth) return; // cadrage automatique : pas de recadrage au doigt
     video.setPointerCapture(e.pointerId);
     const overflow = (screen.clientHeight * video.videoWidth) / video.videoHeight - screen.clientWidth; // largeur de la vidéo hors de l'écran
     if (overflow < 2) return;
@@ -359,11 +361,12 @@ export function createPhone({ onMove, onCrop, onPick }) {
       });
       video.load();
     },
-    /** Cadrage : mode (« blur » ou « crop »), position du cadrage plein écran (0–1) et miroir. */
+    /** Cadrage : mode (« blur » ou « crop »), position du cadrage plein écran (0–1), miroir et, si le cadre suit le visage, ses segments (framing.js). */
     setFraming(next) {
       const wasCrop = framing.fit === 'crop';
       framing = { ...framing, ...next };
       applyFraming();
+      hint.textContent = framing.follow ? '◎ Le cadre suit le visage' : '↔ Glisse la vidéo pour la recentrer';
       if (framing.fit === 'crop' && !wasCrop) {
         hint.hidden = false;
         clearTimeout(hintTimer);

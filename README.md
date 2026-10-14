@@ -170,6 +170,18 @@ qu'à choisir les extraits.
     l'aperçu pour recentrer sur la personne (un curseur permet d'affiner). L'aperçu plein écran est la vidéo entière recadrée en direct
     par le navigateur avec la même formule que le rendu (`décalage = (largeur de la vidéo − largeur de l'écran) × position`), donc
     aucun calcul serveur pendant le glissement ;
+  - **cadrage automatique sur le visage** (plein écran) : le cadre **suit la personne** au lieu de rester fixe. Les visages sont repérés
+    **une fois par interview**, côté serveur (admin → fiche de la vidéo → « Cadrage automatique sur le visage » ; lancé tout seul au dépôt
+    de la vidéo, à relancer pour les vidéos déjà déposées). Détecteur YuNet (OpenCV Zoo, licence MIT, `src/studio/models/`), exécuté en
+    JavaScript pur dans un thread séparé (`yunet.js`, `faces-worker.js`) : aucune bibliothèque native. Une image par seconde (une toutes
+    les 2 s au-delà de 30 min) en 384 px, soit environ 0,2 s de calcul par seconde de vidéo ; un visage doit faire au moins ~5 % de la
+    largeur de l'image (les plans très larges ne sont pas suivis). Les **changements de plan** sont repérés en même temps (ffmpeg, `scene`).
+    Ensuite chaque clip n'a plus qu'à calculer la trajectoire (`public/js/framing.js`, module pur partagé avec le navigateur) : un visage
+    suivi par plan (le plus gros, ou celui de gauche / de droite au choix), un cadre qui reste immobile tant que le visage reste près du
+    centre puis se déplace en douceur (départ et arrivée progressifs, vitesse et accélération bornées), et qui saute directement sur le
+    visage du nouveau plan à chaque coupe de montage. Le rendu applique la même courbe image par image (`crop` avec `exact=1`) ; l'aperçu
+    la rejoue en direct. Sans visage trouvé ou sans analyse, le cadre manuel s'applique. Coupure : `STUDIO_FACES=off`. Tables :
+    `video_faces` (résultat par vidéo, invalidé si le fichier est remplacé).
   - **miroir** : retourne l'image gauche-droite. Il est appliqué après le cadrage et avant l'incrustation : les sous-titres
     ne sont jamais retournés (en revanche les textes visibles dans l'image le sont). Il ne change pas les droits sur la
     vidéo d'origine ;
@@ -385,7 +397,7 @@ src/
 tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéos sans sous-titres, envoyée au site
   openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
-  studio/            studio public : rendu ffmpeg (render.js), mesure du fond des sous-titres (box-probe.js), images libres de droits Pixabay / Pexels (stock.js), polices (fonts.json), musiques d'origine et bibliothèque de l'admin (music.json, music.js)
+  studio/            studio public : rendu ffmpeg (render.js), détection des visages (faces.js, faces-worker.js, yunet.js), mesure du fond des sous-titres (box-probe.js), images libres de droits Pixabay / Pexels (stock.js), polices (fonts.json), musiques d'origine et bibliothèque de l'admin (music.json, music.js)
   media.js           fichiers vidéo du studio : dépôt par morceaux, ffprobe, stockage
   clip-suggestions.js  extraits proposés par le LLM (numéros de lignes, horaires issus de la transcription)
   trends.js          tendances : comptage des mots par mois, mots les plus prononcés, cache et limites
