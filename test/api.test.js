@@ -174,3 +174,18 @@ test('site réduit au studio : la racine est le studio, les anciennes pages renv
   assert.match(legal, /Lisnard Studio/);
   assert.doesNotMatch(legal, /Lisnard Facts|vérification des propos/);
 });
+
+test('admin : corps lus après la session, cookie abîmé et Origin null refusés proprement', { skip: !enabled }, async () => {
+  const raw = (path, body, headers = {}) =>
+    fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body });
+  assert.equal((await raw('/api/admin/login', '{pas du json')).status, 400);
+  assert.equal((await raw('/api/admin/login', JSON.stringify({ password: 'x'.repeat(2000) }))).status, 413);
+  // sans session, le corps n'est même pas lu : 401 et non 500
+  assert.equal((await raw('/api/admin/videos', '{pas du json')).status, 401);
+  const broken = { Cookie: 'adm=%E0%A4%A' };
+  assert.equal((await fetch(base + '/api/admin/videos', { headers: broken })).status, 401);
+  assert.deepEqual(await (await fetch(base + '/api/admin/me', { headers: broken })).json(), { authenticated: false });
+  assert.equal((await call('POST', '/api/admin/login', { password: 'pw-test' })).status, 200);
+  assert.equal((await call('POST', '/api/admin/videos', { input: 'x', mode: 'empty' }, { Origin: 'null' })).status, 403);
+  assert.equal((await raw('/api/admin/videos', '{pas du json', { Cookie: cookie })).status, 400);
+});

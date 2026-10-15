@@ -20,13 +20,22 @@ export function checkPassword(candidate) {
   return timingSafeEqual(h(candidate), h(process.env.ADMIN_PASSWORD));
 }
 
+// A malformed cookie must not crash auth: keep its raw value
+function safeDecode(v) {
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return v;
+  }
+}
+
 function parseCookies(header = '') {
   return Object.fromEntries(
     header
       .split(';')
       .map((c) => c.trim().split('='))
       .filter(([k]) => k)
-      .map(([k, ...v]) => [k, decodeURIComponent(v.join('='))]),
+      .map(([k, ...v]) => [k, safeDecode(v.join('='))]),
   );
 }
 
@@ -53,6 +62,14 @@ export function isAuthenticated(req) {
   return Boolean(exp && mac && safeEqual(mac, sign(exp)) && Number(exp) > Date.now());
 }
 
+const originHost = (origin) => {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return null; // e.g. `Origin: null`
+  }
+};
+
 /** Middleware : session valide + origine identique pour les requêtes qui modifient des données. */
 export function requireAdmin(req, res, next) {
   if (!authConfigured()) {
@@ -61,7 +78,7 @@ export function requireAdmin(req, res, next) {
   if (!isAuthenticated(req)) return res.status(401).json({ error: 'Non authentifié.' });
   if (!['GET', 'HEAD'].includes(req.method)) {
     const origin = req.get('origin');
-    if (origin && new URL(origin).host !== req.get('host')) {
+    if (origin && originHost(origin) !== req.get('host')) {
       return res.status(403).json({ error: 'Origine refusée.' });
     }
   }

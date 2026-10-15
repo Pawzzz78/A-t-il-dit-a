@@ -26,7 +26,7 @@ export function createApp() {
   });
 
   const publicDir = new URL('../public', import.meta.url).pathname;
-  app.use('/api/admin', express.json({ limit: '10mb' }), adminRouter);
+  app.use('/api/admin', adminRouter);
   app.use('/api/studio', studioRouter);
   app.use('/api/wall', wallRouter);
   app.use('/api', publicRouter);

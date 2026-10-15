@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import {
   checkPassword,
   endSession,
@@ -34,7 +34,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // --- session ---------------------------------------------------------------
 
-adminRouter.post('/login', (req, res) => {
+adminRouter.post('/login', express.json({ limit: '1kb' }), (req, res) => {
   if (!process.env.ADMIN_PASSWORD || (process.env.SESSION_SECRET ?? '').length < 16) {
     return res.status(503).json({ error: "L'admin n'est pas configurée (ADMIN_PASSWORD / SESSION_SECRET)." });
   }
@@ -55,6 +55,8 @@ adminRouter.get('/me', (req, res) => res.json({ authenticated: isAuthenticated(r
 
 // Tout ce qui suit demande une session valide.
 adminRouter.use(requireAdmin);
+// Large bodies (transcripts) are parsed only once the session is checked
+adminRouter.use(express.json({ limit: '10mb' }));
 
 adminRouter.get('/config', (_req, res) =>
   res.json({ supadata: supadataConfigured(), translate: translateConfigured(), youtube: youtubeApiConfigured() }),
@@ -407,6 +409,7 @@ adminRouter.use((err, _req, res, _next) => {
   if (err instanceof TranslationError) return res.status(err.code === 'config' ? 503 : 502).json({ error: err.message });
   if (err instanceof YouTubeApiError) return res.status(502).json({ error: err.message });
   if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Morceau trop gros.' });
+  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Demande illisible.' });
   console.error(err);
   res.status(500).json({ error: 'Erreur interne.' });
 });
