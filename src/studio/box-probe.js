@@ -13,7 +13,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { OUT, PROBE, assEscape, boxPad, buildProbeAss, displayText, fitScale, probeBand } from '../../public/js/studio-core.js';
 
-const esc = (p) => p.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'").replace(/,/g, '\\,');
+/** Échappe un chemin pour une option de filtre ffmpeg (ass=…, fontsdir=…). */
+export const escFilterPath = (p) => String(p).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'").replace(/,/g, '\\,');
 
 /** Lit les lignes d'une image de mesure (octets de gris) : [{ x0, y0, x1, y1 }] relatifs au point d'ancrage du bloc. */
 export function rectsFromFrame(frame, { band, pitch, pad, cx }) {
@@ -65,7 +66,7 @@ export function rectsFromFrame(frame, { band, pitch, pad, cx }) {
  * Rectangles du fond de chaque groupe de mots : un tableau de rectangles par groupe (même ordre que `groups`).
  * `font` : police du style (ass_name, em_ratio…), `fontsDir` : dossier des polices.
  */
-export async function measureBoxes({ groups, style, font, fontsDir }) {
+export async function measureBoxes({ groups, style, font, fontsDir, timeoutMs = 60_000 }) {
   const pad = boxPad(style);
   const cx = Math.round(style.x * OUT.w);
   const band = probeBand(style);
@@ -88,7 +89,7 @@ export async function measureBoxes({ groups, style, font, fontsDir }) {
     const args = [
       '-hide_banner', '-loglevel', 'error', '-nostdin',
       '-f', 'lavfi', '-i', `color=c=black:s=${OUT.w}x${OUT.h}:r=1:d=${probes.length}`,
-      '-vf', `ass=${esc(assPath)}:fontsdir=${esc(fontsDir)},crop=${OUT.w}:${band}:0:${(OUT.h - band) / 2},format=gray`,
+      '-vf', `ass=${escFilterPath(assPath)}:fontsdir=${escFilterPath(fontsDir)},crop=${OUT.w}:${band}:0:${(OUT.h - band) / 2},format=gray`,
       '-frames:v', String(probes.length), '-f', 'rawvideo', '-',
     ];
     const rectsByProbe = await new Promise((resolve, reject) => {
@@ -98,7 +99,12 @@ export async function measureBoxes({ groups, style, font, fontsDir }) {
       let pending = [];
       let have = 0;
       let err = '';
-      p.stderr.on('data', (d) => (err += d));
+      // A stuck ffmpeg must not hold the render slot forever
+      const timer = setTimeout(() => {
+        p.kill('SIGKILL');
+        reject(new Error('mesure du fond : délai dépassé'));
+      }, timeoutMs);
+      p.stderr.on('data', (d) => (err = (err + d).slice(-2000)));
       p.stdout.on('data', (chunk) => {
         pending.push(chunk);
         have += chunk.length;
@@ -111,7 +117,11 @@ export async function measureBoxes({ groups, style, font, fontsDir }) {
           have = rest.length;
         }
       });
-      p.on('error', reject);
+      p.on('error', (e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
+      p.on('close', () => clearTimeout(timer));
       p.on('close', (code) => (code === 0 && results.length === probes.length ? resolve(results) : reject(new Error(`mesure du fond : ffmpeg ${code} ${err.trim().slice(0, 300)}`))));
     });
     return index.map((u) => rectsByProbe[u.i]);

@@ -807,3 +807,12 @@ test('limites anti-abus : cadrage plafonné, file d\'aperçus bornée, volume se
     }
   }
 });
+
+test('mesure du fond : un ffmpeg bloqué est arrêté au bout du délai', { skip: !enabled }, async () => {
+  const { measureBoxes } = await import('../src/studio/box-probe.js');
+  const req = studio.normalizeRequest({ extracts: [{ start_ms: 0, end_ms: 3000 }], style: { preset: 'boite', boxRadius: 1, wordsPerGroup: 8 } }, { file_duration_s: DURATION });
+  const lns = [{ start_ms: 0, end_ms: 2900, text: 'Une ligne mesurée par libass' }];
+  const groups = core.groupWords(core.wordsForExtracts(lns, req.extracts).words, req.style);
+  const font = studio.FONTS.find((f) => f.id === req.style.font) ?? studio.FONTS[0];
+  await assert.rejects(measureBoxes({ groups, style: req.style, font, fontsDir: studio.FONTS_DIR, timeoutMs: 1 }), /délai/);
+});

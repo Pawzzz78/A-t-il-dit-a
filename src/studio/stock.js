@@ -217,7 +217,11 @@ export async function ensureImage(id, size = 'full', { ip = 'local', fetchImpl =
   if (!validPhotoId(id)) throw new HttpError(400, 'Numéro de photo invalide.');
   const provider = need();
   const file = path.join(stockDir(), `${provider.id}-${id}-${size === 'preview' ? 'p' : 'f'}.jpg`);
-  if (await fs.stat(file).then((s) => s.size > 0, () => false)) return file;
+  if (await fs.stat(file).then((s) => s.size > 0, () => false)) {
+    const now = new Date();
+    await fs.utimes(file, now, now).catch(() => {}); // a reused image must outlive the hourly cleanup during a render
+    return file;
+  }
   if (inflight.has(file)) return inflight.get(file);
   const job = (async () => {
     if (!downloadBudget.take(ip)) throw new HttpError(429, "Trop d'images demandées pour le moment : réessaie dans quelques minutes.");

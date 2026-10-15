@@ -40,11 +40,20 @@ async function detectVideo() {
   );
   const cuts = [];
   let errText = '';
+  let partial = '';
   ff.stderr.on('data', (d) => {
     const t = d.toString();
     errText = (errText + t).slice(-2000);
-    for (const m of t.matchAll(/pts_time:([0-9.]+)/g)) cuts.push(Math.round(Number(m[1]) * 100) / 100);
+    // Parse whole lines only: a value split across two chunks would be misread
+    const lines = (partial + t).split('\n');
+    partial = lines.pop().slice(-4000);
+    for (const line of lines) for (const m of line.matchAll(/pts_time:([0-9.]+)/g)) cuts.push(Math.round(Number(m[1]) * 100) / 100);
   });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    ff.kill('SIGKILL');
+  }, Math.max(30 * 60_000, (duration || 0) * 3000));
   const frames = [];
   let pending = Buffer.alloc(0);
   const total = Math.max(1, Math.ceil(duration * fps));
@@ -68,11 +77,14 @@ async function detectVideo() {
       if (stopped) throw new Error('Analyse interrompue.');
     }
     const code = await new Promise((resolve) => (ff.exitCode !== null ? resolve(ff.exitCode) : ff.on('close', resolve)));
+    if (timedOut) throw new Error('Analyse trop longue : délai dépassé.'); // a truncated analysis must not pass as complete
     if (code !== 0 && !frames.length) throw new Error(`ffmpeg a échoué : ${errText.split('\n').filter(Boolean).pop() ?? code}`);
     return { frames, cuts: [...new Set(cuts)].sort((a, b) => a - b) };
   } catch (e) {
     ff.kill('SIGKILL');
     throw e;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

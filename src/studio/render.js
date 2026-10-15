@@ -12,7 +12,7 @@ import { promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { BROLL, FPS, LIMITS, OUT, buildAss, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
 import { ensureImage, stockDir, validPhotoId } from './stock.js';
-import { measureBoxes } from './box-probe.js';
+import { escFilterPath, measureBoxes } from './box-probe.js';
 import { cropXExpr } from '../../public/js/framing.js';
 import { findTrack } from './music.js';
 import { purgeVisitors } from './stats.js';
@@ -167,7 +167,7 @@ export function normalizeBroll(input, total) {
 
 // --- commande ffmpeg --------------------------------------------------------------------------------
 
-const esc = (p) => String(p).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
+const esc = escFilterPath;
 const even = (n) => Math.max(2, Math.round(n / 2) * 2);
 
 /** `keys` : trajectoire du cadre (cadrage automatique) de cet extrait, ou null pour le cadre manuel. */
@@ -365,6 +365,8 @@ export async function createPreview({ video, req, ip = 'local' }) {
   const out = path.join(dirs().previews, `${key}.${ext}`);
   const done = { key, ext, duration_s: req.total };
   if (await fs.stat(out).then(() => true, () => false)) {
+    const now = new Date();
+    await fs.utimes(out, now, now).catch(() => {}); // a reused preview must outlive the hourly cleanup
     await fs.writeFile(path.join(dirs().previews, `${key}.json`), JSON.stringify({ youtube_id: video.youtube_id }));
     return done;
   }
@@ -380,7 +382,8 @@ export async function createPreview({ video, req, ip = 'local' }) {
       const tmp = `${out}.tmp.${ext}`;
       const args = buildFfmpegArgs({ file: videoFilePath(video.file_name), req, hasAudio: video.file_has_audio, out: tmp, kind: 'preview' });
       await runFfmpeg(args, req.total, { timeoutMs: 120_000 }).promise.catch((e) => {
-        throw new HttpError(500, `Aperçu impossible : ${e.message.split('\n').pop().slice(0, 160)}`);
+        console.error(`Aperçu ${key} : ${e.message}`);
+        throw new HttpError(500, 'Aperçu impossible pour le moment : réessaie.');
       });
       await fs.rename(tmp, out);
       await fs.writeFile(path.join(dirs().previews, `${key}.json`), JSON.stringify({ youtube_id: video.youtube_id }));
@@ -484,6 +487,7 @@ async function runJob(job) {
     const run = runFfmpeg(args, job.total, { onProgress: (p) => (job.progress = p), timeoutMs: config().timeoutMs });
     job.cancel = run.cancel;
     await run.promise;
+    if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true }); // cancelled just after ffmpeg ended
     job.size = (await fs.stat(job.out)).size;
     job.status = 'done';
     job.progress = 1;
