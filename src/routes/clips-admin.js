@@ -5,7 +5,7 @@
 import express, { Router } from 'express';
 import { generateClipSuggestions, getClipSuggestions } from '../clip-suggestions.js';
 import { pool } from '../db.js';
-import { HttpError } from '../http-error.js';
+import { HttpError, ah } from '../http-error.js';
 import {
   CHUNK_BYTES,
   DURATION_TOLERANCE_S,
@@ -24,7 +24,6 @@ import { studioCapabilities } from '../studio/render.js';
 
 export const clipsAdminRouter = Router({ mergeParams: true });
 
-const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 async function loadVideo(req) {
   const id = Number.parseInt(req.params.id, 10);

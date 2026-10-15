@@ -120,7 +120,8 @@ async function openEditor(youtubeId) {
   }
   const saveEdits = () => {
     try {
-      localStorage.setItem(editsKey, JSON.stringify(Object.fromEntries(S.edits)));
+      if (!S.edits.size) localStorage.removeItem(editsKey); // no leftover key per interview
+      else localStorage.setItem(editsKey, JSON.stringify(Object.fromEntries(S.edits)));
     } catch {
       // idem
     }
@@ -244,10 +245,12 @@ async function openEditor(youtubeId) {
     renderCreateSummary();
   }
   const note = el('p', { class: 'st-msg' });
+  let noteTimer = 0;
   const alertNote = (msg) => {
     note.className = 'st-msg err';
     note.textContent = msg;
-    setTimeout(() => (note.textContent = ''), 4000);
+    clearTimeout(noteTimer); // the latest message keeps its full display time
+    noteTimer = setTimeout(() => (note.textContent = ''), 4000);
   };
 
   /**
@@ -867,10 +870,12 @@ async function openEditor(youtubeId) {
   // ============================================================ onglet B-roll (zooms et images)
   const panelFx = el('div', { class: 'st-panel' });
   const fxNote = el('p', { class: 'st-msg' });
+  let fxTimer = 0;
   const fxAlert = (msg) => {
     fxNote.className = 'st-msg err';
     fxNote.textContent = msg;
-    setTimeout(() => (fxNote.textContent = ''), 4500);
+    clearTimeout(fxTimer);
+    fxTimer = setTimeout(() => (fxNote.textContent = ''), 4500);
   };
   const playhead = () => Math.round((phone.video.currentTime || 0) * 100) / 100;
   const tMs = (t) => Math.round(t * 1000);
@@ -921,21 +926,26 @@ async function openEditor(youtubeId) {
   }
 
   // --- images libres de droits
+  let stockTicket = 0;
   async function searchStock(more = false) {
     const st = S.stock;
     const q = st.q.trim();
-    if (q.length < 2 || st.busy) return;
+    // A new word replaces a running search; only "more images" waits for it
+    if (q.length < 2 || (more && st.busy)) return;
+    const mine = ++stockTicket;
     st.busy = true;
     st.error = '';
     renderEffects();
     try {
       const page = more ? st.page + 1 : 1;
       const r = await api('GET', `/stock/search?${new URLSearchParams({ q, page })}`);
+      if (mine !== stockTicket) return;
       st.photos = more ? [...st.photos, ...r.photos] : r.photos;
       st.page = r.page;
       st.next = r.next;
       if (!r.photos.length && !more) st.error = 'Aucune image trouvée : essaie un autre mot.';
     } catch (e) {
+      if (mine !== stockTicket) return;
       st.error = e.message;
     }
     st.busy = false;

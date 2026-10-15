@@ -48,9 +48,6 @@ export async function ffmpegAvailable() {
   }
   return ffprobeAvailable;
 }
-export const resetFfmpegCheck = () => {
-  ffprobeAvailable = undefined;
-};
 
 /** Lit un fichier vidéo : durée, définition, présence d'une piste audio, extension à utiliser. Lève 422 si ce n'est pas une vidéo. */
 export async function probeVideo(file) {
@@ -135,7 +132,7 @@ export function appendChunk(youtubeId, offset, buffer, expectedTotal) {
   });
 }
 
-/** Termine un dépôt : vérifie la taille et le contenu avec ffprobe, puis remplace atomiquement le fichier actuel. */
+/** Termine un dépôt : vérifie la taille et le contenu avec ffprobe, puis remplace le fichier actuel. */
 export function finishUpload(youtubeId, expectedSize) {
   return serial(youtubeId, async () => {
     const part = partPath(youtubeId);
@@ -150,14 +147,14 @@ export function finishUpload(youtubeId, expectedSize) {
       throw e;
     }
     const name = `${safeId(youtubeId)}.${meta.ext}`;
-    await removeFinalFiles(youtubeId); // une seule version à la fois
-    await fs.rename(part, videoFilePath(name));
+    await fs.rename(part, videoFilePath(name)); // replaces a same-extension file in one step
+    await removeFinalFiles(youtubeId, meta.ext); // une seule version à la fois
     return { ...meta, name, size: have };
   });
 }
 
-const removeFinalFiles = (youtubeId) =>
-  Promise.all(EXTENSIONS.map((ext) => fs.rm(path.join(storageDir(), 'videos', `${safeId(youtubeId)}.${ext}`), { force: true })));
+const removeFinalFiles = (youtubeId, keepExt = null) =>
+  Promise.all(EXTENSIONS.filter((ext) => ext !== keepExt).map((ext) => fs.rm(path.join(storageDir(), 'videos', `${safeId(youtubeId)}.${ext}`), { force: true })));
 
 /** Supprime le fichier (toutes extensions) et un éventuel dépôt en cours. */
 export async function removeVideoFiles(youtubeId) {

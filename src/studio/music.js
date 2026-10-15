@@ -11,6 +11,7 @@ import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFileSync, promises as fs } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { pool } from '../db.js';
 import { HttpError } from '../http-error.js';
@@ -28,7 +29,7 @@ const CATEGORY_IDS = new Set(CATEGORIES.map((c) => c.id));
 
 export const MUSIC_LIMITS = { minS: 8, maxS: 600, keepS: 300, maxBytes: 40 * 1024 * 1024, maxTracks: 100 };
 
-export const MUSIC_DIR = new URL('../../public/music', import.meta.url).pathname;
+export const MUSIC_DIR = fileURLToPath(new URL('../../public/music', import.meta.url));
 export const libraryDir = () => path.join(storageDir(), 'music');
 
 const builtin = JSON.parse(readFileSync(new URL('./music.json', import.meta.url), 'utf8')).map((m) => ({

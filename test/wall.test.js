@@ -417,3 +417,9 @@ test('classement : 13 clips au plus, les meilleurs d\'après le score ; les ongl
   assert.deepEqual((await get('limit=60')).clips.map(n), [30, 29, 28, 27, 26]);
   delete process.env.WALL_MAX;
 });
+
+test('mur : classement ou période inconnus refusés, même hérités de l\'objet', { skip: !enabled }, async () => {
+  for (const q of ['sort=toString', 'period=constructor', 'sort=__proto__']) {
+    assert.equal((await fetch(`${base}/api/wall?${q}`)).status, 400, q);
+  }
+});

@@ -1,12 +1,11 @@
 /** Reconnaissance de David Lisnard (admin) : photos de référence, et mise à jour des vidéos déjà analysées. */
 import express, { Router } from 'express';
-import { HttpError } from '../http-error.js';
+import { HttpError, ah } from '../http-error.js';
 import { facesEnabled, identifyAll } from '../studio/faces.js';
 import { REFERENCE, addReference, deleteReference, listReferences, referenceThumb } from '../studio/references.js';
 
 export const facesAdminRouter = Router();
 
-const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 const refId = (req) => {
   const id = Number.parseInt(req.params.id, 10);

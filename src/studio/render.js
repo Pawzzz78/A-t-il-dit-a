@@ -10,18 +10,20 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { BROLL, FPS, LIMITS, OUT, buildAss, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
 import { ensureImage, stockDir, validPhotoId } from './stock.js';
-import { measureBoxes } from './box-probe.js';
+import { escFilterPath, measureBoxes } from './box-probe.js';
 import { cropXExpr } from '../../public/js/framing.js';
 import { findTrack } from './music.js';
 import { purgeVisitors } from './stats.js';
 import { HttpError } from '../http-error.js';
+import { ipKey, trimMap } from '../ip.js';
 import { storageDir, videoFilePath } from '../media.js';
 
 const read = (name) => JSON.parse(readFileSync(new URL(`./${name}`, import.meta.url), 'utf8'));
 export const FONTS = read('fonts.json');
-export const FONTS_DIR = new URL('../../public/fonts/studio', import.meta.url).pathname;
+export const FONTS_DIR = fileURLToPath(new URL('../../public/fonts/studio', import.meta.url));
 const fontById = new Map(FONTS.map((f) => [f.id, f]));
 
 export const config = () => ({
@@ -30,6 +32,9 @@ export const config = () => ({
   perIpActive: 2,
   rendersPerHour: Number(process.env.STUDIO_RENDERS_PER_HOUR) || 8,
   previewsPerHour: Number(process.env.STUDIO_PREVIEWS_PER_HOUR) || 60,
+  previewQueue: Number(process.env.STUDIO_PREVIEW_QUEUE) || 20,
+  framingPerHour: Number(process.env.STUDIO_FRAMING_PER_HOUR) || 600,
+  fileServeFactor: Number(process.env.STUDIO_FILE_MAX_FACTOR) || 10,
   ttlMs: 60 * 60 * 1000,
   timeoutMs: 12 * 60 * 1000,
 });
@@ -163,7 +168,7 @@ export function normalizeBroll(input, total) {
 
 // --- commande ffmpeg --------------------------------------------------------------------------------
 
-const esc = (p) => String(p).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
+const esc = escFilterPath;
 const even = (n) => Math.max(2, Math.round(n / 2) * 2);
 
 /** `keys` : trajectoire du cadre (cadrage automatique) de cet extrait, ou null pour le cadre manuel. */
@@ -316,20 +321,24 @@ function runFfmpeg(args, total, { onProgress, timeoutMs }) {
 
 // --- limites par visiteur ---------------------------------------------------------------------------
 
-const recent = new Map(); // `${kind}:${ip}` -> horodatages
+const recent = new Map(); // `${kind}:${ipKey}` -> horodatages
 function take(kind, ip, max) {
-  const key = `${kind}:${ip}`;
+  const key = `${kind}:${ipKey(ip)}`;
   const now = Date.now();
   const list = (recent.get(key) ?? []).filter((t) => now - t < 3600_000);
+  recent.delete(key);
   if (list.length >= max) {
     recent.set(key, list);
     return false;
   }
   list.push(now);
   recent.set(key, list);
-  if (recent.size > 5000) recent.clear();
+  trimMap(recent, 5000, (l) => !l.length || now - l[l.length - 1] >= 3600_000);
   return true;
 }
+
+// Auto-framing is called on every extract change, hence a generous limit
+export const framingAllowed = (ip) => take('framing', ip, config().framingPerHour);
 
 // --- aperçu -------------------------------------------------------------------------------------------
 
@@ -357,10 +366,16 @@ export async function createPreview({ video, req, ip = 'local' }) {
   const out = path.join(dirs().previews, `${key}.${ext}`);
   const done = { key, ext, duration_s: req.total };
   if (await fs.stat(out).then(() => true, () => false)) {
+    const now = new Date();
+    await fs.utimes(out, now, now).catch(() => {}); // a reused preview must outlive the hourly cleanup
     await fs.writeFile(path.join(dirs().previews, `${key}.json`), JSON.stringify({ youtube_id: video.youtube_id }));
     return done;
   }
   if (inflightPreviews.has(key)) return inflightPreviews.get(key);
+  // Bounded wait list: past it, refuse instead of queueing without end
+  if (previewsRunning >= 2 && previewWaiters.length >= config().previewQueue) {
+    throw new HttpError(503, 'Le studio est très sollicité : réessaie dans quelques minutes.');
+  }
   if (!take('preview', ip, config().previewsPerHour)) throw new HttpError(429, 'Trop d’aperçus pour le moment : réessaie dans quelques minutes.');
   const promise = (async () => {
     await acquirePreview();
@@ -368,7 +383,8 @@ export async function createPreview({ video, req, ip = 'local' }) {
       const tmp = `${out}.tmp.${ext}`;
       const args = buildFfmpegArgs({ file: videoFilePath(video.file_name), req, hasAudio: video.file_has_audio, out: tmp, kind: 'preview' });
       await runFfmpeg(args, req.total, { timeoutMs: 120_000 }).promise.catch((e) => {
-        throw new HttpError(500, `Aperçu impossible : ${e.message.split('\n').pop().slice(0, 160)}`);
+        console.error(`Aperçu ${key} : ${e.message}`);
+        throw new HttpError(500, 'Aperçu impossible pour le moment : réessaie.');
       });
       await fs.rename(tmp, out);
       await fs.writeFile(path.join(dirs().previews, `${key}.json`), JSON.stringify({ youtube_id: video.youtube_id }));
@@ -418,8 +434,9 @@ export function publicJob(job) {
 export const getJob = (id) => (/^[0-9a-f]{24}$/.test(id) ? jobs.get(id) : undefined);
 
 /** Met un rendu en file. `video` : ligne de la base ; `lines` : lignes de la transcription ; renvoie le job. */
-export async function enqueueRender({ video, req, lines, ip = 'local' }) {
+export async function enqueueRender({ video, req, lines, ip: rawIp = 'local' }) {
   const cfg = config();
+  const ip = ipKey(rawIp);
   const mine = [...jobs.values()].filter((j) => j.ip === ip && (j.status === 'queued' || j.status === 'running')).length;
   if (mine >= cfg.perIpActive) throw new HttpError(429, 'Tu as déjà des clips en cours de création : attends qu’ils soient prêts.');
   if (queue.length >= cfg.maxQueue) throw new HttpError(503, 'Le studio est très sollicité : réessaie dans quelques minutes.');
@@ -471,6 +488,7 @@ async function runJob(job) {
     const run = runFfmpeg(args, job.total, { onProgress: (p) => (job.progress = p), timeoutMs: config().timeoutMs });
     job.cancel = run.cancel;
     await run.promise;
+    if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true }); // cancelled just after ffmpeg ended
     job.size = (await fs.stat(job.out)).size;
     job.status = 'done';
     job.progress = 1;
@@ -542,4 +560,3 @@ export function resetStudioState() {
   queue.length = 0;
   recent.clear();
 }
-export { OUT };

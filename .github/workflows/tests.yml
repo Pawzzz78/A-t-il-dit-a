@@ -3,7 +3,7 @@ name: Tests
 on:
   pull_request:
   push:
-    branches: [ccr-cd4ad929-84sbtv]
+    branches: [main]
 
 permissions:
   contents: read

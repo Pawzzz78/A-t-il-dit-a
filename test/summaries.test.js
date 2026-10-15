@@ -45,15 +45,6 @@ const stored = async (n) =>
   (await db.pool.query('SELECT s.content, s.source_hash, s.model FROM video_summaries s JOIN videos v ON v.id = s.video_id WHERE v.youtube_id = $1', [id(n)])).rows[0];
 const vrow = async (n) => (await db.pool.query('SELECT * FROM videos WHERE youtube_id = $1', [id(n)])).rows[0];
 const err = async (p) => p.then(() => null, (e) => e);
-const withServer = async (fn) => {
-  const { createApp } = await import('../src/server.js');
-  const server = createApp().listen(0);
-  try {
-    return await fn(`http://127.0.0.1:${server.address().port}`);
-  } finally {
-    server.close();
-  }
-};
 
 before(async () => {
   if (!enabled) return;
@@ -144,16 +135,8 @@ test('auto : un résumé existant n\'est JAMAIS refait, même si la transcriptio
   const complete = counting();
   await cycle(complete);
   const first = await stored(1);
-  await withServer(async (base) => {
-    await db.withTransaction((c) => db.replaceSegments(c, vid, [{ start_ms: 0, text: 'texte corrigé à la main' }], { edited: true }));
-    await age(vid);
-    // toujours affiché, tel quel
-    const r = await fetch(`${base}/api/summary/${id(1)}`);
-    assert.equal(r.status, 200);
-    assert.equal((await r.json()).markdown, first.content);
-    const list = await (await fetch(`${base}/api/latest?limit=50`)).json();
-    assert.equal(list.videos.find((v) => v.youtube_id === id(1)).has_summary, true);
-  });
+  await db.withTransaction((c) => db.replaceSegments(c, vid, [{ start_ms: 0, text: 'texte corrigé à la main' }], { edited: true }));
+  await age(vid);
   for (let i = 0; i < 3; i++) assert.equal((await cycle(complete)).done, 0); // on ne repasse pas en boucle
   assert.equal(complete.calls, 1);
   assert.equal((await stored(1)).content, first.content);
@@ -173,11 +156,6 @@ test('auto : un résumé écrit avec d\'anciennes consignes (ou sans empreinte) 
   for (let i = 0; i < 2; i++) assert.equal((await cycle(complete)).done, 0);
   assert.equal(complete.calls, 0);
   assert.equal((await stored(1)).content, old);
-  await withServer(async (base) => {
-    const r = await fetch(`${base}/api/summary/${id(1)}`);
-    assert.equal(r.status, 200);
-    assert.match((await r.json()).markdown, /invité/);
-  });
   // seule la régénération explicite de l'admin le remplace
   await svc.regenerateNow(vid, { complete });
   assert.doesNotMatch((await stored(1)).content, /invité/);
@@ -322,17 +300,9 @@ test('édition manuelle : résumé corrigé à la main, protégé de la régén�
   const callsAfterRace = complete.calls;
   assert.equal((await stored(1)).content, s.content);
 
-  // il reste affiché, même si la transcription est corrigée ensuite
-  await withServer(async (base) => {
-    await db.withTransaction((c) => db.replaceSegments(c, vid, [{ start_ms: 0, text: 'transcription corrigée' }], { edited: true }));
-    const r = await fetch(`${base}/api/summary/${id(1)}`);
-    assert.equal(r.status, 200);
-    const body = await r.json();
-    assert.equal(body.edited, true);
-    assert.match(body.markdown, /corrigé/);
-    const list = await (await fetch(`${base}/api/latest?limit=50`)).json();
-    assert.equal(list.videos.find((x) => x.youtube_id === id(1)).has_summary, true);
-  });
+  // il reste en place, même si la transcription est corrigée ensuite
+  await db.withTransaction((c) => db.replaceSegments(c, vid, [{ start_ms: 0, text: 'transcription corrigée' }], { edited: true }));
+  assert.match((await stored(1)).content, /corrigé/);
   await age(vid);
   assert.equal((await cycle(complete)).done, 0);
   assert.equal(complete.calls, callsAfterRace); // le travail de fond n'a rien tenté
@@ -382,70 +352,6 @@ test('génération : deux demandes simultanées sur la même vidéo ne font qu\'
   assert.equal(new Set(results.map((r) => r.markdown)).size, 1);
 });
 
-test('API publique : lecture seule — jamais d\'appel au modèle, erreurs claires', { skip: !enabled }, async () => {
-  await addVideo(1);
-  await addVideo(2, { texts: null });
-  await addVideo(3);
-  await cycle(counting(), { perCycle: 1 }); // une seule des deux vidéos à résumer est prête (la plus récente par id)
-  await withServer(async (base) => {
-    const realFetch = globalThis.fetch;
-    let outbound = 0;
-    // si la route appelait OpenRouter, ce serait une requête sortante : on la compte
-    globalThis.fetch = (url, ...rest) => {
-      if (String(url).includes('openrouter')) outbound++;
-      return realFetch(url, ...rest);
-    };
-    try {
-      const get = (n, init) => realFetch(`${base}/api/summary/${n}`, init);
-      const rows = await Promise.all([1, 3].map(async (n) => ({ n, status: (await get(id(n))).status })));
-      assert.deepEqual(rows.map((r) => r.status).sort(), [200, 404]);
-      const pendingN = rows.find((r) => r.status === 404).n;
-      const pending = await get(id(pendingN));
-      assert.equal((await pending.json()).pending, true);
-      assert.equal(pending.headers.get('cache-control') ?? '', ''); // un « pas prêt » ne doit pas être mis en cache
-      const readyN = rows.find((r) => r.status === 200).n;
-      const ok = await get(id(readyN));
-      assert.match((await ok.json()).markdown, /^## En bref/);
-      assert.match(ok.headers.get('cache-control'), /max-age=60/);
-      assert.equal((await get(id(2))).status, 409); // sans transcription
-      assert.equal((await get('pas-un-id')).status, 404);
-      assert.equal((await get(id(9))).status, 404); // inconnue
-      assert.equal((await get(id(readyN), { method: 'POST' })).status, 404); // plus de génération à la demande
-    } finally {
-      globalThis.fetch = realFetch;
-    }
-    assert.equal(outbound, 0);
-  });
-});
-
-test('API : /latest mêle vidéos de chaînes et ajouts manuels, triées par date, avec has_summary', { skip: !enabled }, async () => {
-  // dates dans le futur lointain pour passer devant les données éventuelles de la base
-  await addVideo(1, { published: '2099-03-01', source: 'manual' });
-  await addVideo(2, { published: '2099-05-01', source: 'supadata' });
-  await addVideo(3, { published: '2099-04-01', source: 'manual' });
-  await addVideo(4, { published: '2099-06-01', texts: null }); // sans transcription : absente
-  await addVideo(5, { published: null });
-  await addVideo(6, { published: '2099-07-01', duration: 45 }); // un Short qui aurait échappé au nettoyage : jamais sur l'accueil
-  await addVideo(7, { published: '2099-02-01', duration: 1800 });
-  await svc.regenerateNow((await vrow(2)).id, { complete: counting() });
-  await withServer(async (base) => {
-    const r = await (await fetch(`${base}/api/latest?limit=3`)).json();
-    assert.deepEqual(r.videos.map((v) => v.youtube_id), [id(2), id(3), id(1)]);
-    assert.deepEqual(r.videos.map((v) => v.has_summary), [true, false, false]);
-    assert.ok(!(await (await fetch(`${base}/api/latest?limit=12`)).json()).videos.some((v) => v.youtube_id === id(6)));
-    assert.equal(r.videos[0].published_at, '2099-05-01');
-    assert.equal(r.summaries_enabled, true);
-    const five = await (await fetch(`${base}/api/latest`)).json();
-    assert.equal(five.videos.length, 5);
-
-    // en pause : l'accueil n'annonce plus de résumés « en préparation »
-    await settings.setSetting('summaries_paused', true);
-    assert.equal((await (await fetch(`${base}/api/latest?limit=1`)).json()).summaries_enabled, false);
-    assert.equal((await (await fetch(`${base}/api/videos?q=zzzz`)).json()).summaries_enabled, false);
-    await settings.setSetting('summaries_paused', false);
-  });
-});
-
 test('YouTube : fetchVideoMeta lit titre, chaîne, date et durée', async () => {
   const { fetchVideoMeta } = await import('../src/youtube.js');
   const realFetch = globalThis.fetch;
@@ -472,58 +378,3 @@ test('YouTube : fetchVideoMeta lit titre, chaîne, date et durée', async () => 
   }
 });
 
-test('API : liste complète — pagination, filtre sans accents, tri, mêmes critères que le compteur', { skip: !enabled }, async () => {
-  // 25 vidéos transcrites (une moitié ajoutée à la main, l'autre issue d'une chaîne), plus des cas à exclure
-  for (let n = 1; n <= 25; n++) {
-    await addVideo(n, { published: `2098-01-${String(n).padStart(2, '0')}`, source: n % 2 ? 'manual' : 'supadata', duration: 1200 });
-  }
-  await db.pool.query(`UPDATE videos SET title = 'Débat zzqliste sur l''Économie n°' || youtube_id WHERE youtube_id LIKE '${P}%'`);
-  await addVideo(26, { published: '2098-02-01', texts: null, duration: 1200 }); // pas encore transcrite : absente
-  await addVideo(27, { published: '2098-02-02', duration: 40 }); // Short : absent
-  await db.pool.query(`UPDATE videos SET title = 'zzqliste caché' WHERE youtube_id IN ($1, $2)`, [id(26), id(27)]);
-
-  const { createApp } = await import('../src/server.js');
-  const server = createApp().listen(0);
-  try {
-    const base = `http://127.0.0.1:${server.address().port}`;
-    const get = async (qs) => (await fetch(`${base}/api/videos?${qs}`)).json();
-
-    const p1 = await get('q=zzqliste');
-    assert.equal(p1.total, 25); // ni la non-transcrite ni le Short
-    assert.equal(p1.videos.length, 20);
-    assert.deepEqual([p1.page, p1.pages, p1.has_more], [1, 2, true]);
-    assert.equal(p1.videos[0].youtube_id, id(25)); // la plus récente d'abord
-    assert.equal(p1.videos[0].published_at, '2098-01-25');
-    const p2 = await get('q=zzqliste&page=2');
-    assert.equal(p2.videos.length, 5);
-    assert.equal(p2.has_more, false);
-    assert.equal(p2.videos.at(-1).youtube_id, id(1));
-    assert.equal(new Set([...p1.videos, ...p2.videos].map((v) => v.youtube_id)).size, 25); // aucun doublon
-
-    // filtre : sans accents ni casse, tous les mots requis, titre OU chaîne
-    assert.equal((await get('q=' + encodeURIComponent('ECONOMIE zzqliste'))).total, 25);
-    assert.equal((await get('q=' + encodeURIComponent('économie inexistant'))).total, 0);
-    assert.equal((await get('q=' + encodeURIComponent('zzqliste chaine'))).total, 25); // la chaîne s'appelle « Chaîne »
-
-    // tri : les plus anciennes d'abord
-    const old = await get('q=zzqliste&sort=old');
-    assert.equal(old.videos[0].youtube_id, id(1));
-
-    // page hors limites : vide, sans erreur
-    assert.deepEqual((await get('q=zzqliste&page=9')).videos, []);
-
-    // même critère que le compteur de l'accueil et que « Dernières vidéos »
-    // (d'autres fichiers de test ajoutent des vidéos en parallèle : on recommence si le total a bougé entre les trois appels)
-    let totals;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const all = await get('');
-      const latest = await (await fetch(`${base}/api/latest?limit=1`)).json();
-      const stats = await (await fetch(`${base}/api/stats`)).json();
-      totals = [all.total, latest.total, stats.videos];
-      if (new Set(totals).size === 1) break;
-    }
-    assert.equal(new Set(totals).size, 1, `les trois compteurs doivent concorder : ${totals}`);
-  } finally {
-    server.close();
-  }
-});

@@ -2,10 +2,10 @@
  * Résumés de vidéos, stockés en base.
  *
  * - Ils sont générés AUTOMATIQUEMENT en arrière-plan (auto-summaries.js) dès qu'une vidéo est transcrite, jamais à
- *   la demande d'un visiteur : le public ne fait que lire un résumé déjà prêt (aucun coût ni appel au modèle).
+ *   la demande d'un visiteur (aucun coût déclenché par le public).
  * - Un résumé n'est écrit qu'UNE fois : une fois en base, il n'est jamais refait automatiquement (ni si la transcription
  *   est corrigée, ni si les consignes évoluent). Seul le bouton « Régénérer » de l'admin le remplace.
- * - Un résumé corrigé à la main (edited_at) est signalé comme tel au public.
+ * - Un résumé corrigé à la main (edited_at) est signalé comme tel dans l'admin.
  * - source_hash garde l'empreinte de la transcription au moment du résumé : l'admin s'en sert pour signaler qu'elle a
  *   changé depuis. Elle n'influence pas l'affichage.
  */
@@ -15,28 +15,7 @@ import { completeWithOpenRouter } from './openrouter.js';
 import { PROMPT_VERSION, sanitizeSummary, summarizeTranscript, summaryModel } from './summarize.js';
 
 /** Empreinte enregistrée avec un résumé : transcription + version des consignes (l'admin s'en sert pour signaler une transcription modifiée). */
-export const currentSourceHash = (textHash) => `${textHash}:${PROMPT_VERSION}`;
-
-/** Fragment SQL : la vidéo a un résumé. `v` = alias de la table videos. */
-export const HAS_SUMMARY_SQL = (v = 'videos') => `EXISTS (SELECT 1 FROM video_summaries s WHERE s.video_id = ${v}.id)`;
-
-/** Lecture publique : renvoie le résumé stocké, ou une erreur claire. Ne génère jamais rien. */
-export async function getStoredSummary(youtubeId) {
-  const { rows } = await pool.query(
-    `SELECT v.id, v.lang, v.translated, v.original_lang, v.text_hash, v.norm_text <> '' AS has_text,
-            s.content, s.model, s.created_at, s.source_hash, s.edited_at
-     FROM videos v LEFT JOIN video_summaries s ON s.video_id = v.id
-     WHERE v.youtube_id = $1`,
-    [youtubeId],
-  );
-  const v = rows[0];
-  if (!v) throw new HttpError(404, 'Vidéo introuvable.');
-  if (!v.has_text) throw new HttpError(409, "La transcription de cette vidéo n'est pas encore disponible.");
-  if (!v.content) {
-    throw new HttpError(404, "Le résumé de cette vidéo n'est pas encore prêt : il sera disponible dans quelques minutes.", { pending: true });
-  }
-  return { markdown: v.content, model: v.model, created_at: v.created_at, edited: Boolean(v.edited_at), translated: v.translated, original_lang: v.original_lang, lang: v.lang };
-}
+const currentSourceHash = (textHash) => `${textHash}:${PROMPT_VERSION}`;
 
 const inflight = new Map(); // `${videoId}:${hash}` -> Promise : une seule génération à la fois par vidéo
 

@@ -6,22 +6,17 @@ La page d'accueil (`/`) est le studio ; les anciennes adresses `/studio/`, `/vid
 `?v=…` est conservée). Il n'y a plus de page publique de recherche, de liste de vidéos ni de tendances.
 
 **Ce qui reste en place derrière le studio** : l'indexation des transcriptions (synchronisation des chaînes, Supadata, Whisper,
-traduction, résumés automatiques), l'admin et les statistiques. Les adresses techniques de la recherche, des résumés et des
-tendances (`/api/search`, `/api/summary/…`, `/api/trends…`) existent toujours côté serveur et ne sont plus liées depuis le site ; leur
-code est conservé, au cas où.
+traduction, résumés automatiques), l'admin et les statistiques. Les anciennes adresses publiques de recherche, de résumés et de
+tendances (`/api/search`, `/api/summary/…`, `/api/trends…`, `/api/latest`, `/api/videos`, `/api/stats`) ont été retirées.
 
 > Le dépôt s'appelle encore `A-t-il-dit-a` et le domaine `lisnardfacts.fr` : seuls le nom affiché et le logotype changent.
 
-*Historique : le site est né comme « Lisnard Facts », un fact-checking qui retrouve si une phrase a été prononcée dans une interview.
-Les sections ci-dessous sur la recherche décrivent ce moteur, toujours présent côté serveur.*
+*Historique : le site est né comme « Lisnard Facts », un fact-checking qui retrouvait si une phrase avait été prononcée dans une
+interview. Ce moteur de recherche public a été retiré.*
 
 ## Fonctionnement
 
-- Les transcriptions sont **stockées en base** (Postgres) puis interrogées en recherche plein texte :
-  la recherche est instantanée et ne consomme aucun appel d'API.
-- Recherche en deux temps : *mot pour mot* (insensible aux accents, à la casse et à la
-  ponctuation, même si la phrase chevauche deux sous-titres), puis *formulation proche*
-  (tous les mots présents à proximité, pluriels tolérés).
+- Les transcriptions sont **stockées en base** (Postgres) : le studio s'en sert pour les sous-titres et les extraits proposés.
 - Interface **/admin** (protégée par mot de passe) pour :
   - ajouter une vidéo à partir de son URL (transcription récupérée via Supadata, ou collée à la main en SRT / VTT / `[00:12] texte` / texte brut) ;
   - corriger la transcription segment par segment (lecteur YouTube intégré, couper / fusionner / insérer / supprimer, chercher-remplacer, Ctrl+S) ;
@@ -63,39 +58,6 @@ n'empêche pas les suivantes. À lancer sur **ton ordinateur** et pas sur Railwa
 les serveurs). Comme les sous-titres automatiques, la transcription peut contenir des erreurs (noms propres) : corrige-les dans l'éditeur.
 Note : télécharger des vidéos YouTube sort du cadre des conditions d'utilisation de la plateforme ; c'est ici un usage personnel pour
 vérifier des propos publics, à ta charge.
-
-## Toutes les vidéos
-
-Sous les dernières vidéos, le bouton **Voir toutes les vidéos (N)** ouvre `/videos/` : le catalogue complet des vidéos
-**indexées** (celles qui ont une transcription, hors Shorts), de la plus récente à la plus ancienne, avec filtre par titre ou
-chaîne (sans accents ni casse), tri, pagination « Voir plus » et le même bouton **Afficher le résumé**. « Indexée » veut dire « transcrite » :
-c'est le même critère pour le compteur de l'accueil, « Dernières vidéos » et ce catalogue, donc les nombres concordent. Une vidéo en
-attente de transcription (ou en échec) n'apparaît pas tant qu'elle n'est pas transcrite.
-
-## Tendances
-
-La page **/tendances/** est le « Google Trends » de David Lisnard : on tape un mot ou une expression (ou jusqu'à 4, séparés par des
-virgules, pour les comparer) et le site trace combien de fois il l'a prononcé, **mois par mois** (par année au-delà de 5 ans
-d'historique).
-
-- **Base de calcul** : les vidéos indexées (transcrites, hors Shorts) **datées** et **non traduites automatiquement** (une
-  traduction ne contient pas les mots réellement prononcés). Les vidéos écartées (traduites, sans date) sont comptées et signalées
-  sous le graphique.
-- **Comptage** : mots entiers, sans accents ni casse, avec le pluriel en « s » ou « x » (« migrant » compte aussi « migrants »,
-  mais pas « migrantes » ni « immigration »). Une expression (« dette publique ») est comptée telle quelle, mots dans l'ordre.
-- **Deux mesures** : *Mentions* (nombre brut ; c'est la vue par défaut à chaque nouvelle recherche, courbe continue) et *Fréquence* (mentions pour 10 000 mots
-  prononcés ce mois-là, comparable d'un mois à l'autre même si le nombre de vidéos varie ; une période sans vidéo n'a pas de point
-  plutôt qu'un faux zéro, donc la courbe peut être coupée). L'adresse garde le choix (`?m=rate` pour la fréquence).
-- **Détail par mot** : total, nombre de vidéos, première et dernière apparition, mois record, les 8 vidéos où il revient le plus
-  (liens YouTube) et un lien « Voir les extraits » vers la recherche.
-- **Classement « Ses mots les plus prononcés »**, comme point de départ : podium des 3 premiers, barres pour les 12 suivants, puis
-  les autres en pastilles ; un clic ouvre la courbe du mot. Les mots creux (adverbes, verbes courants, « et cetera »,
-  « ailleurs », « aujourd'hui »…) sont écartés grâce à la liste `src/trend-stopwords.js` : si un mot inutile apparaît, il suffit de
-  l'y ajouter. Les mots s'affichent avec leurs accents d'origine.
-- Le graphique (SVG sans bibliothèque) a un curseur avec infobulle (souris, doigt ou flèches du clavier), un tableau des chiffres
-  et des couleurs vérifiées pour le daltonisme (`--chart-1` à `--chart-4` dans `theme.css`).
-- L'API (`GET /api/trends?q=…`, `GET /api/trends/words`) met ses résultats en cache 5 minutes (invalidés dès qu'une vidéo change) et
-  limite le calcul à 120 requêtes par heure et par visiteur.
 
 ## Studio de clips TikTok / Reels
 
@@ -262,23 +224,17 @@ qu'à choisir les extraits.
 - **Sur Railway** : le volume est monté sur `/data` (`STORAGE_DIR=/data/storage`) et ffmpeg est installé dans l'image grâce à la
   variable `NIXPACKS_APT_PKGS=ffmpeg` (le constructeur réellement utilisé est Nixpacks, comme l'indique `railway.json`).
 
-## Dernières vidéos et résumés
-
-L'accueil affiche, en grille, les **5 dernières vidéos par date de publication** : celles des chaînes suivies **et** celles ajoutées à la
-main dans l'admin (seules celles qui ont une transcription apparaissent). Avec `YOUTUBE_API_KEY`, une vidéo ajoutée à la main
-récupère sa date de publication toute seule ; sinon, renseigne la date dans l'éditeur (bouton « Mettre à jour depuis YouTube »
-pour les vidéos existantes).
+## Résumés automatiques
 
 Chaque vidéo indexée a son **résumé, rédigé automatiquement** par un modèle (OpenRouter) à partir de la transcription : un
-« En bref », puis des sections avec repères de temps cliquables, des puces et les mots importants en gras. Sous chaque vidéo,
-le bouton **Afficher le résumé** ouvre une fenêtre (fond flouté ; on la ferme avec la croix, en cliquant à côté ou avec Échap) qui ne fait que lire ce résumé déjà stocké en base ; tant qu'il n'est pas prêt, le bouton est grisé
-(**Résumé en préparation…**).
+« En bref », puis des sections avec repères de temps, des puces et les mots importants en gras. Les résumés sont stockés en base
+et se consultent dans l'admin.
 
 - **Génération en arrière-plan** : toutes les 2 minutes, le serveur résume les vidéos indexées qui n'ont pas encore de résumé
   (les plus récentes d'abord, 5 par passe), quelle que soit l'origine de la transcription (synchro de la chaîne, ajout manuel,
   import, Whisper, correction à la main). Un délai de grâce de 3 minutes après la dernière modification évite de résumer pendant
   que tu corriges la transcription. `SUMMARY_AUTO=false` désactive ce travail.
-- **Le public ne déclenche rien** : la route publique est en lecture seule, donc le trafic du site ne coûte aucun appel au modèle.
+- **Le public ne déclenche rien** : aucune route publique n'appelle le modèle, donc le trafic du site ne coûte rien en IA.
 - **Une seule fois par vidéo** : seules les vidéos qui n'ont **pas encore** de résumé sont traitées. Un résumé existant n'est
   jamais refait automatiquement, ni si la transcription est corrigée ensuite, ni si les consignes de rédaction évoluent. Dans
   l'admin, l'éditeur signale simplement « la transcription a été modifiée depuis » ; pour refaire un résumé, il faut cliquer sur
@@ -292,30 +248,12 @@ le bouton **Afficher le résumé** ouvre une fenêtre (fond flouté ; on la ferm
 - **Admin** : compteurs (prêts / en attente / en échec), pause et reprise, « Lancer maintenant », liste des échecs.
 - **Corriger un résumé à la main** : dans l'éditeur d'une vidéo, le panneau « Résumé IA » contient le texte du résumé (même format :
   `## En bref`, `## [12:34] Titre` pour un repère de temps cliquable, `- puce`, `**gras**`). Après « Enregistrer le résumé », il
-  s'affiche tel quel sur le site avec la mention « généré par IA puis corrigé à la main » et reste tel quel (comme tout résumé
+  est marqué « généré par IA puis corrigé à la main » et reste tel quel (comme tout résumé
   existant, il n'est jamais refait automatiquement). Tu peux aussi l'écrire entièrement toi-même. Seul « Régénérer avec l'IA » le
   remplace, après confirmation. Le texte est nettoyé comme celui de l'IA (HTML et liens retirés).
 - Fidélité : le modèle ne doit utiliser que le texte ; les repères de temps inexistants sont supprimés, le HTML retiré, la
   taille bornée. Une mention rappelle que le résumé est généré par IA et peut contenir des erreurs. Vidéos très longues : notes
-  par partie, puis synthèse. Modèle : `SUMMARY_MODEL`, par défaut GPT (`openai/gpt-4.1-mini`, comme les extraits du studio) ; la traduction et la recherche gardent leurs propres modèles (`TRANSLATE_MODEL`, `SEARCH_MODEL`). Les résumés déjà faits ne sont jamais refaits.
-
-## Recherche par question
-
-On peut saisir une phrase qui circule (« on va tout casser… ») **ou une question** (« est-ce que Lisnard a déjà parlé
-de réémigration ? »). Pour une question, le site ne cherche pas la phrase entière : un modèle (OpenRouter) en extrait les
-mots à chercher (« réémigration » + variantes d'orthographe que les sous-titres peuvent produire : « remigration »,
-« ré-émigration »), puis ces mots sont cherchés dans les transcriptions.
-
-- Le modèle **ne fait que choisir des mots-clés** : extraits, nombres et verdict viennent des transcriptions réelles, il ne
-  peut rien inventer. Sa sortie est validée (8 mots max, nom de l'orateur et mots vides écartés) et la saisie est traitée
-  comme une donnée, jamais comme une consigne.
-- Une citation mot pour mot est trouvée **sans aucun appel au modèle** (le cas le plus fréquent).
-- Les mots réellement recherchés sont affichés sous le verdict. Le verdict est « Oui, il en a parlé » : il dit que le mot est
-  prononcé, pas ce que Lisnard en pense.
-- Coût plafonné : cache 24 h, 30 appels/heure/visiteur, 300 appels/jour au total (`SEARCH_LLM_PER_IP_HOURLY`,
-  `SEARCH_LLM_DAILY_CAP`). Au-delà, ou si le modèle est indisponible, repli automatique sans modèle (on retire « est-ce que »,
-  « a-t-il déjà parlé de », le nom de l'orateur… et on cherche le reste).
-- Modèle : `SEARCH_MODEL`, sinon `TRANSLATE_MODEL`, sinon le modèle par défaut.
+  par partie, puis synthèse. Modèle : `SUMMARY_MODEL`, par défaut GPT (`openai/gpt-4.1-mini`, comme les extraits du studio) ; la traduction garde son propre modèle (`TRANSLATE_MODEL`). Les résumés déjà faits ne sont jamais refaits.
 
 ## Traduction automatique
 
@@ -426,28 +364,26 @@ Deuxième section du site, `/mur/` : un mur des meilleurs TikToks publiés avec 
 src/
   server.js          app Express
   db.js, schema.sql  Postgres : vidéos + segments (index de recherche recalculé à chaque sauvegarde)
-  normalize.js       normalisation du texte (indexation et requêtes)
-  search.js          recherche exacte / approchée, extraits et surlignage
+  normalize.js       normalisation du texte (indexation)
   transcripts.js     Supadata + parseurs SRT/VTT/texte
 tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéos sans sous-titres, envoyée au site
-  openrouter.js      client OpenRouter minimal (traduction, recherche par question, résumés)
+  openrouter.js      client OpenRouter minimal (traduction, résumés, extraits)
   summarize.js       résumé d'une transcription (repères de temps, 2 étapes si très long, nettoyage)
   studio/            studio public : rendu ffmpeg (render.js), détection et reconnaissance des visages (faces.js, faces-worker.js, yunet.js, sface.js, identity.js, references.js, nn.js), mesure du fond des sous-titres (box-probe.js), images libres de droits Pixabay / Pexels (stock.js), polices (fonts.json), musiques d'origine et bibliothèque de l'admin (music.json, music.js)
   wall/              mur des clips : client Apify (apify.js), classement, vignettes, actualisation planifiée (wall.js)
   media.js           fichiers vidéo du studio : dépôt par morceaux, ffprobe, stockage
   clip-suggestions.js  extraits proposés par le LLM (numéros de lignes, horaires issus de la transcription)
-  trends.js          tendances : comptage des mots par mois, mots les plus prononcés, cache et limites
-  summaries.js       résumés stockés en base : lecture publique, génération, anti-doublons
+  summaries.js       résumés stockés en base : génération, anti-doublons
   auto-summaries.js  génération automatique en arrière-plan (file, délai de grâce, reprises, plafonds, pause)
   budget.js          plafonds d'appels par visiteur / par jour
-  query-understanding.js  extrait les mots-clés d'une question, plafonds de coût, repli sans modèle
+  ip.js              clé de limitation par visiteur (IPv6 regroupée par /64)
   translate.js       traduction des segments via OpenRouter
   localize.js        récupère la transcription dans la langue demandée (traduit si besoin)
   sync.js            synchronisation : découverte des vidéos, file d'attente, planificateur
   youtube.js         extraction d'ID, métadonnées oEmbed
   auth.js            session admin (cookie signé HMAC), limiteur de tentatives
-  routes/            API publique (/api/search…) et admin (/api/admin/…)
-public/              site (index.html, videos/, tendances/, mentions-legales/) et admin (admin/)
+  routes/            API du studio (/api/studio/…), du mur (/api/wall/…), santé (/api/health) et admin (/api/admin/…)
+public/              studio (index.html), mur (mur/), mentions-legales/ et admin (admin/)
 test/                tests unitaires + test d'intégration (si DATABASE_URL défini)
 ```
 

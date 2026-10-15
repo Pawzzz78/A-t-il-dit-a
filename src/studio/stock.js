@@ -16,9 +16,12 @@ import path from 'node:path';
 import { createBudget } from '../budget.js';
 import { HttpError } from '../http-error.js';
 import { storageDir } from '../media.js';
+import { DownloadError, safeDownload } from '../safe-download.js';
 
 const MAX_BYTES = 15 * 1024 * 1024;
 const TTL_MS = 10 * 60 * 1000;
+// Pixabay's API terms require caching results for 24 hours
+const searchTtl = (provider) => (provider.id === 'pixabay' ? 24 * 3600 * 1000 : TTL_MS);
 
 const searchBudget = createBudget(() => ({ perIpHourly: Number(process.env.STOCK_SEARCHES_PER_HOUR) || 60, dailyCap: 4000 }));
 const downloadBudget = createBudget(() => ({ perIpHourly: Number(process.env.STOCK_DOWNLOADS_PER_HOUR) || 120, dailyCap: 8000 }));
@@ -156,12 +159,12 @@ export async function searchPhotos(query, { page = 1, ip = 'local', fetchImpl = 
   const pageNo = Math.min(10, Math.max(1, Math.round(Number(page)) || 1));
   const key = `${provider.id}|${q.toLowerCase()}|${pageNo}`;
   const hit = searches.get(key);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
+  if (hit && Date.now() - hit.at < searchTtl(provider)) return hit.value;
   if (!searchBudget.take(ip)) throw new HttpError(429, 'Trop de recherches pour le moment : réessaie dans quelques minutes.');
   const { list, total, next } = await provider.search(q, pageNo, fetchImpl);
   const value = { photos: list.map((raw) => present(remember(provider, raw))), page: pageNo, total, next, provider: provider.label };
   searches.set(key, { at: Date.now(), value });
-  if (searches.size > 300) searches.delete(searches.keys().next().value);
+  if (searches.size > 1000) searches.delete(searches.keys().next().value);
   return value;
 }
 
@@ -171,42 +174,26 @@ async function photoMeta(provider, id, fetchImpl) {
   return remember(provider, await provider.meta(id, fetchImpl));
 }
 
-/** Informations d'une photo (crédit compris), ou 404. */
-export async function photoInfo(id, { fetchImpl = fetch } = {}) {
-  if (!validPhotoId(id)) throw new HttpError(400, 'Numéro de photo invalide.');
-  const provider = need();
-  return present(await photoMeta(provider, String(id), fetchImpl));
-}
+const DOWNLOAD_MESSAGES = {
+  host: 'Adresse d’image inattendue.',
+  type: 'Fichier inattendu pour cette image.',
+  size: 'Image trop lourde.',
+  empty: 'Image trop lourde ou vide.',
+};
 
 /** Télécharge `url` sans jamais sortir des serveurs d'images du fournisseur : https, hôte autorisé, redirections vérifiées une à une. */
 async function download(url, hosts, fetchImpl) {
-  let current = url;
-  for (let hop = 0; hop < 4; hop++) {
-    let u;
-    try {
-      u = new URL(current);
-    } catch {
-      throw new HttpError(502, 'Adresse d’image inattendue.');
-    }
-    if (u.protocol !== 'https:' || !hosts.includes(u.hostname)) throw new HttpError(502, 'Adresse d’image inattendue.');
-    let res;
-    try {
-      res = await fetchImpl(u, { redirect: 'manual', signal: AbortSignal.timeout(30_000) });
-    } catch {
-      throw new HttpError(502, "Impossible de télécharger l'image.");
-    }
-    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
-      current = new URL(res.headers.get('location'), u).href;
-      continue;
-    }
-    if (!res.ok) throw new HttpError(502, "Impossible de télécharger l'image.");
-    if (!/^image\/(jpeg|png|webp)/i.test(res.headers.get('content-type') ?? '')) throw new HttpError(502, 'Fichier inattendu pour cette image.');
-    if (Number(res.headers.get('content-length')) > MAX_BYTES) throw new HttpError(502, 'Image trop lourde.');
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (!buf.length || buf.length > MAX_BYTES) throw new HttpError(502, 'Image trop lourde ou vide.');
-    return buf;
+  try {
+    return await safeDownload(url, {
+      allowed: (u) => u.protocol === 'https:' && hosts.includes(u.hostname),
+      accept: /^image\/(jpeg|png|webp)/i,
+      maxBytes: MAX_BYTES,
+      fetchImpl,
+    });
+  } catch (e) {
+    if (!(e instanceof DownloadError)) throw e;
+    throw new HttpError(502, DOWNLOAD_MESSAGES[e.code] ?? "Impossible de télécharger l'image.");
   }
-  throw new HttpError(502, "Impossible de télécharger l'image.");
 }
 
 /**
@@ -217,7 +204,11 @@ export async function ensureImage(id, size = 'full', { ip = 'local', fetchImpl =
   if (!validPhotoId(id)) throw new HttpError(400, 'Numéro de photo invalide.');
   const provider = need();
   const file = path.join(stockDir(), `${provider.id}-${id}-${size === 'preview' ? 'p' : 'f'}.jpg`);
-  if (await fs.stat(file).then((s) => s.size > 0, () => false)) return file;
+  if (await fs.stat(file).then((s) => s.size > 0, () => false)) {
+    const now = new Date();
+    await fs.utimes(file, now, now).catch(() => {}); // a reused image must outlive the hourly cleanup during a render
+    return file;
+  }
   if (inflight.has(file)) return inflight.get(file);
   const job = (async () => {
     if (!downloadBudget.take(ip)) throw new HttpError(429, "Trop d'images demandées pour le moment : réessaie dans quelques minutes.");

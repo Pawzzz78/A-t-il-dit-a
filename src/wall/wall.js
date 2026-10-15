@@ -16,6 +16,7 @@ import { promisify } from 'node:util';
 import { pool } from '../db.js';
 import { HttpError } from '../http-error.js';
 import { storageDir } from '../media.js';
+import { DownloadError, safeDownload } from '../safe-download.js';
 import { getSetting, setSetting } from '../settings.js';
 import { runActor } from './apify.js';
 
@@ -195,21 +196,12 @@ export function coverUrlAllowed(url) {
 }
 
 async function downloadCover(url, fetchImpl) {
-  let current = url;
-  for (let hop = 0; hop < 4; hop++) {
-    if (!coverUrlAllowed(current)) throw new Error('adresse de vignette non autorisée');
-    const res = await fetchImpl(current, { redirect: 'manual', signal: AbortSignal.timeout(20_000) });
-    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
-      current = new URL(res.headers.get('location'), current).href;
-      continue;
-    }
-    if (!res.ok) throw new Error(`vignette : erreur ${res.status}`);
-    if (!/^image\//i.test(res.headers.get('content-type') ?? '')) throw new Error('vignette : fichier inattendu');
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (!buf.length || buf.length > MAX_COVER_BYTES) throw new Error('vignette vide ou trop lourde');
-    return buf;
+  try {
+    return await safeDownload(url, { allowed: (u) => coverUrlAllowed(u.href), accept: /^image\//i, maxBytes: MAX_COVER_BYTES, fetchImpl, timeoutMs: 20_000 });
+  } catch (e) {
+    if (e instanceof DownloadError) throw new Error(`vignette : ${e.message}`);
+    throw e;
   }
-  throw new Error('vignette : trop de redirections');
 }
 
 /** Copie la vignette d'un clip sur le volume, réduite en JPEG de 360 px de large. Renvoie true si elle est en place. */

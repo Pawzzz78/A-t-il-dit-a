@@ -1,13 +1,12 @@
 import { Router } from 'express';
 import { retrySummary, runSummaryCycle } from '../auto-summaries.js';
-import { HttpError } from '../http-error.js';
+import { HttpError, ah } from '../http-error.js';
 import { pool } from '../db.js';
 import { discoverChannel, overview, previewShorts, purgeShorts, runCycle, setSetting } from '../sync.js';
 import { YouTubeApiError, resolveChannel, youtubeApiConfigured } from '../youtube.js';
 
 export const syncRouter = Router();
 
-const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 const idParam = (req) => {
   const id = Number.parseInt(req.params.id, 10);
@@ -50,7 +49,9 @@ syncRouter.post(
     try {
       added = (await discoverChannel(rows[0])).added;
     } catch (e) {
-      error = e.message;
+      // Only YouTube's own messages are meant for the admin; anything else is logged
+      if (!(e instanceof YouTubeApiError)) console.error(e);
+      error = e instanceof YouTubeApiError ? e.message : 'Liste des vidéos indisponible pour le moment.';
     }
     res.status(201).json({ channel: rows[0], added, error });
   }),

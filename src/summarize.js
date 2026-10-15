@@ -8,6 +8,7 @@
  * Les vidéos très longues sont résumées en deux étapes (notes par partie, puis synthèse).
  */
 import { GPT_MODEL, LlmError, completeWithOpenRouter } from './openrouter.js';
+import { forEachLimit } from './concurrency.js';
 import { formatTimestamp } from './transcripts.js';
 
 /** Modèle des résumés : SUMMARY_MODEL, sinon GPT (comme les extraits du studio) ; jamais celui de la traduction ou de la recherche. */
@@ -176,14 +177,9 @@ export async function summarizeTranscript(segments, { complete = completeWithOpe
   } else {
     const chunks = splitText(text);
     const notes = new Array(chunks.length);
-    let next = 0;
-    const worker = async () => {
-      while (next < chunks.length) {
-        const i = next++;
-        notes[i] = await call(MAP_SYSTEM(), chunks[i], 2500);
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(3, chunks.length) }, worker));
+    await forEachLimit(chunks.length, 3, async (i) => {
+      notes[i] = await call(MAP_SYSTEM(), chunks[i], 2500);
+    });
     raw = await call(reduceSystem(timed), notes.map((n, i) => `Part ${i + 1}:\n${n.trim()}`).join('\n\n'), 4000);
   }
   const markdown = sanitizeSummary(raw, { labels, timed });

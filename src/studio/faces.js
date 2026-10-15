@@ -12,7 +12,7 @@ import { Worker } from 'node:worker_threads';
 import { pool } from '../db.js';
 import { HttpError } from '../http-error.js';
 import { videoFilePath } from '../media.js';
-import { framingForClip } from '../../public/js/framing.js';
+import { FRAMING, framingForClip } from '../../public/js/framing.js';
 import { IDENT_ALGO } from './identity.js';
 import { referenceSet } from './references.js';
 
@@ -213,9 +213,9 @@ export async function facesStatus(video) {
     `SELECT status, error, file_stamp, analyzed_at, ident_version,
             jsonb_array_length(content->'frames') AS frames, jsonb_array_length(content->'cuts') AS cuts, (content->>'fps')::float AS fps, content->'stats' AS stats,
             jsonb_array_length(COALESCE(ident, '[]'::jsonb)) AS samples,
-            (SELECT count(*) FROM jsonb_array_elements(COALESCE(ident, '[]'::jsonb)) e WHERE (e->>2)::float >= 0.363)::int AS matches
+            (SELECT count(*) FROM jsonb_array_elements(COALESCE(ident, '[]'::jsonb)) e WHERE (e->>2)::float >= $2)::int AS matches
      FROM video_faces WHERE video_id = $1`,
-    [video.id],
+    [video.id, FRAMING.samePerson],
   );
   if (!rows.length) return { status: 'none', ident: { state: refs.count ? 'none' : 'off' } };
   const r = rows[0];

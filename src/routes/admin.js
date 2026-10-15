@@ -1,5 +1,6 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import {
+  authConfigured,
   checkPassword,
   endSession,
   isAuthenticated,
@@ -9,7 +10,7 @@ import {
   startSession,
 } from '../auth.js';
 import { pool, replaceSegments, withTransaction } from '../db.js';
-import { HttpError } from '../http-error.js';
+import { HttpError, ah, jsonErrors } from '../http-error.js';
 import { clipsAdminRouter } from './clips-admin.js';
 import { removeVideoFiles } from '../media.js';
 import { facesAdminRouter } from './faces-admin.js';
@@ -20,6 +21,7 @@ import { studioStats } from '../studio/stats.js';
 import { syncRouter } from './sync-admin.js';
 import { YouTubeApiError } from '../youtube.js';
 import { fetchLocalized } from '../localize.js';
+import { LlmError } from '../openrouter.js';
 import { regenerateNow, saveEditedSummary } from '../summaries.js';
 import { TranscriptError, parseTranscriptText, supadataConfigured } from '../transcripts.js';
 import { TranslationError, baseLang, translateConfigured, translateSegments } from '../translate.js';
@@ -27,15 +29,14 @@ import { fetchMetadata, fetchVideoMeta, parseYoutubeId, youtubeApiConfigured } f
 
 export const adminRouter = Router();
 
-const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 // --- session ---------------------------------------------------------------
 
-adminRouter.post('/login', (req, res) => {
-  if (!process.env.ADMIN_PASSWORD || (process.env.SESSION_SECRET ?? '').length < 16) {
+adminRouter.post('/login', express.json({ limit: '1kb' }), (req, res) => {
+  if (!authConfigured()) {
     return res.status(503).json({ error: "L'admin n'est pas configurée (ADMIN_PASSWORD / SESSION_SECRET)." });
   }
   if (!loginAllowed(req.ip)) return res.status(429).json({ error: 'Trop de tentatives, réessaie dans 15 minutes.' });
@@ -55,6 +56,8 @@ adminRouter.get('/me', (req, res) => res.json({ authenticated: isAuthenticated(r
 
 // Tout ce qui suit demande une session valide.
 adminRouter.use(requireAdmin);
+// Large bodies (transcripts) are parsed only once the session is checked
+adminRouter.use(express.json({ limit: '10mb' }));
 
 adminRouter.get('/config', (_req, res) =>
   res.json({ supadata: supadataConfigured(), translate: translateConfigured(), youtube: youtubeApiConfigured() }),
@@ -250,7 +253,9 @@ adminRouter.post(
       res.json({ ok: true, model: s.model, created_at: s.created_at });
     } catch (e) {
       if (e instanceof HttpError) throw e;
-      throw new HttpError(502, `Résumé impossible : ${e.message}`);
+      if (e instanceof LlmError) throw new HttpError(502, `Résumé impossible : ${e.message}`);
+      console.error(e);
+      throw new HttpError(502, 'Résumé impossible pour le moment : réessaie plus tard.');
     }
   }),
 );
@@ -395,18 +400,20 @@ adminRouter.delete(
       return rows[0].youtube_id;
     });
     if (!found) throw new HttpError(404, 'Vidéo introuvable.');
-    await removeVideoFiles(found).catch(() => {}); // le fichier vidéo du studio part avec la vidéo
+    await removeVideoFiles(found).catch((e) => console.warn(`Fichiers de ${found} non supprimés : ${e.message}`)); // le fichier vidéo du studio part avec la vidéo
     res.json({ ok: true });
   }),
 );
 
-// eslint-disable-next-line no-unused-vars
-adminRouter.use((err, _req, res, _next) => {
-  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, ...err.extra });
-  if (err instanceof TranscriptError) return res.status(err.status).json({ error: err.message });
-  if (err instanceof TranslationError) return res.status(err.code === 'config' ? 503 : 502).json({ error: err.message });
-  if (err instanceof YouTubeApiError) return res.status(502).json({ error: err.message });
-  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Morceau trop gros.' });
-  console.error(err);
-  res.status(500).json({ error: 'Erreur interne.' });
-});
+adminRouter.use(
+  jsonErrors({
+    tooLarge: 'Morceau trop gros.',
+    map: (err) => {
+      if (err instanceof TranscriptError) return [err.status, err.message];
+      if (err instanceof TranslationError) return [err.code === 'config' ? 503 : 502, err.message];
+      if (err instanceof YouTubeApiError) return [502, err.message];
+      if (err.code === '23505') return [409, 'Cet élément existe déjà (ajout simultané ?).']; // unique violation
+      return null;
+    },
+  }),
+);
