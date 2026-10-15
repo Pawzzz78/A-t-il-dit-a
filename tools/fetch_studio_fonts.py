@@ -7,7 +7,7 @@ Usage : python3 tools/fetch_studio_fonts.py
   fc-scan (unique par fichier : c'est lui qui sert de « Fontname » aux sous-titres ASS, vérifié visuellement avec libass) et sa
   catégorie.
 """
-import json, re, struct, subprocess, urllib.request, pathlib, sys, tempfile
+import json, os, re, struct, subprocess, urllib.request, pathlib, sys, tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "public" / "fonts" / "studio"
@@ -57,6 +57,7 @@ def em_ratio(data):
 def cap_em(fonts_dir, ass_name, ratio):
     """Largeur d'une capitale « H » en fraction d'em, mesurée avec libass (sert à estimer la largeur d'un mot pour le réduire
     avant qu'il ne déborde de l'écran). Nécessite ffmpeg et numpy ; renvoie 0.62 si indisponible."""
+    f = None
     try:
         import numpy as np
         ass = ("[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 400\nWrapStyle: 2\n[V4+ Styles]\n"
@@ -72,6 +73,9 @@ def cap_em(fonts_dir, ass_name, ratio):
         return round((xs.max() - xs.min() + 1) / 4 / (100 * ratio), 3)
     except Exception:  # noqa: BLE001
         return 0.62
+    finally:
+        if f is not None and os.path.exists(f.name):
+            os.unlink(f.name)
 
 def get(url):
     # l'API de Google ne renvoie des TTF statiques qu'à un client « simple » (pas de navigateur moderne)
@@ -82,6 +86,8 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     MANIFEST.parent.mkdir(parents=True, exist_ok=True)
     manifest, failed = [], []
+    # A font that fails to download keeps its previous entry instead of vanishing from the studio
+    previous = {m["id"]: m for m in json.loads(MANIFEST.read_text())} if MANIFEST.exists() else {}
     for fid, name, weight, label, cat in FONTS:
         try:
             css = get(f"https://fonts.googleapis.com/css?family={name.replace(' ', '+')}:{weight}").decode()
@@ -97,6 +103,8 @@ def main():
             print(f"ok  {fid:18s} {len(data)//1024:4d} Ko  « {info[1]} »  em {manifest[-1]['em_ratio']}  H {manifest[-1]['cap_em']}")
         except Exception as e:  # noqa: BLE001
             failed.append(fid)
+            if fid in previous:
+                manifest.append(previous[fid])
             print(f"ÉCHEC {fid}: {e}", file=sys.stderr)
     MANIFEST.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
     (OUT / "LICENSES.txt").write_text(

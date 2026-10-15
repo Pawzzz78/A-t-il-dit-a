@@ -1,7 +1,9 @@
 """Tests du script (sans réseau ni Whisper) : python -m unittest tools/test_transcribe.py"""
+import os
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -51,6 +53,11 @@ SEGMENTS = [{"start_ms": 0, "duration_ms": 1000, "text": "bonjour"}]
 
 
 class Flow(unittest.TestCase):
+    def setUp(self):
+        patcher = mock.patch.dict(os.environ, {"ADMIN_PASSWORD": "pw"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def run_main(self, argv, site, transcribe=lambda *a: SEGMENTS, download=None):
         calls = {"download": [], "model": 0}
 
@@ -62,7 +69,7 @@ class Flow(unittest.TestCase):
             calls["model"] += 1
             return object()
 
-        code = t.main(["--site", "http://x", "--password", "pw", *argv], site_factory=lambda b, p: site, download=download or fake_download, transcribe=transcribe, model_loader=fake_model)
+        code = t.main(["--site", "http://x", *argv], site_factory=lambda b, p: site, download=download or fake_download, transcribe=transcribe, model_loader=fake_model)
         return code, calls
 
     def test_all_failed(self):
@@ -118,7 +125,7 @@ class Flow(unittest.TestCase):
 
         out = io.StringIO()
         with redirect_stdout(out):
-            code = t.main(["--site", "http://x", "--password", "pw", "--all-failed"], site_factory=lambda b, p: site, download=lambda *a: downloads.append(a), transcribe=lambda *a: SEGMENTS, model_loader=failing_loader)
+            code = t.main(["--site", "http://x", "--all-failed"], site_factory=lambda b, p: site, download=lambda *a: downloads.append(a), transcribe=lambda *a: SEGMENTS, model_loader=failing_loader)
         self.assertEqual(code, 2)
         self.assertEqual(downloads, [])  # aucun téléchargement de vidéo tenté
         self.assertEqual(site.uploads, [])
@@ -130,7 +137,7 @@ class Flow(unittest.TestCase):
     def test_modele_dossier_local_transmis_tel_quel(self):
         site = FakeSite(failed=[{"id": 1, "youtube_id": "AAAAAAAAAAA", "title": "A"}])
         sizes = []
-        t.main(["--site", "http://x", "--password", "pw", "--all-failed", "--model", r"C:\whisper-small"], site_factory=lambda b, p: site, download=lambda yt, d, c: d / "a.m4a", transcribe=lambda *a: SEGMENTS, model_loader=lambda size: sizes.append(size) or object())
+        t.main(["--site", "http://x", "--all-failed", "--model", r"C:\whisper-small"], site_factory=lambda b, p: site, download=lambda yt, d, c: d / "a.m4a", transcribe=lambda *a: SEGMENTS, model_loader=lambda size: sizes.append(size) or object())
         self.assertEqual(sizes, [r"C:\whisper-small"])
 
     def test_aucune_parole(self):

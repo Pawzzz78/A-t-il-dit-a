@@ -5,7 +5,7 @@ Usage : python3 tools/make_studio_music.py [id ...]   (nécessite numpy et ffmpe
 Écrit public/music/<id>.mp3 et src/studio/music.json. Les boucles sont « sans couture » (la queue de réverbération est
 repliée sur le début), le serveur les répète tant que le clip dure. Fond sonore sous une voix : mixées à bas volume.
 """
-import json, pathlib, subprocess, tempfile, wave, zlib
+import json, os, pathlib, subprocess, tempfile, wave, zlib
 import numpy as np
 
 SR = 44100
@@ -298,10 +298,15 @@ TRACKS = [
 
 def write_mp3(sig, path):
     pcm = (np.clip(sig, -1, 1) * 32767).astype("<i2")
-    with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
-        with wave.open(tmp.name, "wb") as w:
+    # A closed temp file can be reopened on Windows too (NamedTemporaryFile cannot while open)
+    fd, tmp = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    try:
+        with wave.open(tmp, "wb") as w:
             w.setnchannels(1); w.setframerate(SR); w.setsampwidth(2); w.writeframes(pcm.tobytes())
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", tmp.name, "-ac", "2", "-c:a", "libmp3lame", "-b:a", "128k", str(path)], check=True)
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", tmp, "-ac", "2", "-c:a", "libmp3lame", "-b:a", "128k", str(path)], check=True)
+    finally:
+        os.unlink(tmp)
 
 def main(only=None):
     """only : liste d'identifiants à (re)composer ; les autres morceaux et leur entrée du manifeste ne sont pas touchés."""
