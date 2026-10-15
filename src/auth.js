@@ -3,8 +3,13 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 const COOKIE = 'adm';
 const TTL_MS = 12 * 60 * 60 * 1000;
 
+// Values copied from .env.example (change-me…) count as not configured
+const placeholder = (v) => /^change-me/i.test(v ?? '');
 export const authConfigured = () =>
-  Boolean(process.env.ADMIN_PASSWORD) && (process.env.SESSION_SECRET ?? '').length >= 16;
+  Boolean(process.env.ADMIN_PASSWORD) &&
+  (process.env.SESSION_SECRET ?? '').length >= 16 &&
+  !placeholder(process.env.ADMIN_PASSWORD) &&
+  !placeholder(process.env.SESSION_SECRET);
 
 const sign = (payload) => createHmac('sha256', process.env.SESSION_SECRET).update(payload).digest('base64url');
 

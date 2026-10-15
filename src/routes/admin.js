@@ -1,5 +1,6 @@
 import express, { Router } from 'express';
 import {
+  authConfigured,
   checkPassword,
   endSession,
   isAuthenticated,
@@ -35,7 +36,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 // --- session ---------------------------------------------------------------
 
 adminRouter.post('/login', express.json({ limit: '1kb' }), (req, res) => {
-  if (!process.env.ADMIN_PASSWORD || (process.env.SESSION_SECRET ?? '').length < 16) {
+  if (!authConfigured()) {
     return res.status(503).json({ error: "L'admin n'est pas configurée (ADMIN_PASSWORD / SESSION_SECRET)." });
   }
   if (!loginAllowed(req.ip)) return res.status(429).json({ error: 'Trop de tentatives, réessaie dans 15 minutes.' });

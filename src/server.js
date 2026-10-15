@@ -58,7 +58,7 @@ export function createApp() {
 if (import.meta.url === `file://${process.argv[1]}`) {
   await initDb();
   if (!authConfigured()) {
-    console.warn('ADMIN_PASSWORD / SESSION_SECRET (16+ caractères) manquants : l\'admin est désactivée.');
+    console.warn('ADMIN_PASSWORD / SESSION_SECRET (16+ caractères) manquants ou valeurs d\'exemple (change-me…) : l\'admin est désactivée.');
   }
   const port = Number(process.env.PORT) || 3000;
   createApp().listen(port, () => console.log(`Lisnard Studio → http://localhost:${port}`));

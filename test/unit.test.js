@@ -112,3 +112,21 @@ test('parseTranscriptText: lignes horodatées et texte brut', () => {
   );
   assert.deepEqual(parseTranscriptText('   '), []);
 });
+
+test('admin : les valeurs d\'exemple (change-me…) comptent comme non configurées', async () => {
+  const { authConfigured } = await import('../src/auth.js');
+  const saved = { pw: process.env.ADMIN_PASSWORD, secret: process.env.SESSION_SECRET };
+  try {
+    Object.assign(process.env, { ADMIN_PASSWORD: 'change-me', SESSION_SECRET: 'x'.repeat(32) });
+    assert.equal(authConfigured(), false);
+    Object.assign(process.env, { ADMIN_PASSWORD: 'pw-test', SESSION_SECRET: 'change-me-too-with-32-random-chars-or-more' });
+    assert.equal(authConfigured(), false);
+    Object.assign(process.env, { ADMIN_PASSWORD: 'pw-test', SESSION_SECRET: 'x'.repeat(32) });
+    assert.equal(authConfigured(), true);
+  } finally {
+    for (const [k, v] of [['ADMIN_PASSWORD', saved.pw], ['SESSION_SECRET', saved.secret]]) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+});
