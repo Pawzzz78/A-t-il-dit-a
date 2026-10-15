@@ -64,15 +64,9 @@ test('admin protégée, connexion, ajout, recherche, correction', { skip: !enabl
   const id = created.body.id;
   assert.equal((await call('POST', '/api/admin/videos', { input: YT, mode: 'empty' })).status, 409);
 
-  let r = await call('GET', '/api/search?q=' + encodeURIComponent('Simplifier la vie des entrepreneurs'));
-  assert.equal(r.body.verdict, 'exact');
-  const hit = r.body.results.find((x) => x.video.youtube_id === YT);
-  assert.equal(hit.video.published_at, '2025-01-02');
-  assert.equal(hit.matches[0].start_ms, 1000);
-  assert.match(hit.matches[0].url, /t=1s$/);
-
-  r = await call('GET', '/api/search?q=' + encodeURIComponent('entrepreneurs francais simplifier'));
-  assert.ok(['exact', 'approx'].includes(r.body.verdict));
+  const stored = async () => (await pool.query('SELECT norm_text, published_at FROM videos WHERE id = $1', [id])).rows[0];
+  assert.equal((await stored()).published_at, '2025-01-02');
+  assert.match((await stored()).norm_text, /nous devons simplifier la vie des entrepreneurs francais/);
 
   // Correction manuelle : l'ancienne formulation disparaît, la nouvelle apparaît.
   const saved = await call('PUT', `/api/admin/videos/${id}/segments`, {
@@ -82,10 +76,8 @@ test('admin protégée, connexion, ajout, recherche, correction', { skip: !enabl
     ],
   });
   assert.equal(saved.status, 200);
-  r = await call('GET', '/api/search?q=' + encodeURIComponent('nous devons simplifier'));
-  assert.ok(!r.body.results.some((x) => x.video.youtube_id === YT && x.matches.some((m) => m.type === 'exact')));
-  r = await call('GET', '/api/search?q=' + encodeURIComponent('nous devons alléger la vie'));
-  assert.equal(r.body.verdict, 'exact');
+  assert.doesNotMatch((await stored()).norm_text, /nous devons simplifier/);
+  assert.match((await stored()).norm_text, /nous devons alleger la vie/);
 
   const detail = await call('GET', `/api/admin/videos/${id}`);
   assert.equal(detail.body.video.edited, true);
@@ -120,7 +112,6 @@ test('transcription envoyée par un script (Whisper) : acceptée sans écraser l
     const { rows } = await pool.query('SELECT source, edited, lang, sync_status, sync_error, norm_text FROM videos WHERE id = $1', [id]);
     assert.deepEqual([rows[0].source, rows[0].edited, rows[0].lang, rows[0].sync_status, rows[0].sync_error], ['whisper', false, 'fr', 'done', null]);
     assert.match(rows[0].norm_text, /parlons de la reemigration/);
-    assert.ok((await call('GET', '/api/search?q=' + encodeURIComponent('parlons de la réémigration'))).body.results.some((r) => r.video.youtube_id === YT2));
 
     // pas d'écrasement par erreur (corrections manuelles) ; seulement avec overwrite: true
     assert.equal((await call('POST', `/api/admin/videos/${id}/transcript`, { segments: segs })).status, 409);
@@ -136,8 +127,11 @@ test('transcription envoyée par un script (Whisper) : acceptée sans écraser l
   }
 });
 
-test('recherche : requête trop courte refusée', { skip: !enabled }, async () => {
-  assert.equal((await call('GET', '/api/search?q=ab')).status, 400);
+test('anciennes routes publiques (recherche, tendances, résumés) retirées', { skip: !enabled }, async () => {
+  for (const p of ['/api/search?q=abc', '/api/latest', '/api/videos', '/api/summary/TESTtest_01', '/api/trends?q=abc', '/api/trends/words', '/api/stats']) {
+    assert.equal((await call('GET', p)).status, 404, p);
+  }
+  assert.equal((await call('GET', '/api/health')).status, 200);
 });
 
 test('mentions légales : page présente avec le contact, aucun lien vers l\'admin sur les pages publiques', { skip: !enabled }, async () => {

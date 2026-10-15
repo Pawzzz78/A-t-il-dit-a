@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildIndex, normalize, normalizeWithMap } from '../src/normalize.js';
-import { buildExcerpt, findApprox, findExact, queryTokens } from '../src/search.js';
 import { formatTimestamp, parseTimestamp, parseTranscriptText } from '../src/transcripts.js';
 import { parseYoutubeId } from '../src/youtube.js';
 
@@ -25,41 +24,6 @@ test('buildIndex: offsets cohérents avec le texte joint', () => {
   assert.equal(normText, 'bonjour a tous c est lisnard');
   assert.deepEqual(offsets, [0, -1, 15]);
   assert.equal(normText.slice(15), 'c est lisnard');
-});
-
-test('findExact respecte les limites de mots', () => {
-  const t = 'le mot etat et un etatisme etat';
-  assert.deepEqual(findExact(t, 'etat'), [
-    { start: 7, end: 11 },
-    { start: 27, end: 31 },
-  ]);
-});
-
-test('findApprox: fenêtre contenant tous les mots, tolérance au pluriel', () => {
-  const t = normalize('on doit baisser les impots des francais et simplifier le reste');
-  const tokens = queryTokens(normalize('baisser impôt français'));
-  const hits = findApprox(t, tokens, 12);
-  assert.equal(hits.length, 1);
-  assert.equal(t.slice(hits[0].start, hits[0].end), 'baisser les impots des francais');
-  assert.deepEqual(findApprox(t, queryTokens(normalize('baisser dette')), 12), []);
-});
-
-test('buildExcerpt: surligne une phrase à cheval sur deux segments', () => {
-  const raw = [
-    { text: 'Je pense que', start_ms: 1000 },
-    { text: "l'État doit maigrir.", start_ms: 4000 },
-    { text: 'Voilà.', start_ms: 7000 },
-  ];
-  const { normText, offsets } = buildIndex(raw);
-  const segs = raw.map((s, i) => ({ ...s, norm_start: offsets[i] }));
-  const [hit] = findExact(normText, normalize('que l’État doit'));
-  const ex = buildExcerpt(segs, hit);
-  assert.equal(ex.start_ms, 1000);
-  assert.equal(ex.segments.length, 3);
-  const [a, b] = ex.segments;
-  assert.equal(a.text.slice(...a.marks[0]), 'que');
-  assert.equal(b.text.slice(...b.marks[0]), "l'État doit");
-  assert.deepEqual(ex.segments[2].marks, []);
 });
 
 test('parseYoutubeId', () => {

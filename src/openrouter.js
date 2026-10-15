@@ -9,7 +9,7 @@ const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 export const DEFAULT_MODEL = 'google/gemini-2.5-flash-lite';
 
 // Modèle GPT des tâches de rédaction fine (résumés, choix des extraits) : sans raisonnement, suit bien des consignes détaillées,
-// JSON fiable, peu cher. Indépendant de TRANSLATE_MODEL / SEARCH_MODEL, qui peuvent être des modèles « à raisonnement ».
+// JSON fiable, peu cher. Indépendant de TRANSLATE_MODEL, qui peuvent être des modèles « à raisonnement ».
 export const GPT_MODEL = 'openai/gpt-4.1-mini';
 
 export const llmConfigured = () => Boolean(process.env.OPENROUTER_API_KEY);
@@ -97,7 +97,7 @@ export async function completeWithOpenRouter(
       if (status === 402) throw new LlmError(`Crédits OpenRouter insuffisants (${detail}).`, 'quota');
       if (status === 400 || status === 404) {
         const code = /model/i.test(detail) ? 'config' : 'upstream';
-        throw new LlmError(code === 'config' ? `Modèle refusé : vérifie TRANSLATE_MODEL / SEARCH_MODEL / SUMMARY_MODEL (${detail}).` : `Requête refusée (${detail}).`, code);
+        throw new LlmError(code === 'config' ? `Modèle refusé : vérifie TRANSLATE_MODEL / SUMMARY_MODEL (${detail}).` : `Requête refusée (${detail}).`, code);
       }
       lastError = new LlmError(`OpenRouter : ${detail}`, status === 429 ? 'quota' : 'upstream');
       continue; // 429, 5xx, erreurs en amont : on réessaie

@@ -168,8 +168,7 @@ test('cycle : en pause par défaut, traite après « reprendre »', { skip: !ena
   assert.equal((await row(1)).sync_status, 'done');
 });
 
-test('traduction : stockée avec le texte d\'origine, et signalée dans la recherche', { skip: !enabled }, async () => {
-  const { createApp } = await import('../src/server.js');
+test('traduction : stockée avec le texte d\'origine', { skip: !enabled }, async () => {
   await sync.discoverChannel(channel, { listShortIds: noShorts, iterateUploads: iterate([video(1), video(2)]) });
   const fetchFn = async (ytId) => ({
     lang: 'fr',
@@ -186,24 +185,6 @@ test('traduction : stockée avec le texte d\'origine, et signalée dans la reche
   assert.equal(rows[0].text_original, 'we must cut public spending');
   const v2 = await row(2);
   assert.deepEqual([v2.translated, v2.original_lang], [false, null]);
-
-  const server = createApp().listen(0);
-  try {
-    const base = `http://127.0.0.1:${server.address().port}`;
-    const q = encodeURIComponent('réduire la dépense publique');
-    // Les deux vidéos contiennent la phrase : la vidéo non traduite fait foi.
-    let r = await (await fetch(`${base}/api/search?q=${q}`)).json();
-    assert.equal(r.verdict, 'exact');
-    const byId = Object.fromEntries(r.results.map((x) => [x.video.youtube_id, x.video]));
-    assert.equal(byId[id(1)].translated, true);
-    assert.equal(byId[id(2)].translated, false);
-    // Si la phrase n'existe que dans la traduction, le verdict l'indique.
-    await db.pool.query('DELETE FROM videos WHERE youtube_id = $1', [id(2)]);
-    r = await (await fetch(`${base}/api/search?q=${q}`)).json();
-    assert.equal(r.verdict, 'translated');
-  } finally {
-    server.close();
-  }
 });
 
 // --- Shorts ---------------------------------------------------------------------------
