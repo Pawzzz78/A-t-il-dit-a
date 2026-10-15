@@ -97,6 +97,8 @@ class Site:
 
     def _call(self, method: str, path: str, **kwargs):
         r = self.session.request(method, f"{self.base}/api/admin{path}", timeout=kwargs.pop("timeout", 120), **kwargs)
+        if r.content and not r.headers.get("content-type", "").startswith("application/json"):
+            raise RuntimeError(f"Réponse inattendue du site ({r.status_code})")  # e.g. an HTML error page from the host
         data = r.json() if r.content else {}
         if not r.ok:
             raise RuntimeError(f"{data.get('error', r.reason)} ({r.status_code})")
@@ -193,7 +195,6 @@ def parse_args(argv=None):
     p.add_argument("videos", nargs="*", help="URL(s) ou identifiant(s) YouTube")
     p.add_argument("--all-failed", action="store_true", help="toutes les vidéos « en échec » de la page Synchronisation")
     p.add_argument("--site", default=os.environ.get("SITE_URL"), help="adresse du site (ou variable SITE_URL)")
-    p.add_argument("--password", default=os.environ.get("ADMIN_PASSWORD"), help="mot de passe admin (ou variable ADMIN_PASSWORD, ou demandé)")
     p.add_argument("--model", default="small", help="taille du modèle : tiny, base, small (défaut), medium, large-v3, large-v3-turbo ; ou dossier d'un modèle téléchargé à la main")
     p.add_argument("--language", default="fr", help="langue parlée (défaut : fr)")
     p.add_argument("--prompt", default=DEFAULT_PROMPT, help="mots à bien orthographier (noms propres) ; vide pour désactiver")
@@ -211,7 +212,8 @@ def parse_args(argv=None):
 
 def main(argv=None, *, site_factory=Site, download=download_audio, transcribe=transcribe_file, model_loader=load_model) -> int:
     args = parse_args(argv)
-    password = args.password or getpass.getpass("Mot de passe de l'admin : ")
+    # Never on the command line (shell history, process list): environment variable or prompt only
+    password = os.environ.get("ADMIN_PASSWORD") or getpass.getpass("Mot de passe de l'admin : ")
     site = site_factory(args.site, password)
 
     # 1. liste des vidéos à traiter

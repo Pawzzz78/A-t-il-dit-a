@@ -6,9 +6,9 @@
 import express, { Router } from 'express';
 import { getClipSuggestions, prepareSegments, CLIP_LIMITS } from '../clip-suggestions.js';
 import { pool } from '../db.js';
-import { HttpError } from '../http-error.js';
+import { HttpError, ah, jsonErrors } from '../http-error.js';
 import { DEFAULT_STYLE, LIMITS, PRESETS } from '../../public/js/studio-core.js';
-import { cancelJob, createPreview, enqueueRender, FONTS, getJob, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
+import { cancelJob, config as studioConfig, createPreview, enqueueRender, FONTS, framingAllowed, getJob, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
 import { CATEGORIES, ensureMusic, libraryFile, publicTracks } from '../studio/music.js';
 import { facesStatus, framingForRequest } from '../studio/faces.js';
 import { recordEvent } from '../studio/stats.js';
@@ -18,7 +18,6 @@ import { parseYoutubeId } from '../youtube.js';
 export const studioRouter = Router();
 studioRouter.use(express.json({ limit: '100kb' }));
 
-const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 const CLIPPABLE = `v.clips_enabled AND v.file_name IS NOT NULL AND v.norm_text <> ''`;
 const COLS = `v.id, v.youtube_id, v.title, v.channel, v.published_at, v.thumbnail_url, v.file_name, v.file_size,
@@ -139,6 +138,7 @@ async function linesOf(videoId) {
 studioRouter.post(
   '/framing',
   ah(async (req, res) => {
+    if (!framingAllowed(req.ip)) throw new HttpError(429, 'Trop de calculs de cadrage : réessaie dans quelques minutes.');
     const v = await loadVideo(req.body?.youtube_id);
     const request = normalizeRequest({ ...req.body, layout: { ...req.body?.layout, fit: 'crop', follow: { on: true, subject: req.body?.subject } } }, v);
     const clip = await framingForRequest(v, request);
@@ -211,6 +211,15 @@ studioRouter.get('/render/:id/file', async (req, res, next) => {
   try {
     const job = jobOr404(req.params.id);
     if (job.status !== 'done') throw new HttpError(409, "Le clip n'est pas encore prêt.");
+    // Cap the bytes actually sent per clip (seeking in <video> only costs what is transferred)
+    if ((job.bytesServed ?? 0) >= (job.size ?? 0) * studioConfig().fileServeFactor) {
+      throw new HttpError(429, 'Ce clip a déjà été téléchargé de nombreuses fois : crée-le à nouveau si besoin.');
+    }
+    const socket = req.socket;
+    const sentBefore = socket.bytesWritten;
+    res.on('close', () => {
+      job.bytesServed = (job.bytesServed ?? 0) + Math.max(0, socket.bytesWritten - sentBefore);
+    });
     // `?use=download` : le bouton « Télécharger » ; `?use=share` : le partage depuis le téléphone. La lecture dans la page (sans
     // paramètre) n'est pas un téléchargement.
     const use = req.query.use === 'download' ? 'download' : req.query.use === 'share' ? 'share' : null;
@@ -245,12 +254,5 @@ studioRouter.delete(
   }),
 );
 
-// eslint-disable-next-line no-unused-vars
-studioRouter.use((err, _req, res, _next) => {
-  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, ...err.extra });
-  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Demande trop volumineuse.' });
-  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Demande illisible.' });
-  console.error(err);
-  res.status(500).json({ error: 'Erreur interne.' });
-});
+studioRouter.use(jsonErrors());
 

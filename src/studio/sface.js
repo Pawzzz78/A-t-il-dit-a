@@ -9,9 +9,6 @@ import { loadModel } from './nn.js';
 
 const MODEL_URL = new URL('./models/face_recognition_sface_2021dec.onnx', import.meta.url);
 
-/** Similarité cosinus au-dessus de laquelle deux empreintes sont celles de la même personne (seuil d'OpenCV pour SFace). */
-export const SAME_PERSON = 0.363;
-
 // position des repères dans la vignette 112 × 112 (modèle ArcFace : œil gauche de l'image, œil droit, nez, coins de la bouche)
 const TEMPLATE = [[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366], [41.5493, 92.3655], [70.7299, 92.2041]];
 export const FACE_SIZE = 112;

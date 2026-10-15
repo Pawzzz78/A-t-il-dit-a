@@ -257,6 +257,7 @@ test('les requêtes qui modifient des données exigent la même origine', async 
   assert.equal((await post()).status, 200);
   assert.equal((await post(siteUrl)).status, 200);
   assert.equal((await post('https://pirate.example')).status, 403);
+  assert.equal((await post('null')).status, 403); // « Origin: null » (page isolée) : refusé, sans erreur 500
 });
 
 test('déconnexion : cookie effacé et fin de session côté SSO', async () => {
@@ -269,6 +270,7 @@ test('déconnexion : cookie effacé et fin de session côté SSO', async () => {
   assert.ok(url.searchParams.get('id_token_hint')?.split('.').length === 3);
   assert.ok(res.headers.getSetCookie().some((c) => c.startsWith('mbr=;') && /Max-Age=0/.test(c)));
   assert.equal((await fetch(`${siteUrl}/api/auth/logout`, { method: 'POST', headers: { origin: 'https://pirate.example' } })).status, 403);
+  assert.equal((await fetch(`${siteUrl}/api/auth/logout`, { method: 'POST', headers: { origin: 'null' } })).status, 403);
   const anonymous = await fetch(`${siteUrl}/api/auth/logout`, { method: 'POST' });
   assert.deepEqual(await anonymous.json(), { redirect: '/' });
 });

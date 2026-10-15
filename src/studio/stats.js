@@ -14,8 +14,12 @@ import { pool } from '../db.js';
 export const VISITOR_RETENTION_DAYS = 90;
 const KINDS = new Set(['render', 'download', 'share']);
 
-const secret = () => process.env.SESSION_SECRET || process.env.ADMIN_PASSWORD || 'studio-stats';
-export const visitorHash = (ip) => crypto.createHmac('sha256', secret()).update(`studio|${ip ?? ''}`).digest('hex').slice(0, 16);
+const secret = () => process.env.SESSION_SECRET || process.env.ADMIN_PASSWORD;
+// Without a server secret the hash would be reversible, so people are not counted
+export const visitorHash = (ip) => {
+  const key = secret();
+  return key ? crypto.createHmac('sha256', key).update(`studio|${ip ?? ''}`).digest('hex').slice(0, 16) : null;
+};
 
 /** Enregistre un événement (une seule fois par clip et par type). Ne lève jamais d'erreur. */
 export async function recordEvent(kind, { jobId, youtubeId, ip }) {

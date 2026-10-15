@@ -1,11 +1,10 @@
 /** Bibliothèque de musiques du studio (admin) : liste, dépôt, modification, masquage, suppression. */
 import express, { Router } from 'express';
-import { HttpError } from '../http-error.js';
+import { HttpError, ah } from '../http-error.js';
 import { addTrack, adminTracks, deleteTrack, ensureMusic, libraryFile, MUSIC_LIMITS, updateTrack } from '../studio/music.js';
 
 export const musicAdminRouter = Router();
 
-const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 musicAdminRouter.get(
   '/',

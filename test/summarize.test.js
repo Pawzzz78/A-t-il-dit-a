@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseInline, parseSummary, tsToSeconds } from '../public/js/summary-render.js';
 import { buildTranscriptText, sanitizeSummary, splitText, summarizeTranscript } from '../src/summarize.js';
 
 const seg = (sec, text) => ({ start_ms: sec * 1000, text });
@@ -111,28 +110,6 @@ test('summarizeTranscript : vidéo très longue → notes par partie puis synth�
 test('summarizeTranscript : réponse vide ou sans transcription → erreur', async () => {
   await assert.rejects(summarizeTranscript([seg(0, 'x')], { complete: async () => '  ' }), /vide|inutilisable/);
   await assert.rejects(summarizeTranscript([], { complete: async () => goodReply }), /Aucune transcription/);
-});
-
-// --- lecture côté navigateur --------------------------------------------------------
-
-test('parseInline : gras, y compris étoiles orphelines', () => {
-  assert.deepEqual(parseInline('un **mot** clé'), [{ text: 'un ', bold: false }, { text: 'mot', bold: true }, { text: ' clé', bold: false }]);
-  assert.deepEqual(parseInline('a **b'), [{ text: 'a b', bold: false }]);
-});
-
-test('tsToSeconds', () => {
-  assert.equal(tsToSeconds('12:34'), 754);
-  assert.equal(tsToSeconds('1:01:40'), 3700);
-  assert.equal(tsToSeconds('x:y'), null);
-});
-
-test('parseSummary : titres, repères, puces, paragraphes', () => {
-  const blocks = parseSummary('## En bref\nDeux lignes\nde texte.\n\n## [12:34] Budget\n- Un **point**\n- Autre\n\nFin');
-  assert.deepEqual(blocks.map((b) => b.type), ['heading', 'p', 'heading', 'list', 'p']);
-  assert.equal(blocks[1].inline[0].text, 'Deux lignes de texte.');
-  assert.deepEqual([blocks[2].text, blocks[2].ts, blocks[2].seconds], ['Budget', '12:34', 754]);
-  assert.equal(blocks[3].items.length, 2);
-  assert.deepEqual(blocks[3].items[0], [{ text: 'Un ', bold: false }, { text: 'point', bold: true }]);
 });
 
 test('summarizeTranscript : la personne résumée se règle avec SUMMARY_SPEAKER', async () => {

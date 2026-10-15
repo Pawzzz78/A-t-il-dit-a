@@ -1,10 +1,16 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { ipKey, trimMap } from './ip.js';
 
 const COOKIE = 'adm';
 const TTL_MS = 12 * 60 * 60 * 1000;
 
+// Values copied from .env.example (change-me…) count as not configured
+const placeholder = (v) => /^change-me/i.test(v ?? '');
 export const authConfigured = () =>
-  Boolean(process.env.ADMIN_PASSWORD) && (process.env.SESSION_SECRET ?? '').length >= 16;
+  Boolean(process.env.ADMIN_PASSWORD) &&
+  (process.env.SESSION_SECRET ?? '').length >= 16 &&
+  !placeholder(process.env.ADMIN_PASSWORD) &&
+  !placeholder(process.env.SESSION_SECRET);
 
 const sign = (payload) => createHmac('sha256', process.env.SESSION_SECRET).update(payload).digest('base64url');
 
@@ -20,13 +26,22 @@ export function checkPassword(candidate) {
   return timingSafeEqual(h(candidate), h(process.env.ADMIN_PASSWORD));
 }
 
+// A malformed cookie must not crash auth: keep its raw value
+function safeDecode(v) {
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return v;
+  }
+}
+
 export function parseCookies(header = '') {
   return Object.fromEntries(
     header
       .split(';')
       .map((c) => c.trim().split('='))
       .filter(([k]) => k)
-      .map(([k, ...v]) => [k, decodeURIComponent(v.join('='))]),
+      .map(([k, ...v]) => [k, safeDecode(v.join('='))]),
   );
 }
 
@@ -53,6 +68,14 @@ export function isAuthenticated(req) {
   return Boolean(exp && mac && safeEqual(mac, sign(exp)) && Number(exp) > Date.now());
 }
 
+export const originHost = (origin) => {
+  try {
+    return new URL(origin).host;
+  } catch {
+    return null; // e.g. `Origin: null`
+  }
+};
+
 /** Middleware : session valide + origine identique pour les requêtes qui modifient des données. */
 export function requireAdmin(req, res, next) {
   if (!authConfigured()) {
@@ -61,7 +84,7 @@ export function requireAdmin(req, res, next) {
   if (!isAuthenticated(req)) return res.status(401).json({ error: 'Non authentifié.' });
   if (!['GET', 'HEAD'].includes(req.method)) {
     const origin = req.get('origin');
-    if (origin && new URL(origin).host !== req.get('host')) {
+    if (origin && originHost(origin) !== req.get('host')) {
       return res.status(403).json({ error: 'Origine refusée.' });
     }
   }
@@ -73,13 +96,18 @@ const attempts = new Map();
 const WINDOW = 15 * 60 * 1000;
 const MAX = 5;
 
-export function loginAllowed(ip) {
-  const rec = attempts.get(ip);
+export function loginAllowed(rawIp) {
+  const rec = attempts.get(ipKey(rawIp));
   return !rec || rec.until < Date.now() || rec.count < MAX;
 }
-export function recordLogin(ip, ok) {
+export function recordLogin(rawIp, ok) {
+  const ip = ipKey(rawIp);
   if (ok) return attempts.delete(ip);
+  const now = Date.now();
   const rec = attempts.get(ip);
-  if (!rec || rec.until < Date.now()) attempts.set(ip, { count: 1, until: Date.now() + WINDOW });
-  else rec.count++;
+  if (!rec || rec.until < now) {
+    attempts.delete(ip);
+    attempts.set(ip, { count: 1, until: now + WINDOW });
+  } else rec.count++;
+  trimMap(attempts, 5000, (r) => r.until < now);
 }

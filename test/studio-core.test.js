@@ -1,6 +1,7 @@
 // Cœur du studio (partagé entre l'aperçu du navigateur et le rendu serveur) : horaires des mots, groupes, styles, ASS.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { isStopWord } from '../public/js/stopwords.js';
 import {
   DEFAULT_STYLE,
   PRESETS,
@@ -424,4 +425,13 @@ test('zooms automatiques : mots importants, espacés, retour avant la fin, rien 
   // rappel du mot sur lequel porte un zoom
   assert.match(wordNear(words, r.hints[0].t + 0.15), /\p{L}/u);
   assert.equal(wordNear(words, 500), '');
+});
+
+test('mots creux : écartés du palmarès, mots de fond conservés', () => {
+  for (const w of ['cetera', 'ailleurs', 'aujourd', 'passe', 'parle', 'pense', 'compte', 'grand', 'grandes', 'heure', 'heures', 'question', 'questions', 'toujours', 'faudrait']) {
+    assert.ok(isStopWord(w), `${w} doit être écarté`);
+  }
+  for (const w of ['politique', 'energie', 'liberte', 'ecole', 'impots', 'milliards', 'securite', 'immigration', 'maire', 'france', 'francais', 'droite', 'gauche', 'entreprises', 'depense']) {
+    assert.ok(!isStopWord(w), `${w} doit rester`);
+  }
 });

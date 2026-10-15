@@ -4,7 +4,7 @@
  * Aucun profil n'est enregistré côté serveur (règle d'usage des données du SSO).
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { parseCookies } from '../auth.js';
+import { originHost, parseCookies } from '../auth.js';
 import { membersOnly, oidcConfigured } from './oidc.js';
 
 export const SESSION_COOKIE = 'mbr';
@@ -73,7 +73,7 @@ export function requireMember(req, res, next) {
   if (!member) return res.status(401).json({ error: 'Réservé aux adhérents de Nouvelle Énergie.', login: '/api/auth/login' });
   if (!['GET', 'HEAD'].includes(req.method)) {
     const origin = req.get('origin');
-    if (origin && new URL(origin).host !== req.get('host')) return res.status(403).json({ error: 'Origine refusée.' });
+    if (origin && originHost(origin) !== req.get('host')) return res.status(403).json({ error: 'Origine refusée.' });
   }
   req.member = member;
   next();

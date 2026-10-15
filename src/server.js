@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { authConfigured } from './auth.js';
 import { initDb } from './db.js';
@@ -13,22 +15,41 @@ import { startSummaryScheduler } from './auto-summaries.js';
 import { startScheduler } from './sync.js';
 import { startWallScheduler } from './wall/wall.js';
 
+// Origins the pages really use: YouTube (admin player, thumbnails), TikTok (wall), Pixabay/Pexels (stock thumbnails).
+// Inline styles stay allowed: the studio injects its @font-face rules and the admin sets style attributes.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' https://www.youtube.com",
+  'frame-src https://www.youtube.com https://www.tiktok.com',
+  "img-src 'self' https://i.ytimg.com https://pixabay.com https://cdn.pixabay.com https://images.pexels.com",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self'",
+  "media-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 export function createApp() {
   const app = express();
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
 
-  app.use((_req, res, next) => {
+  app.use((req, res, next) => {
     res.set({
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
       'X-Frame-Options': 'DENY',
+      'Content-Security-Policy': CSP,
     });
+    if (req.secure) res.set('Strict-Transport-Security', 'max-age=15552000');
     next();
   });
 
-  const publicDir = new URL('../public', import.meta.url).pathname;
-  app.use('/api/admin', express.json({ limit: '10mb' }), adminRouter);
+  const publicDir = fileURLToPath(new URL('../public', import.meta.url));
+  app.use('/api/admin', adminRouter);
   app.use('/api/auth', membersRouter);
   app.use('/api/studio', requireMember, studioRouter);
   app.use('/api/wall', wallRouter);
@@ -50,7 +71,7 @@ export function createApp() {
     }),
   );
 
-  // eslint-disable-next-line no-unused-vars
+  // Express needs the 4-argument signature to treat this as an error handler
   app.use((err, _req, res, _next) => {
     console.error(err);
     res.status(500).json({ error: 'Erreur interne.' });
@@ -58,10 +79,10 @@ export function createApp() {
   return app;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await initDb();
   if (!authConfigured()) {
-    console.warn('ADMIN_PASSWORD / SESSION_SECRET (16+ caractères) manquants : l\'admin est désactivée.');
+    console.warn('ADMIN_PASSWORD / SESSION_SECRET (16+ caractères) manquants ou valeurs d\'exemple (change-me…) : l\'admin est désactivée.');
   }
   const port = Number(process.env.PORT) || 3000;
   createApp().listen(port, () => console.log(`Lisnard Studio → http://localhost:${port}`));

@@ -60,10 +60,10 @@ async function api(resource, params) {
   if (!key) throw new YouTubeApiError("YOUTUBE_API_KEY n'est pas configurée.");
   const url = new URL(`${API}/${resource}`);
   for (const [k, v] of Object.entries(params)) if (v != null) url.searchParams.set(k, v);
-  url.searchParams.set('key', key);
   let res;
   try {
-    res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+    // Key in a header rather than the URL, so it never ends up in logged addresses
+    res = await fetch(url, { headers: { 'X-goog-api-key': key }, signal: AbortSignal.timeout(20_000) });
   } catch (e) {
     throw new YouTubeApiError(`API YouTube injoignable : ${e.message}`);
   }
@@ -82,7 +82,7 @@ async function api(resource, params) {
 }
 
 /** "PT1H2M3S" -> secondes */
-export function parseIsoDuration(iso) {
+function parseIsoDuration(iso) {
   const m = String(iso ?? '').match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/);
   if (!m) return null;
   const [, d = 0, h = 0, mi = 0, s = 0] = m;
@@ -137,7 +137,7 @@ async function videoDetails(ids) {
         channel_id: v.snippet?.channelId ?? null,
         published_at: (v.snippet?.publishedAt ?? '').slice(0, 10) || null,
         thumbnail_url: v.snippet?.thumbnails?.high?.url ?? v.snippet?.thumbnails?.medium?.url ?? null,
-        duration_s: parseIsoDuration(v.contentDetails?.duration),
+        duration_s: parseIsoDuration(v.contentDetails?.duration) || null, // P0D (live just ended): unknown, not 0 s
         // 'live' / 'upcoming' : direct en cours ou à venir, pas encore de sous-titres exploitables.
         live: ['live', 'upcoming'].includes(v.snippet?.liveBroadcastContent),
       });

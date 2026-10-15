@@ -1,5 +1,6 @@
 /** Connexion des adhérents Nouvelle Énergie (SSO OpenID Connect) : /api/auth/login, /callback, /logout, /me. */
 import { Router } from 'express';
+import { originHost } from '../auth.js';
 import { OidcError, authorizationUrl, exchangeCode, logoutUrl, membersOnly, oidcConfig, oidcConfigured, randomToken, verifyIdToken } from '../members/oidc.js';
 import { endFlow, endMemberSession, memberOf, readFlow, startFlow, startMemberSession } from '../members/session.js';
 
@@ -59,7 +60,7 @@ membersRouter.get('/callback', async (req, res) => {
 
 membersRouter.post('/logout', async (req, res) => {
   const origin = req.get('origin');
-  if (origin && new URL(origin).host !== req.get('host')) return res.status(403).json({ error: 'Origine refusée.' });
+  if (origin && originHost(origin) !== req.get('host')) return res.status(403).json({ error: 'Origine refusée.' });
   const member = memberOf(req);
   endMemberSession(req, res);
   let redirect = '/';
