@@ -3,6 +3,7 @@
  * Les segments (et leurs horodatages) sont conservés tels quels : seul le texte est traduit.
  * Le texte d'origine est gardé dans `text_original`.
  */
+import { forEachLimit } from './concurrency.js';
 import { DEFAULT_MODEL, LlmError, completeWithOpenRouter, llmConfigured } from './openrouter.js';
 
 export { completeWithOpenRouter };
@@ -92,14 +93,9 @@ export async function translateSegments(segments, { from, to, complete, model, c
   const chunks = chunkIndices(texts);
   const translated = new Array(segments.length);
 
-  let next = 0;
-  const worker = async () => {
-    while (next < chunks.length) {
-      const indices = chunks[next++];
-      for (const [i, text] of await translateChunk(run, mdl, system, texts, indices)) translated[i] = text;
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, chunks.length) }, worker));
+  await forEachLimit(chunks.length, concurrency, async (c) => {
+    for (const [i, text] of await translateChunk(run, mdl, system, texts, chunks[c])) translated[i] = text;
+  });
 
   return segments.map((s, i) => ({
     start_ms: s.start_ms,

@@ -60,10 +60,10 @@ async function api(resource, params) {
   if (!key) throw new YouTubeApiError("YOUTUBE_API_KEY n'est pas configurée.");
   const url = new URL(`${API}/${resource}`);
   for (const [k, v] of Object.entries(params)) if (v != null) url.searchParams.set(k, v);
-  url.searchParams.set('key', key);
   let res;
   try {
-    res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+    // Key in a header rather than the URL, so it never ends up in logged addresses
+    res = await fetch(url, { headers: { 'X-goog-api-key': key }, signal: AbortSignal.timeout(20_000) });
   } catch (e) {
     throw new YouTubeApiError(`API YouTube injoignable : ${e.message}`);
   }

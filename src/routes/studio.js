@@ -6,7 +6,7 @@
 import express, { Router } from 'express';
 import { getClipSuggestions, prepareSegments, CLIP_LIMITS } from '../clip-suggestions.js';
 import { pool } from '../db.js';
-import { HttpError } from '../http-error.js';
+import { HttpError, ah, jsonErrors } from '../http-error.js';
 import { DEFAULT_STYLE, LIMITS, PRESETS } from '../../public/js/studio-core.js';
 import { cancelJob, config as studioConfig, createPreview, enqueueRender, FONTS, framingAllowed, getJob, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
 import { CATEGORIES, ensureMusic, libraryFile, publicTracks } from '../studio/music.js';
@@ -18,7 +18,6 @@ import { parseYoutubeId } from '../youtube.js';
 export const studioRouter = Router();
 studioRouter.use(express.json({ limit: '100kb' }));
 
-const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 const CLIPPABLE = `v.clips_enabled AND v.file_name IS NOT NULL AND v.norm_text <> ''`;
 const COLS = `v.id, v.youtube_id, v.title, v.channel, v.published_at, v.thumbnail_url, v.file_name, v.file_size,
@@ -255,12 +254,5 @@ studioRouter.delete(
   }),
 );
 
-// eslint-disable-next-line no-unused-vars
-studioRouter.use((err, _req, res, _next) => {
-  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, ...err.extra });
-  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Demande trop volumineuse.' });
-  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Demande illisible.' });
-  console.error(err);
-  res.status(500).json({ error: 'Erreur interne.' });
-});
+studioRouter.use(jsonErrors());
 

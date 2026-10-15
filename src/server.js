@@ -68,7 +68,7 @@ export function createApp() {
     }),
   );
 
-  // eslint-disable-next-line no-unused-vars
+  // Express needs the 4-argument signature to treat this as an error handler
   app.use((err, _req, res, _next) => {
     console.error(err);
     res.status(500).json({ error: 'Erreur interne.' });

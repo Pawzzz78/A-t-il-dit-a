@@ -1,11 +1,10 @@
 /** Mur des clips (public) : classement des TikToks du hashtag suivi, lu dans la base ; vignettes copiées sur le serveur. */
 import { Router } from 'express';
-import { HttpError } from '../http-error.js';
+import { HttpError, ah, jsonErrors } from '../http-error.js';
 import { PERIODS, SORTS, coverPath, lastRun, listWall, wallConfig } from '../wall/wall.js';
 
 export const wallRouter = Router();
 
-const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 wallRouter.get(
   '/',
@@ -37,8 +36,4 @@ wallRouter.get('/cover/:id', (req, res) => {
   });
 });
 
-// eslint-disable-next-line no-unused-vars
-wallRouter.use((err, _req, res, next) => {
-  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message });
-  next(err);
-});
+wallRouter.use(jsonErrors());

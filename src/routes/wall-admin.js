@@ -1,11 +1,10 @@
 /** Mur des clips (admin) : état de l'actualisation, actualisation à la demande, masquage de clips et d'auteurs. */
 import { Router } from 'express';
-import { HttpError } from '../http-error.js';
+import { HttpError, ah } from '../http-error.js';
 import { setAuthorHidden, setClipHidden, startWallRefresh, wallOverview } from '../wall/wall.js';
 
 export const wallAdminRouter = Router();
 
-const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 wallAdminRouter.get(
   '/',

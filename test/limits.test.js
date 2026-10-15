@@ -30,3 +30,30 @@ test('budget : la limite mémoire évince les entrées expirées, pas les compte
   for (let i = 0; i < 3000; i++) budget.take(`10.1.${i >> 8}.${i & 255}`, t0);
   assert.equal(budget.take('198.51.100.1', t0), false, 'le compteur actif ne doit pas être effacé');
 });
+
+test('appels en parallèle : plus aucun nouvel appel après une erreur', async () => {
+  const { forEachLimit } = await import('../src/concurrency.js');
+  const calls = [];
+  await assert.rejects(
+    forEachLimit(20, 3, async (i) => {
+      calls.push(i);
+      await new Promise((r) => setTimeout(r, 5));
+      if (i === 1) throw new Error('échec');
+    }),
+    /échec/,
+  );
+  assert.ok(calls.length < 20, `appels lancés : ${calls.length}`);
+});
+
+test('téléchargement sûr : taille comptée même sans Content-Length, hôtes et redirections vérifiés', async () => {
+  const { safeDownload, DownloadError } = await import('../src/safe-download.js');
+  const opts = { allowed: (u) => u.hostname === 'ok.test', accept: /^image\//, maxBytes: 100 };
+  const chunked = () => new Response(new ReadableStream({ start(c) { for (let i = 0; i < 5; i++) c.enqueue(new Uint8Array(40)); c.close(); } }), { headers: { 'content-type': 'image/jpeg' } });
+  await assert.rejects(safeDownload('https://ok.test/a', { ...opts, fetchImpl: async () => chunked() }), (e) => e instanceof DownloadError && e.code === 'size');
+  const small = new Response(new Uint8Array(10), { headers: { 'content-type': 'image/png' } });
+  assert.equal((await safeDownload('https://ok.test/a', { ...opts, fetchImpl: async () => small })).length, 10);
+  const seen = [];
+  const redirect = async (u) => (seen.push(u.hostname), new Response(null, { status: 302, headers: { location: 'https://evil.test/x' } }));
+  await assert.rejects(safeDownload('https://ok.test/a', { ...opts, fetchImpl: redirect }), (e) => e.code === 'host');
+  assert.deepEqual(seen, ['ok.test']);
+});

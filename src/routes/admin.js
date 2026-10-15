@@ -10,7 +10,7 @@ import {
   startSession,
 } from '../auth.js';
 import { pool, replaceSegments, withTransaction } from '../db.js';
-import { HttpError } from '../http-error.js';
+import { HttpError, ah, jsonErrors } from '../http-error.js';
 import { clipsAdminRouter } from './clips-admin.js';
 import { removeVideoFiles } from '../media.js';
 import { facesAdminRouter } from './faces-admin.js';
@@ -29,7 +29,6 @@ import { fetchMetadata, fetchVideoMeta, parseYoutubeId, youtubeApiConfigured } f
 
 export const adminRouter = Router();
 
-const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -406,15 +405,15 @@ adminRouter.delete(
   }),
 );
 
-// eslint-disable-next-line no-unused-vars
-adminRouter.use((err, _req, res, _next) => {
-  if (err instanceof HttpError) return res.status(err.status).json({ error: err.message, ...err.extra });
-  if (err instanceof TranscriptError) return res.status(err.status).json({ error: err.message });
-  if (err instanceof TranslationError) return res.status(err.code === 'config' ? 503 : 502).json({ error: err.message });
-  if (err instanceof YouTubeApiError) return res.status(502).json({ error: err.message });
-  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Morceau trop gros.' });
-  if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Demande illisible.' });
-  if (err.code === '23505') return res.status(409).json({ error: 'Cet élément existe déjà (ajout simultané ?).' }); // unique violation
-  console.error(err);
-  res.status(500).json({ error: 'Erreur interne.' });
-});
+adminRouter.use(
+  jsonErrors({
+    tooLarge: 'Morceau trop gros.',
+    map: (err) => {
+      if (err instanceof TranscriptError) return [err.status, err.message];
+      if (err instanceof TranslationError) return [err.code === 'config' ? 503 : 502, err.message];
+      if (err instanceof YouTubeApiError) return [502, err.message];
+      if (err.code === '23505') return [409, 'Cet élément existe déjà (ajout simultané ?).']; // unique violation
+      return null;
+    },
+  }),
+);

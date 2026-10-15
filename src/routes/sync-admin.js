@@ -1,13 +1,12 @@
 import { Router } from 'express';
 import { retrySummary, runSummaryCycle } from '../auto-summaries.js';
-import { HttpError } from '../http-error.js';
+import { HttpError, ah } from '../http-error.js';
 import { pool } from '../db.js';
 import { discoverChannel, overview, previewShorts, purgeShorts, runCycle, setSetting } from '../sync.js';
 import { YouTubeApiError, resolveChannel, youtubeApiConfigured } from '../youtube.js';
 
 export const syncRouter = Router();
 
-const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
 const idParam = (req) => {
   const id = Number.parseInt(req.params.id, 10);
