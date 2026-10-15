@@ -72,7 +72,7 @@ function status(el, msg, kind = '') {
 }
 
 
-const SCRIPT_URL = 'https://github.com/Pawzzz78/A-t-il-dit-a/tree/ccr-cd4ad929-84sbtv/tools';
+const SCRIPT_URL = 'https://github.com/Pawzzz78/A-t-il-dit-a/tree/main/tools';
 
 /** Commande à copier-coller, avec un bouton « Copier ». */
 function commandBox(command) {
