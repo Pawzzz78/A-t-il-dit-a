@@ -2,7 +2,9 @@ import express from 'express';
 import { authConfigured } from './auth.js';
 import { initDb } from './db.js';
 import { ffmpegAvailable, storageDir } from './media.js';
+import { requireMember } from './members/session.js';
 import { adminRouter } from './routes/admin.js';
+import { membersRouter } from './routes/members.js';
 import { publicRouter } from './routes/public.js';
 import { studioRouter } from './routes/studio.js';
 import { wallRouter } from './routes/wall.js';
@@ -27,7 +29,8 @@ export function createApp() {
 
   const publicDir = new URL('../public', import.meta.url).pathname;
   app.use('/api/admin', express.json({ limit: '10mb' }), adminRouter);
-  app.use('/api/studio', studioRouter);
+  app.use('/api/auth', membersRouter);
+  app.use('/api/studio', requireMember, studioRouter);
   app.use('/api/wall', wallRouter);
   app.use('/api', publicRouter);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Route inconnue.' }));

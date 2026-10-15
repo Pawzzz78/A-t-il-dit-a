@@ -398,6 +398,18 @@ police Montserrat (fichiers dans `public/fonts/`). Le logo officiel n'est volont
 Tout est dans [`public/css/theme.css`](public/css/theme.css) ; `app.css` et `admin.css` n'utilisent que ces variables.
 
 
+## Accès réservé aux adhérents Nouvelle Énergie
+
+Le studio (`/` et `/api/studio/*`) peut être réservé aux adhérents grâce au **SSO de Nouvelle Énergie** (OpenID Connect, Keycloak ; doc : espace adhérents → Initiatives → Connexion). **Le mur (`/mur/`) reste public.** L'admin garde son mot de passe, à part.
+
+- **Activation** : variable `MEMBERS_ONLY=on` (voir `.env.example`). Sans elle, le studio reste ouvert, comme avant. Avec `MEMBERS_ONLY=on` mais sans `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `SESSION_SECRET` (16+ caractères), l'API du studio répond 503 : rien ne s'ouvre par oubli.
+- **Parcours** : « Me connecter » → `/api/auth/login` → SSO (Authorization Code + PKCE S256, scopes `openid adherent`) → la personne saisit son e-mail et reçoit un code à 6 chiffres → `/api/auth/callback` : échange du code (client confidentiel, secret en en-tête Basic), vérification du jeton (signature RS256 par les clés publiques du SSO, émetteur, audience, expiration, nonce) → cookie de session. L'adhésion est vérifiée par le SSO à chaque connexion.
+- **Session** : cookie signé `mbr` (HttpOnly, SameSite=Lax, Secure en HTTPS, 7 jours par défaut), **rien en base**. Il contient `sub`, le prénom (affichage « Bonjour Camille » seulement) et le jeton d'identité (nécessaire à la déconnexion SSO ; il porte aussi les claims envoyées par le SSO, donc la session est lisible dans le navigateur de la personne, pas ailleurs). Règles d'usage des données du SSO respectées : le scope `email` n'est pas demandé et l'e-mail éventuellement présent est ignoré, rien du profil (prénom, département, ville, pays) n'est enregistré côté serveur ; aucune liste d'adhérents.
+- **Erreurs** : `membership_not_found` (propose d'adhérer), `membership_unavailable`, `code_throttled`, `code_send_failed` expliquées sur l'écran de connexion ; tout autre échec est affiché de façon neutre avec un bouton « Réessayer ».
+- **Déconnexion** : `POST /api/auth/logout` efface le cookie puis renvoie vers la fin de session SSO (`id_token_hint` + `post_logout_redirect_uri` = `PUBLIC_URL/`), sinon la personne serait reconnectée sans rien saisir.
+- **Demande d'accès** (une fois, auprès de l'équipe numérique de NE) : nom et description de l'app, porteur du projet joignable, serveur capable de garder un secret, redirect URI exacte `PUBLIC_URL/api/auth/callback` (un client `-dev` séparé pour les essais), URL de retour après déconnexion `PUBLIC_URL/`, claims utilisées : `sub` et `given_name` seulement. Les mentions légales décrivent ce traitement.
+- **Tests** : `test/members.test.js` (faux SSO local qui signe de vrais jetons RS256 et vérifie secret et PKCE).
+
 ## Le mur des clips
 
 Deuxième section du site, `/mur/` : un mur des meilleurs TikToks publiés avec le hashtag **#lisnard2027** (réglable), dans la charte du site.

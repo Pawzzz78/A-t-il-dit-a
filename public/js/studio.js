@@ -12,9 +12,71 @@ const PREF_KEY = 'studio.prefs.v1';
 const api = async (method, path, body) => {
   const res = await fetch(`/api/studio${path}`, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && data.login) {
+    showGate();
+    throw Object.assign(new Error(data.error), { status: 401 });
+  }
   if (!res.ok) throw Object.assign(new Error(data.error || `Erreur ${res.status}`), { status: res.status });
   return data;
 };
+
+// --- accès réservé aux adhérents Nouvelle Énergie (SSO) ---------------------------------------------------------------------------------
+const JOIN_URL = 'https://soutenir.unenouvelleenergie.fr/?form=adhesion';
+const GATE_MESSAGES = {
+  membership_not_found: ["Cette adresse e-mail ne figure pas au fichier des adhérents. Le fichier est mis à jour chaque soir : si tu viens d'adhérer, réessaie demain.", true],
+  membership_unavailable: ["L'adhésion n'a pas pu être vérifiée pour le moment. Réessaie un peu plus tard.", false],
+  code_throttled: ['Trop de codes demandés. Réessaie dans un quart d’heure.', false],
+  code_send_failed: ["Le code n'a pas pu être envoyé par e-mail. Réessaie un peu plus tard.", false],
+  echec: ["La connexion n'a pas abouti. Tu peux réessayer.", false],
+  sso_unavailable: ["Le service de connexion de Nouvelle Énergie est injoignable pour le moment. Réessaie un peu plus tard.", false],
+};
+const loginHref = () => `/api/auth/login?next=${encodeURIComponent(location.pathname + location.search)}`;
+
+/** Écran de connexion : le studio est réservé aux adhérents ; la personne reçoit un code par e-mail (SSO de NE, sans mot de passe). */
+function showGate(failure, configured = true) {
+  const [text, canJoin] = GATE_MESSAGES[failure] ?? [null, false];
+  document.querySelector('.hero')?.classList.remove('editor');
+  root.classList.remove('editing');
+  root.replaceChildren(
+    el('section', { class: 'card st-gate' },
+      el('p', { class: 'eyebrow' }, 'Réservé aux adhérents'),
+      el('h2', {}, 'Connecte-toi avec ton compte adhérent'),
+      el('p', {}, 'Le studio est réservé aux adhérents de Nouvelle Énergie. Tu saisis ton adresse e-mail d’adhérent, tu reçois un code à 6 chiffres, et c’est tout : pas de mot de passe.'),
+      text ? el('p', { class: 'st-gate-msg', role: 'alert' }, text) : null,
+      configured
+        ? el('p', { class: 'st-gate-actions' }, el('a', { class: 'btn', href: loginHref() }, 'Me connecter'), canJoin ? el('a', { class: 'btn small secondary', href: JOIN_URL, rel: 'noopener' }, 'Adhérer') : null)
+        : el('p', { class: 'st-gate-msg', role: 'alert' }, "La connexion des adhérents n'est pas encore configurée sur ce site."),
+      !canJoin ? el('p', { class: 'hint' }, 'Pas encore adhérent ? ', el('a', { href: JOIN_URL, rel: 'noopener' }, 'Adhérer à Nouvelle Énergie')) : null,
+    ),
+  );
+}
+
+/** Vérifie l'accès avant d'afficher le studio ; affiche « Bonjour Camille · Se déconnecter » pour un adhérent connecté. */
+async function memberGate() {
+  const me = await fetch('/api/auth/me').then((r) => r.json()).catch(() => null);
+  const failure = params.get('connexion');
+  if (failure) {
+    params.delete('connexion');
+    const q = params.toString();
+    history.replaceState(null, '', `${location.pathname}${q ? `?${q}` : ''}`);
+  }
+  if (!me?.enabled) return true; // accès libre (réglage MEMBERS_ONLY)
+  if (!me.member) {
+    showGate(failure ?? undefined, me.configured);
+    return false;
+  }
+  const nav = document.querySelector('.site-header nav');
+  if (nav) {
+    const logout = el('button', { type: 'button', class: 'st-logout' }, 'Se déconnecter');
+    logout.addEventListener('click', async () => {
+      logout.disabled = true;
+      const r = await fetch('/api/auth/logout', { method: 'POST' }).then((x) => x.json()).catch(() => ({ redirect: '/' }));
+      location.href = r.redirect || '/';
+    });
+    nav.append(el('span', { class: 'st-member' }, me.member.given_name ? `Bonjour ${me.member.given_name}` : 'Adhérent connecté'), logout);
+  }
+  return true;
+}
 const mmss = (ms) => `${Math.floor(ms / 60000)}:${String(Math.floor((ms % 60000) / 1000)).padStart(2, '0')}`;
 const secs = (n) => {
   const r = Math.round(n * 10) / 10;
@@ -1130,6 +1192,7 @@ async function openEditor(youtubeId) {
 
 (async () => {
   try {
+    if (!(await memberGate())) return;
     const id = params.get('v');
     if (id) await openEditor(id);
     else await showList();

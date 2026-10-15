@@ -20,7 +20,7 @@ export function checkPassword(candidate) {
   return timingSafeEqual(h(candidate), h(process.env.ADMIN_PASSWORD));
 }
 
-function parseCookies(header = '') {
+export function parseCookies(header = '') {
   return Object.fromEntries(
     header
       .split(';')
