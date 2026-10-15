@@ -152,6 +152,20 @@ test('mentions légales : page présente avec le contact, aucun lien vers l\'adm
   assert.equal((await call('GET', '/api/legal')).status, 404);
 });
 
+test('en-têtes de sécurité : CSP stricte sur les pages, HSTS seulement en HTTPS', { skip: !enabled }, async () => {
+  const plain = await fetch(base + '/');
+  const csp = plain.headers.get('content-security-policy');
+  assert.match(csp, /default-src 'self'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.match(csp, /frame-src https:\/\/www\.youtube\.com https:\/\/www\.tiktok\.com/);
+  assert.match(csp, /img-src [^;]*https:\/\/i\.ytimg\.com/);
+  assert.doesNotMatch(csp, /script-src [^;]*unsafe/);
+  assert.equal(plain.headers.get('x-frame-options'), 'DENY');
+  assert.equal(plain.headers.get('strict-transport-security'), null);
+  const secure = await fetch(base + '/', { headers: { 'X-Forwarded-Proto': 'https' } });
+  assert.equal(secure.headers.get('strict-transport-security'), 'max-age=15552000');
+});
+
 test('site réduit au studio : la racine est le studio, les anciennes pages renvoient vers lui', { skip: !enabled }, async () => {
   const home = await (await fetch(base + '/')).text();
   assert.match(home, /<title>Lisnard Studio/);

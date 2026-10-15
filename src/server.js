@@ -11,17 +11,36 @@ import { startSummaryScheduler } from './auto-summaries.js';
 import { startScheduler } from './sync.js';
 import { startWallScheduler } from './wall/wall.js';
 
+// Origins the pages really use: YouTube (admin player, thumbnails), TikTok (wall), Pixabay/Pexels (stock thumbnails).
+// Inline styles stay allowed: the studio injects its @font-face rules and the admin sets style attributes.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self' https://www.youtube.com",
+  'frame-src https://www.youtube.com https://www.tiktok.com',
+  "img-src 'self' https://i.ytimg.com https://pixabay.com https://cdn.pixabay.com https://images.pexels.com",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self'",
+  "media-src 'self'",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 export function createApp() {
   const app = express();
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
 
-  app.use((_req, res, next) => {
+  app.use((req, res, next) => {
     res.set({
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
       'X-Frame-Options': 'DENY',
+      'Content-Security-Policy': CSP,
     });
+    if (req.secure) res.set('Strict-Transport-Security', 'max-age=15552000');
     next();
   });
 
