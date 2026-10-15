@@ -171,13 +171,6 @@ async function photoMeta(provider, id, fetchImpl) {
   return remember(provider, await provider.meta(id, fetchImpl));
 }
 
-/** Informations d'une photo (crédit compris), ou 404. */
-export async function photoInfo(id, { fetchImpl = fetch } = {}) {
-  if (!validPhotoId(id)) throw new HttpError(400, 'Numéro de photo invalide.');
-  const provider = need();
-  return present(await photoMeta(provider, String(id), fetchImpl));
-}
-
 /** Télécharge `url` sans jamais sortir des serveurs d'images du fournisseur : https, hôte autorisé, redirections vérifiées une à une. */
 async function download(url, hosts, fetchImpl) {
   let current = url;

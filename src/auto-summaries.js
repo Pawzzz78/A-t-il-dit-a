@@ -20,7 +20,7 @@ const LOCK_ID = 727003;
 const MAX_ATTEMPTS = 5;
 const HOUR = 3600 * 1000;
 
-export const summaryAutoConfig = () => ({
+const summaryAutoConfig = () => ({
   dailyCap: Number(process.env.SUMMARY_DAILY_CAP) || 500,
   perCycle: Number(process.env.SUMMARY_PER_CYCLE) || 5,
   graceMinutes: 3,
@@ -29,7 +29,7 @@ export const summaryAutoConfig = () => ({
 
 const budget = createBudget(() => ({ perIpHourly: Number.MAX_SAFE_INTEGER, dailyCap: summaryAutoConfig().dailyCap }));
 
-export const summariesPaused = async () => (await getSetting('summaries_paused', false)) === true;
+const summariesPaused = async () => (await getSetting('summaries_paused', false)) === true;
 
 /** Les résumés automatiques sont-ils actifs ? (clé OpenRouter configurée et pas en pause) */
 export async function summariesActive() {

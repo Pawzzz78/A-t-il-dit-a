@@ -5,7 +5,7 @@
  */
 import { DEFAULT_MODEL, LlmError, completeWithOpenRouter, llmConfigured } from './openrouter.js';
 
-export { DEFAULT_MODEL, completeWithOpenRouter };
+export { completeWithOpenRouter };
 export const translateConfigured = llmConfigured;
 export { LlmError as TranslationError };
 const TranslationError = LlmError;

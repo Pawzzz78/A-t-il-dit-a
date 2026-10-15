@@ -48,9 +48,6 @@ export async function ffmpegAvailable() {
   }
   return ffprobeAvailable;
 }
-export const resetFfmpegCheck = () => {
-  ffprobeAvailable = undefined;
-};
 
 /** Lit un fichier vidéo : durée, définition, présence d'une piste audio, extension à utiliser. Lève 422 si ce n'est pas une vidéo. */
 export async function probeVideo(file) {

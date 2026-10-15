@@ -15,7 +15,7 @@ import { completeWithOpenRouter } from './openrouter.js';
 import { PROMPT_VERSION, sanitizeSummary, summarizeTranscript, summaryModel } from './summarize.js';
 
 /** Empreinte enregistrée avec un résumé : transcription + version des consignes (l'admin s'en sert pour signaler une transcription modifiée). */
-export const currentSourceHash = (textHash) => `${textHash}:${PROMPT_VERSION}`;
+const currentSourceHash = (textHash) => `${textHash}:${PROMPT_VERSION}`;
 
 const inflight = new Map(); // `${videoId}:${hash}` -> Promise : une seule génération à la fois par vidéo
 

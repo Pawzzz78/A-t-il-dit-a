@@ -82,7 +82,7 @@ async function api(resource, params) {
 }
 
 /** "PT1H2M3S" -> secondes */
-export function parseIsoDuration(iso) {
+function parseIsoDuration(iso) {
   const m = String(iso ?? '').match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/);
   if (!m) return null;
   const [, d = 0, h = 0, mi = 0, s = 0] = m;

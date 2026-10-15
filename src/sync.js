@@ -24,7 +24,7 @@ import { iterateUploads, listShortIds, youtubeApiConfigured } from './youtube.js
 const LOCK_ID = 727001;
 const HOUR = 3600 * 1000;
 
-export const syncConfig = () => ({
+const syncConfig = () => ({
   intervalHours: Number(process.env.SYNC_INTERVAL_HOURS) || 24,
   batch: Number(process.env.SYNC_BATCH) || 25,
   tickMinutes: 5,
@@ -134,7 +134,7 @@ export async function discoverChannel(channel, deps = {}) {
  * rajoute jamais. Ne touche JAMAIS aux vidéos ajoutées à la main (sync_status NULL) ni à celles corrigées à la main.
  * Renvoie les identifiants YouTube supprimés.
  */
-export async function removeShorts(videoIds) {
+async function removeShorts(videoIds) {
   if (!videoIds.length) return [];
   return withTransaction(async (c) => {
     const { rows } = await c.query(
@@ -156,7 +156,7 @@ export async function removeShorts(videoIds) {
 }
 
 /** Vidéos déjà importées d'une chaîne qui sont des Shorts. `detection` : 'playlist' (liste YouTube) ou 'duration'. */
-export async function findShorts(channel, deps = {}) {
+async function findShorts(channel, deps = {}) {
   let list = { ids: new Set(), found: false };
   try {
     list = await (deps.listShortIds ?? listShortIds)(channel.youtube_channel_id);
