@@ -118,6 +118,7 @@ const calls = [];
 let datasetItems = [];
 let failRun = null;
 let polls = 0;
+let hold = null; // promesse : tant qu'elle n'est pas tenue, l'acteur simulé ne répond pas aux interrogations (test des demandes simultanées)
 
 before(async () => {
   apify = http.createServer((req, res) => {
@@ -131,8 +132,11 @@ before(async () => {
       if (req.method === 'POST' && url.pathname === '/v2/acts/clockworks~tiktok-scraper/runs') return send(201, { data: { id: 'run1', status: 'READY', defaultDatasetId: 'ds1' } });
       if (url.pathname === '/v2/actor-runs/run1') {
         polls++;
-        if (failRun) return send(200, { data: { id: 'run1', status: failRun, statusMessage: 'Proxy error', defaultDatasetId: 'ds1' } });
-        return send(200, { data: { id: 'run1', status: polls < 2 ? 'RUNNING' : 'SUCCEEDED', defaultDatasetId: 'ds1', usageTotalUsd: 0.17 } });
+        const status = () => {
+          if (failRun) return send(200, { data: { id: 'run1', status: failRun, statusMessage: 'Proxy error', defaultDatasetId: 'ds1' } });
+          return send(200, { data: { id: 'run1', status: polls < 2 ? 'RUNNING' : 'SUCCEEDED', defaultDatasetId: 'ds1', usageTotalUsd: 0.17 } });
+        };
+        return hold ? hold.then(status) : status();
       }
       if (url.pathname === '/v2/datasets/ds1/items') {
         const off = Number(url.searchParams.get('offset'));
@@ -381,8 +385,12 @@ test('actualisation : une seule à la fois, pas trop rapprochées, échec d\'Api
   process.env.APIFY_TOKEN = 'tok';
   // deux demandes en même temps : la seconde est refusée
   polls = 0;
+  let release;
+  hold = new Promise((resolve) => (release = resolve)); // la première actualisation reste en cours pendant la seconde demande
   const [a, b] = await Promise.all([call('POST', '/api/admin/wall/refresh'), call('POST', '/api/admin/wall/refresh')]);
   assert.deepEqual([a.status, b.status].sort(), [202, 409]);
+  hold = null;
+  release();
   await wall.wallIdle();
 });
 
