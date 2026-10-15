@@ -146,6 +146,28 @@ test('mentions légales : page présente avec le contact, aucun lien vers l\'adm
   assert.equal((await call('GET', '/api/legal')).status, 404);
 });
 
+test('admin : horodatages hors limites bornés, ajout simultané d\'une même vidéo refusé proprement', { skip: !enabled }, async () => {
+  const YT3 = 'TESTtest_03';
+  await pool.query('DELETE FROM videos WHERE youtube_id = $1', [YT3]);
+  try {
+    assert.equal((await call('POST', '/api/admin/login', { password: 'pw-test' })).status, 200);
+    const both = await Promise.all([1, 2].map(() => call('POST', '/api/admin/videos', { input: YT3, mode: 'empty', title: 'Doublon' })));
+    assert.deepEqual(both.map((r) => r.status).sort(), [201, 409]);
+    const id = both.find((r) => r.status === 201).body.id;
+    const res = await fetch(`${base}/api/admin/videos/${id}/segments`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Cookie: cookie },
+      body: '{"segments":[{"start_ms":1e400,"text":"très loin"},{"start_ms":5000000000,"text":"encore plus"}]}',
+    });
+    assert.equal(res.status, 200);
+    const { rows } = await pool.query('SELECT start_ms FROM segments WHERE video_id = $1 ORDER BY position', [id]);
+    assert.ok(rows.every((r) => r.start_ms >= 0 && r.start_ms <= 2147483647), JSON.stringify(rows));
+  } finally {
+    await pool.query('DELETE FROM videos WHERE youtube_id = $1', [YT3]);
+    await pool.query('DELETE FROM excluded_videos WHERE youtube_id = $1', [YT3]);
+  }
+});
+
 test('en-têtes de sécurité : CSP stricte sur les pages, HSTS seulement en HTTPS', { skip: !enabled }, async () => {
   const plain = await fetch(base + '/');
   const csp = plain.headers.get('content-security-policy');

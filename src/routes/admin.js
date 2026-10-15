@@ -21,6 +21,7 @@ import { studioStats } from '../studio/stats.js';
 import { syncRouter } from './sync-admin.js';
 import { YouTubeApiError } from '../youtube.js';
 import { fetchLocalized } from '../localize.js';
+import { LlmError } from '../openrouter.js';
 import { regenerateNow, saveEditedSummary } from '../summaries.js';
 import { TranscriptError, parseTranscriptText, supadataConfigured } from '../transcripts.js';
 import { TranslationError, baseLang, translateConfigured, translateSegments } from '../translate.js';
@@ -253,7 +254,9 @@ adminRouter.post(
       res.json({ ok: true, model: s.model, created_at: s.created_at });
     } catch (e) {
       if (e instanceof HttpError) throw e;
-      throw new HttpError(502, `Résumé impossible : ${e.message}`);
+      if (e instanceof LlmError) throw new HttpError(502, `Résumé impossible : ${e.message}`);
+      console.error(e);
+      throw new HttpError(502, 'Résumé impossible pour le moment : réessaie plus tard.');
     }
   }),
 );
@@ -398,7 +401,7 @@ adminRouter.delete(
       return rows[0].youtube_id;
     });
     if (!found) throw new HttpError(404, 'Vidéo introuvable.');
-    await removeVideoFiles(found).catch(() => {}); // le fichier vidéo du studio part avec la vidéo
+    await removeVideoFiles(found).catch((e) => console.warn(`Fichiers de ${found} non supprimés : ${e.message}`)); // le fichier vidéo du studio part avec la vidéo
     res.json({ ok: true });
   }),
 );
@@ -411,6 +414,7 @@ adminRouter.use((err, _req, res, _next) => {
   if (err instanceof YouTubeApiError) return res.status(502).json({ error: err.message });
   if (err.type === 'entity.too.large') return res.status(413).json({ error: 'Morceau trop gros.' });
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Demande illisible.' });
+  if (err.code === '23505') return res.status(409).json({ error: 'Cet élément existe déjà (ajout simultané ?).' }); // unique violation
   console.error(err);
   res.status(500).json({ error: 'Erreur interne.' });
 });

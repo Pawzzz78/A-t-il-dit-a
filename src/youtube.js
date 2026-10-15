@@ -137,7 +137,7 @@ async function videoDetails(ids) {
         channel_id: v.snippet?.channelId ?? null,
         published_at: (v.snippet?.publishedAt ?? '').slice(0, 10) || null,
         thumbnail_url: v.snippet?.thumbnails?.high?.url ?? v.snippet?.thumbnails?.medium?.url ?? null,
-        duration_s: parseIsoDuration(v.contentDetails?.duration),
+        duration_s: parseIsoDuration(v.contentDetails?.duration) || null, // P0D (live just ended): unknown, not 0 s
         // 'live' / 'upcoming' : direct en cours ou à venir, pas encore de sous-titres exploitables.
         live: ['live', 'upcoming'].includes(v.snippet?.liveBroadcastContent),
       });

@@ -1,3 +1,5 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { authConfigured } from './auth.js';
 import { initDb } from './db.js';
@@ -44,7 +46,7 @@ export function createApp() {
     next();
   });
 
-  const publicDir = new URL('../public', import.meta.url).pathname;
+  const publicDir = fileURLToPath(new URL('../public', import.meta.url));
   app.use('/api/admin', adminRouter);
   app.use('/api/studio', studioRouter);
   app.use('/api/wall', wallRouter);
@@ -74,7 +76,7 @@ export function createApp() {
   return app;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await initDb();
   if (!authConfigured()) {
     console.warn('ADMIN_PASSWORD / SESSION_SECRET (16+ caractères) manquants ou valeurs d\'exemple (change-me…) : l\'admin est désactivée.');

@@ -61,7 +61,7 @@ export async function discoverChannel(channel, deps = {}) {
   // Liste des Shorts de la chaîne : chargée une seule fois, et seulement si on en a besoin.
   let shorts = null;
   const isShort = async (v) => {
-    if (v.duration_s != null && v.duration_s <= SHORT_MAX_S) return true;
+    if (v.duration_s > 0 && v.duration_s <= SHORT_MAX_S) return true;
     shorts ??= await (deps.listShortIds ?? listShortIds)(channel.youtube_channel_id);
     return shorts.ids.has(v.youtube_id);
   };
@@ -79,7 +79,7 @@ export async function discoverChannel(channel, deps = {}) {
           handled++;
           continue;
         }
-        if (channel.min_duration_s > 0 && (v.duration_s ?? 0) < channel.min_duration_s) {
+        if (channel.min_duration_s > 0 && v.duration_s > 0 && v.duration_s < channel.min_duration_s) {
           await pool.query(
             `INSERT INTO excluded_videos (youtube_id, reason) VALUES ($1, 'too_short') ON CONFLICT DO NOTHING`,
             [v.youtube_id],
@@ -102,7 +102,7 @@ export async function discoverChannel(channel, deps = {}) {
             v.published_at,
             v.thumbnail_url ?? `https://i.ytimg.com/vi/${v.youtube_id}/hqdefault.jpg`,
             v.channel_id ?? channel.youtube_channel_id,
-            v.duration_s,
+            v.duration_s || null,
           ],
         );
         if (rowCount) added++;
@@ -150,7 +150,7 @@ async function removeShorts(videoIds) {
     }
     return ids;
   }).then(async (ids) => {
-    for (const id of ids) await removeVideoFiles(id).catch(() => {}); // fichiers vidéo du studio éventuels
+    for (const id of ids) await removeVideoFiles(id).catch((e) => console.warn(`Fichiers de ${id} non supprimés : ${e.message}`)); // fichiers vidéo du studio éventuels
     return ids;
   });
 }

@@ -84,6 +84,15 @@ test('découverte : durée minimale', { skip: !enabled }, async () => {
   assert.equal(rows[0].reason, 'too_short');
 });
 
+test('découverte : une durée nulle (direct à peine terminé) compte comme inconnue, pas comme trop courte', { skip: !enabled }, async () => {
+  const out = await sync.discoverChannel({ ...channel, min_duration_s: 120, exclude_shorts: true }, {
+    listShortIds: noShorts,
+    iterateUploads: iterate([video(1, { duration_s: 0 })]),
+  });
+  assert.deepEqual(out, { added: 1, skipped: 0 });
+  assert.equal((await row(1)).duration_s, null);
+});
+
 test('traitement : pose la transcription d\'une vidéo en attente', { skip: !enabled }, async () => {
   await sync.discoverChannel(channel, { listShortIds: noShorts, iterateUploads: iterate([video(1)]) });
   const res = await sync.processPending({ limit: 10, fetchFn: async () => fakeSegments('bonjour à tous'), gapMs: 0 });

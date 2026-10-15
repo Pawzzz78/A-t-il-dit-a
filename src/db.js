@@ -78,11 +78,17 @@ export async function initDb() {
  * Remplace tous les segments d'une vidéo et recalcule l'index de recherche.
  * `segments` : [{ start_ms, duration_ms?, text }]
  */
+// Clamps to the INTEGER range of the columns; Infinity / NaN count as 0
+const intMs = (v) => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.min(Math.max(0, n), 2147483647) : 0;
+};
+
 export async function replaceSegments(client, videoId, segments, { edited, source, translated, originalLang } = {}) {
   const clean = segments
     .map((s) => ({
-      start_ms: Math.max(0, Math.round(Number(s.start_ms) || 0)),
-      duration_ms: s.duration_ms == null ? null : Math.max(0, Math.round(Number(s.duration_ms) || 0)),
+      start_ms: intMs(s.start_ms),
+      duration_ms: s.duration_ms == null ? null : intMs(s.duration_ms),
       text: String(s.text ?? '').replace(/\s+/g, ' ').trim(),
       text_original: s.text_original ? String(s.text_original).replace(/\s+/g, ' ').trim() : null,
     }))

@@ -13,8 +13,8 @@ wallRouter.get(
     const cfg = wallConfig();
     const sort = String(req.query.sort ?? 'score');
     const period = String(req.query.period ?? 'all');
-    if (!(sort in SORTS)) throw new HttpError(400, 'Classement inconnu.');
-    if (!(period in PERIODS)) throw new HttpError(400, 'Période inconnue.');
+    if (!Object.hasOwn(SORTS, sort)) throw new HttpError(400, 'Classement inconnu.');
+    if (!Object.hasOwn(PERIODS, period)) throw new HttpError(400, 'Période inconnue.');
     const [list, last] = await Promise.all([listWall({ sort, period, limit: req.query.limit, offset: req.query.offset }), lastRun()]);
     res.set('Cache-Control', 'public, max-age=60');
     res.json({

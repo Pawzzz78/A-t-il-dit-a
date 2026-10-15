@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { BROLL, FPS, LIMITS, OUT, buildAss, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
 import { ensureImage, stockDir, validPhotoId } from './stock.js';
 import { escFilterPath, measureBoxes } from './box-probe.js';
@@ -22,7 +23,7 @@ import { storageDir, videoFilePath } from '../media.js';
 
 const read = (name) => JSON.parse(readFileSync(new URL(`./${name}`, import.meta.url), 'utf8'));
 export const FONTS = read('fonts.json');
-export const FONTS_DIR = new URL('../../public/fonts/studio', import.meta.url).pathname;
+export const FONTS_DIR = fileURLToPath(new URL('../../public/fonts/studio', import.meta.url));
 const fontById = new Map(FONTS.map((f) => [f.id, f]));
 
 export const config = () => ({

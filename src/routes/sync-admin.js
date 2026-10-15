@@ -50,7 +50,9 @@ syncRouter.post(
     try {
       added = (await discoverChannel(rows[0])).added;
     } catch (e) {
-      error = e.message;
+      // Only YouTube's own messages are meant for the admin; anything else is logged
+      if (!(e instanceof YouTubeApiError)) console.error(e);
+      error = e instanceof YouTubeApiError ? e.message : 'Liste des vidéos indisponible pour le moment.';
     }
     res.status(201).json({ channel: rows[0], added, error });
   }),
