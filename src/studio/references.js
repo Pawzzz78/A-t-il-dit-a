@@ -52,14 +52,17 @@ export async function listReferences() {
 }
 
 /** Empreinte d'une photo dans un thread de travail. `bytes` : contenu du fichier envoyé. */
+// Still-image signatures only (JPEG, PNG, WebP, GIF, BMP, AVIF/HEIF): no playlist or video reaches ffmpeg
 const isImage = (b) =>
-  (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) || // JPEG
+  (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) ||
   (b[0] === 0x89 && b.toString('latin1', 1, 4) === 'PNG') ||
-  (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP');
+  (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') ||
+  b.toString('latin1', 0, 4) === 'GIF8' ||
+  b.toString('latin1', 0, 2) === 'BM' ||
+  (b.toString('latin1', 4, 8) === 'ftyp' && /^(avif|heic|heix|mif1)$/.test(b.toString('latin1', 8, 12)));
 
 async function embedPhoto(bytes) {
-  // ffmpeg guesses formats from content (a playlist would be followed): reject anything that is not a plain image
-  if (!Buffer.isBuffer(bytes) || !isImage(bytes)) throw new HttpError(422, "Ce fichier n'est pas une image lisible (JPEG, PNG ou WebP).");
+  if (!Buffer.isBuffer(bytes) || !isImage(bytes)) throw new HttpError(422, "Ce fichier n'est pas une image lisible (JPEG, PNG, WebP, GIF, BMP ou AVIF).");
   const dir = path.join(storageDir(), 'tmp');
   await fs.mkdir(dir, { recursive: true });
   const file = path.join(dir, `ref-${randomBytes(6).toString('hex')}`);

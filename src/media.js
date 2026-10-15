@@ -132,7 +132,7 @@ export function appendChunk(youtubeId, offset, buffer, expectedTotal) {
   });
 }
 
-/** Termine un dépôt : vérifie la taille et le contenu avec ffprobe, puis remplace le fichier actuel (renommage, puis retrait des autres formats). */
+/** Termine un dépôt : vérifie la taille et le contenu avec ffprobe, puis remplace le fichier actuel. */
 export function finishUpload(youtubeId, expectedSize) {
   return serial(youtubeId, async () => {
     const part = partPath(youtubeId);

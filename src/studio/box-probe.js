@@ -13,10 +13,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { OUT, PROBE, assEscape, boxPad, buildProbeAss, displayText, fitScale, probeBand } from '../../public/js/studio-core.js';
 
-/** Échappe un chemin pour une option de filtre ffmpeg (ass=…, fontsdir=…). */
 export const escFilterPath = (p) => {
-  // Windows (local dev): forward slashes, and the drive colon escaped inside quotes so both parsing levels keep it
-  if (process.platform === 'win32') return `'${String(p).replace(/\\/g, '/').replace(/:/g, '\\:')}'`;
+  // Windows (local dev): forward slashes, quoted parts, and apostrophes escaped for both filtergraph parsing levels
+  if (process.platform === 'win32') return String(p).replace(/\\/g, '/').replace(/:/g, '\\:').split("'").map((s) => `'${s}'`).join("\\\\\\'");
   return String(p).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'").replace(/,/g, '\\,');
 };
 

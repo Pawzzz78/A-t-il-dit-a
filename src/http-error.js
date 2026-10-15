@@ -1,4 +1,4 @@
-/** Erreur avec un statut HTTP et un message destiné à l'utilisateur. */
+// Error carrying an HTTP status and a user-facing message
 export class HttpError extends Error {
   constructor(status, message, extra = {}) {
     super(message);
@@ -7,13 +7,10 @@ export class HttpError extends Error {
   }
 }
 
-/** Enveloppe un handler async : ses erreurs vont au gestionnaire d'erreurs (Express 4 ne les rattrape pas seul). */
+// Wraps an async handler so its rejection reaches the error handler (Express 4 does not)
 export const ah = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
-/**
- * Gestionnaire d'erreurs JSON commun aux routeurs. `map(err)` renvoie [statut, message] pour les erreurs propres à un routeur,
- * sinon null ; le reste est journalisé et répond « Erreur interne. » sans détail.
- */
+// Shared JSON error handler; map(err) -> [status, message] | null for router-specific errors, the rest is logged as a 500
 export function jsonErrors({ map = () => null, tooLarge = 'Demande trop volumineuse.' } = {}) {
   // Express needs the 4-argument signature to treat this as an error handler
   return (err, _req, res, _next) => {

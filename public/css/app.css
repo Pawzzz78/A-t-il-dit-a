@@ -84,16 +84,10 @@ mark { background: var(--color-highlight); color: var(--ne-blue-dark); font-weig
 /* --- dernières vidéos + résumés --------------------------------------------- */
 
 .section-title { font-family: var(--font-display); font-weight: var(--font-weight-display); font-size: clamp(1.5rem, 3.5vw, 2.2rem); line-height: 1.1; letter-spacing: var(--tracking-display); text-transform: uppercase; color: var(--color-primary); margin: 0 0 1.2rem; }
-#latest-list, #list { display: grid; grid-template-columns: repeat(auto-fill, minmax(17.5rem, 1fr)); gap: 1.4rem; }
-
-/* --- liste complète des vidéos ------------------------------------------------ */
-
-#more[hidden] { display: none; }
 .hero.compact { padding: 2.4rem 0 5.2rem; }
 .hero.compact h1 { font-size: clamp(1.9rem, 5vw, 3rem); }
 .search select { font: inherit; font-size: .9rem; font-weight: 600; color: var(--color-primary); background: #fff; border: 1px solid var(--color-border); border-radius: var(--radius-pill); padding: .75rem 1rem; }
 .search select:focus { outline: 3px solid var(--color-ring); outline-offset: 0; }
-#list { margin-top: 1.6rem; }
 
 /* --- pied de page --------------------------------------------------------- */
 .site-footer { background: var(--color-primary-dark); color: #fff; padding: 2rem 0; font-size: .85rem; }
@@ -128,7 +122,6 @@ mark { background: var(--color-highlight); color: var(--ne-blue-dark); font-weig
 
 /* --- fenêtre du résumé (fond flouté ; croix, clic à côté ou Échap pour fermer) ----------- */
 
-@media (max-width: 560px) { #latest-list, #list { grid-template-columns: 1fr; } }
 
 /* --- tendances ------------------------------------------------------------------ */
 

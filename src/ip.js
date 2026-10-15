@@ -1,7 +1,4 @@
-/**
- * Clé de limitation par visiteur : une adresse IPv4 telle quelle, une adresse IPv6 réduite à son préfixe /64
- * (un abonné dispose d'un /64 entier : sans ce regroupement, changer d'adresse contournerait toutes les limites).
- */
+// Rate-limit key: IPv4 as is, IPv6 cut to its /64 (one subscriber owns a whole /64)
 import { isIPv4, isIPv6 } from 'node:net';
 
 export function ipKey(ip) {
@@ -19,12 +16,13 @@ export function ipKey(ip) {
   return `${full.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(':')}::/64`;
 }
 
-/** Garde une table de limitation bornée : retire d'abord les entrées expirées, puis les plus anciennes. */
+// Bounded limiter table: drop expired entries, then the oldest, down to 90 % so the scan is not repeated on every call
 export function trimMap(map, max, expired) {
   if (map.size <= max) return;
   for (const [key, value] of map) if (expired(value)) map.delete(key);
+  const target = Math.floor(max * 0.9);
   for (const key of map.keys()) {
-    if (map.size <= max) break;
+    if (map.size <= target) break;
     map.delete(key);
   }
 }

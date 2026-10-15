@@ -1,7 +1,4 @@
-/**
- * Téléchargement d'un fichier sans jamais sortir des hôtes autorisés : chaque redirection est vérifiée avant d'être suivie, et le
- * corps est lu en comptant les octets (coupé au-delà de la taille maximale, même sans en-tête Content-Length).
- */
+// Download restricted to allowed hosts: every redirect is checked, the body is counted and cut past maxBytes
 export class DownloadError extends Error {
   constructor(code, message) {
     super(message);
@@ -10,7 +7,11 @@ export class DownloadError extends Error {
 }
 
 async function readLimited(res, maxBytes) {
-  if (!res.body?.getReader) return Buffer.from(await res.arrayBuffer());
+  if (!res.body?.getReader) {
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > maxBytes) throw new DownloadError('size', 'fichier trop lourd');
+    return buf;
+  }
   const chunks = [];
   let size = 0;
   const reader = res.body.getReader();
@@ -27,9 +28,7 @@ async function readLimited(res, maxBytes) {
   return Buffer.concat(chunks);
 }
 
-/**
- * `allowed(url)` : l'adresse (objet URL) peut-elle être appelée ? `accept` : types de contenu acceptés. Renvoie le contenu (Buffer).
- */
+// allowed(url: URL) -> boolean; accept: content-type regex; resolves to a Buffer
 export async function safeDownload(url, { allowed, accept, maxBytes, fetchImpl = fetch, timeoutMs = 30_000, maxHops = 4 }) {
   let current = url;
   for (let hop = 0; hop < maxHops; hop++) {

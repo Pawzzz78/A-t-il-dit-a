@@ -91,25 +91,19 @@ export function requireAdmin(req, res, next) {
   next();
 }
 
-/** Limiteur de tentatives de connexion : 5 échecs / 15 min / IP, et un plafond d'échecs par heure toutes IP confondues. */
+/** Limiteur de tentatives de connexion : 5 échecs / 15 min / IP. */
 const attempts = new Map();
 const WINDOW = 15 * 60 * 1000;
 const MAX = 5;
-const globalFails = { count: 0, resetAt: 0 };
-const maxGlobalFails = () => Number(process.env.LOGIN_FAILS_PER_HOUR) || 100;
 
 export function loginAllowed(rawIp) {
-  const now = Date.now();
-  if (globalFails.resetAt > now && globalFails.count >= maxGlobalFails()) return false;
   const rec = attempts.get(ipKey(rawIp));
-  return !rec || rec.until < now || rec.count < MAX;
+  return !rec || rec.until < Date.now() || rec.count < MAX;
 }
 export function recordLogin(rawIp, ok) {
   const ip = ipKey(rawIp);
   if (ok) return attempts.delete(ip);
   const now = Date.now();
-  if (globalFails.resetAt <= now) Object.assign(globalFails, { count: 0, resetAt: now + 3600 * 1000 });
-  globalFails.count++;
   const rec = attempts.get(ip);
   if (!rec || rec.until < now) {
     attempts.delete(ip);

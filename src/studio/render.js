@@ -337,7 +337,7 @@ function take(kind, ip, max) {
   return true;
 }
 
-/** Calcul du cadrage automatique : appelé à chaque modification d'extrait, d'où une limite large. */
+// Auto-framing is called on every extract change, hence a generous limit
 export const framingAllowed = (ip) => take('framing', ip, config().framingPerHour);
 
 // --- aperçu -------------------------------------------------------------------------------------------
