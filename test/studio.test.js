@@ -769,3 +769,41 @@ test('studio : la légende des extraits proposés est transmise au navigateur', 
     await pool.query('DELETE FROM clip_suggestions WHERE video_id = $1', [rows[0].id]);
   }
 });
+
+test('limites anti-abus : cadrage plafonné, file d\'aperçus bornée, volume servi par clip plafonné', { skip: !enabled }, async () => {
+  const saved = { ...process.env };
+  try {
+    process.env.STUDIO_FRAMING_PER_HOUR = '2';
+    const framing = () => api('POST', '/api/studio/framing', { youtube_id: YT, extracts: REQ().extracts });
+    assert.notEqual((await framing()).status, 429);
+    assert.notEqual((await framing()).status, 429);
+    const third = await framing();
+    assert.equal(third.status, 429);
+    assert.match(third.body.error, /cadrage/);
+
+    process.env.STUDIO_PREVIEW_QUEUE = '1';
+    const preview = (i) => api('POST', '/api/studio/preview', REQ({ extracts: [{ start_ms: 0, end_ms: 11000 - i * 100 }] }));
+    const first = [preview(0), preview(1)];
+    await new Promise((r) => setTimeout(r, 300));
+    const rest = await Promise.all([2, 3, 4, 5].map(preview));
+    const statuses = [...(await Promise.all(first)), ...rest].map((r) => r.status);
+    assert.ok(statuses.every((s) => s === 200 || s === 503), statuses.join(','));
+    assert.ok(statuses.includes(503), `au moins un refus attendu : ${statuses}`);
+    assert.match(rest.find((r) => r.status === 503).body.error, /sollicité/);
+
+    const r = await api('POST', '/api/studio/render', REQ({ music: null, extracts: [{ start_ms: 1000, end_ms: 4500 }] }));
+    assert.equal(r.status, 202, JSON.stringify(r.body));
+    await waitFor(r.body.id, (s) => s.status === 'done');
+    const file = `${base}/api/studio/render/${r.body.id}/file`;
+    for (let i = 0; i < 3; i++) assert.equal((await fetch(file)).status, 200);
+    studio.getJob(r.body.id).bytesServed = Number.POSITIVE_INFINITY;
+    const capped = await fetch(file);
+    assert.equal(capped.status, 429);
+    assert.match((await capped.json()).error, /téléchargé/);
+  } finally {
+    for (const k of ['STUDIO_FRAMING_PER_HOUR', 'STUDIO_PREVIEW_QUEUE']) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  }
+});

@@ -8,7 +8,7 @@ import { getClipSuggestions, prepareSegments, CLIP_LIMITS } from '../clip-sugges
 import { pool } from '../db.js';
 import { HttpError } from '../http-error.js';
 import { DEFAULT_STYLE, LIMITS, PRESETS } from '../../public/js/studio-core.js';
-import { cancelJob, createPreview, enqueueRender, FONTS, getJob, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
+import { cancelJob, config as studioConfig, createPreview, enqueueRender, FONTS, framingAllowed, getJob, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
 import { CATEGORIES, ensureMusic, libraryFile, publicTracks } from '../studio/music.js';
 import { facesStatus, framingForRequest } from '../studio/faces.js';
 import { recordEvent } from '../studio/stats.js';
@@ -139,6 +139,7 @@ async function linesOf(videoId) {
 studioRouter.post(
   '/framing',
   ah(async (req, res) => {
+    if (!framingAllowed(req.ip)) throw new HttpError(429, 'Trop de calculs de cadrage : réessaie dans quelques minutes.');
     const v = await loadVideo(req.body?.youtube_id);
     const request = normalizeRequest({ ...req.body, layout: { ...req.body?.layout, fit: 'crop', follow: { on: true, subject: req.body?.subject } } }, v);
     const clip = await framingForRequest(v, request);
@@ -211,6 +212,15 @@ studioRouter.get('/render/:id/file', async (req, res, next) => {
   try {
     const job = jobOr404(req.params.id);
     if (job.status !== 'done') throw new HttpError(409, "Le clip n'est pas encore prêt.");
+    // Cap the bytes actually sent per clip (seeking in <video> only costs what is transferred)
+    if ((job.bytesServed ?? 0) >= (job.size ?? 0) * studioConfig().fileServeFactor) {
+      throw new HttpError(429, 'Ce clip a déjà été téléchargé de nombreuses fois : crée-le à nouveau si besoin.');
+    }
+    const socket = req.socket;
+    const sentBefore = socket.bytesWritten;
+    res.on('close', () => {
+      job.bytesServed = (job.bytesServed ?? 0) + Math.max(0, socket.bytesWritten - sentBefore);
+    });
     // `?use=download` : le bouton « Télécharger » ; `?use=share` : le partage depuis le téléphone. La lecture dans la page (sans
     // paramètre) n'est pas un téléchargement.
     const use = req.query.use === 'download' ? 'download' : req.query.use === 'share' ? 'share' : null;

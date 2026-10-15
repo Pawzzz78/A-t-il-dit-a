@@ -31,6 +31,9 @@ export const config = () => ({
   perIpActive: 2,
   rendersPerHour: Number(process.env.STUDIO_RENDERS_PER_HOUR) || 8,
   previewsPerHour: Number(process.env.STUDIO_PREVIEWS_PER_HOUR) || 60,
+  previewQueue: Number(process.env.STUDIO_PREVIEW_QUEUE) || 20,
+  framingPerHour: Number(process.env.STUDIO_FRAMING_PER_HOUR) || 600,
+  fileServeFactor: Number(process.env.STUDIO_FILE_MAX_FACTOR) || 10,
   ttlMs: 60 * 60 * 1000,
   timeoutMs: 12 * 60 * 1000,
 });
@@ -333,6 +336,9 @@ function take(kind, ip, max) {
   return true;
 }
 
+/** Calcul du cadrage automatique : appelé à chaque modification d'extrait, d'où une limite large. */
+export const framingAllowed = (ip) => take('framing', ip, config().framingPerHour);
+
 // --- aperçu -------------------------------------------------------------------------------------------
 
 const inflightPreviews = new Map();
@@ -363,6 +369,10 @@ export async function createPreview({ video, req, ip = 'local' }) {
     return done;
   }
   if (inflightPreviews.has(key)) return inflightPreviews.get(key);
+  // Bounded wait list: past it, refuse instead of queueing without end
+  if (previewsRunning >= 2 && previewWaiters.length >= config().previewQueue) {
+    throw new HttpError(503, 'Le studio est très sollicité : réessaie dans quelques minutes.');
+  }
   if (!take('preview', ip, config().previewsPerHour)) throw new HttpError(429, 'Trop d’aperçus pour le moment : réessaie dans quelques minutes.');
   const promise = (async () => {
     await acquirePreview();
