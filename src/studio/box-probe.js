@@ -14,7 +14,11 @@ import path from 'node:path';
 import { OUT, PROBE, assEscape, boxPad, buildProbeAss, displayText, fitScale, probeBand } from '../../public/js/studio-core.js';
 
 /** Échappe un chemin pour une option de filtre ffmpeg (ass=…, fontsdir=…). */
-export const escFilterPath = (p) => String(p).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'").replace(/,/g, '\\,');
+export const escFilterPath = (p) => {
+  // Windows (local dev): forward slashes, and the drive colon escaped inside quotes so both parsing levels keep it
+  if (process.platform === 'win32') return `'${String(p).replace(/\\/g, '/').replace(/:/g, '\\:')}'`;
+  return String(p).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'").replace(/,/g, '\\,');
+};
 
 /** Lit les lignes d'une image de mesure (octets de gris) : [{ x0, y0, x1, y1 }] relatifs au point d'ancrage du bloc. */
 export function rectsFromFrame(frame, { band, pitch, pad, cx }) {
