@@ -450,3 +450,7 @@ tools/transcribe.py  transcription locale gratuite (yt-dlp + Whisper) des vidéo
 public/              site (index.html, videos/, tendances/, mentions-legales/) et admin (admin/)
 test/                tests unitaires + test d'intégration (si DATABASE_URL défini)
 ```
+
+## Contribuer
+
+Voir [CONTRIBUTING.md](CONTRIBUTING.md).
