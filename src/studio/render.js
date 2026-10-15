@@ -17,6 +17,7 @@ import { cropXExpr } from '../../public/js/framing.js';
 import { findTrack } from './music.js';
 import { purgeVisitors } from './stats.js';
 import { HttpError } from '../http-error.js';
+import { ipKey, trimMap } from '../ip.js';
 import { storageDir, videoFilePath } from '../media.js';
 
 const read = (name) => JSON.parse(readFileSync(new URL(`./${name}`, import.meta.url), 'utf8'));
@@ -316,18 +317,19 @@ function runFfmpeg(args, total, { onProgress, timeoutMs }) {
 
 // --- limites par visiteur ---------------------------------------------------------------------------
 
-const recent = new Map(); // `${kind}:${ip}` -> horodatages
+const recent = new Map(); // `${kind}:${ipKey}` -> horodatages
 function take(kind, ip, max) {
-  const key = `${kind}:${ip}`;
+  const key = `${kind}:${ipKey(ip)}`;
   const now = Date.now();
   const list = (recent.get(key) ?? []).filter((t) => now - t < 3600_000);
+  recent.delete(key);
   if (list.length >= max) {
     recent.set(key, list);
     return false;
   }
   list.push(now);
   recent.set(key, list);
-  if (recent.size > 5000) recent.clear();
+  trimMap(recent, 5000, (l) => !l.length || now - l[l.length - 1] >= 3600_000);
   return true;
 }
 
@@ -418,8 +420,9 @@ export function publicJob(job) {
 export const getJob = (id) => (/^[0-9a-f]{24}$/.test(id) ? jobs.get(id) : undefined);
 
 /** Met un rendu en file. `video` : ligne de la base ; `lines` : lignes de la transcription ; renvoie le job. */
-export async function enqueueRender({ video, req, lines, ip = 'local' }) {
+export async function enqueueRender({ video, req, lines, ip: rawIp = 'local' }) {
   const cfg = config();
+  const ip = ipKey(rawIp);
   const mine = [...jobs.values()].filter((j) => j.ip === ip && (j.status === 'queued' || j.status === 'running')).length;
   if (mine >= cfg.perIpActive) throw new HttpError(429, 'Tu as déjà des clips en cours de création : attends qu’ils soient prêts.');
   if (queue.length >= cfg.maxQueue) throw new HttpError(503, 'Le studio est très sollicité : réessaie dans quelques minutes.');
