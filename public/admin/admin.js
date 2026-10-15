@@ -106,6 +106,8 @@ const whisperCommand = (youtubeId) =>
 
 let cleanup = () => {};
 let dirtyGuard = () => false;
+let routeGen = 0; // bumped on every navigation: async work from a previous page checks it before touching the screen
+let lastHash = location.hash;
 
 let ytPromise;
 function loadYT() {
@@ -120,10 +122,14 @@ function loadYT() {
 // --------------------------------------------------------------------- routeur
 
 async function route() {
-  if (dirtyGuard() && !confirm('Des modifications ne sont pas enregistrées. Quitter quand même ?')) {
-    history.back();
+  const ask = dirtyGuard();
+  if (ask && !confirm(typeof ask === 'string' ? ask : 'Des modifications ne sont pas enregistrées. Quitter quand même ?')) {
+    // Restore the previous address without firing hashchange (history.back() would ask again)
+    history.replaceState(null, '', `${location.pathname}${location.search}${lastHash}`);
     return;
   }
+  lastHash = location.hash;
+  routeGen++;
   cleanup();
   cleanup = () => {};
   dirtyGuard = () => false;
@@ -161,7 +167,12 @@ function renderNav() {
         href: '#',
         onclick: async (e) => {
           e.preventDefault();
-          await api('POST', '/logout', {});
+          try {
+            await api('POST', '/logout', {});
+          } catch (err) {
+            alert(err.message);
+            return;
+          }
           renderLogin();
         },
       },
@@ -593,6 +604,7 @@ async function renderFaceReferences() {
 }
 
 async function renderWallAdmin() {
+  const gen = routeGen;
   let data = await api('GET', '/wall');
   const root = h('div');
   const note = h('p', { class: 'status', role: 'status' });
@@ -611,6 +623,7 @@ async function renderWallAdmin() {
     } catch (e) {
       if (e instanceof AuthError) return route();
     }
+    if (gen !== routeGen) return; // left the page meanwhile: no redraw, no new timer
     draw();
   }
   const act = async (fn, okMsg) => {
@@ -682,7 +695,9 @@ async function renderWallAdmin() {
 }
 
 async function renderSync() {
+  const gen = routeGen;
   const o = await api('GET', '/sync/overview');
+  if (gen !== routeGen) return; // left the page meanwhile: never repaint over another page
   const msg = h('p', { class: 'status' });
   if (syncFlash) {
     status(msg, syncFlash.text, syncFlash.kind);
@@ -843,7 +858,8 @@ async function renderSync() {
           if (r.error) status(addMsg, `Chaîne ajoutée, mais la liste a échoué : ${r.error}`, 'err');
           else {
             await renderSync();
-            status(document.querySelector('#sync-msg'), `${r.added} vidéo${r.added > 1 ? 's' : ''} trouvée${r.added > 1 ? 's' : ''} et mise${r.added > 1 ? 's' : ''} en file d’attente.`, 'ok');
+            const syncMsg = document.querySelector('#sync-msg');
+            if (syncMsg) status(syncMsg, `${r.added} vidéo${r.added > 1 ? 's' : ''} trouvée${r.added > 1 ? 's' : ''} et mise${r.added > 1 ? 's' : ''} en file d’attente.`, 'ok');
           }
         } catch (err) {
           status(addMsg, err.message, 'err');
@@ -939,6 +955,7 @@ async function renderSync() {
     : null;
 
   $app.replaceChildren(...[state, summariesPanel, channels, failed].filter(Boolean));
+  cleanup(); // a re-render (timer, action) replaces the previous timer instead of adding one
   const timer = setInterval(() => document.hidden || renderSync().catch(() => {}), 20000);
   cleanup = () => clearInterval(timer);
 }
@@ -953,6 +970,8 @@ async function renderEditor(id) {
   let dirty = false;
   let player = null;
   let activeIdx = -1;
+  let pageLeft = false; // set by cleanup: late async callbacks must not act on a page that is gone
+  let uploading = null; // AbortController of a running video upload
 
   const markDirty = (v = true) => {
     dirty = v;
@@ -960,7 +979,7 @@ async function renderEditor(id) {
     saveMsg.textContent = dirty ? 'Modifications non enregistrées' : 'À jour';
     saveMsg.className = `status${dirty ? '' : ' ok'}`;
   };
-  dirtyGuard = () => dirty;
+  dirtyGuard = () => (uploading ? 'Un envoi de vidéo est en cours : quitter l’interrompra. Quitter quand même ?' : dirty);
   const beforeUnload = (e) => dirty && e.preventDefault();
   window.addEventListener('beforeunload', beforeUnload);
   const onKey = (e) => {
@@ -1146,6 +1165,7 @@ async function renderEditor(id) {
   const playerBox = h('div', { class: 'player' }, h('div', { id: 'yt-player' }));
   const follow = h('input', { type: 'checkbox', checked: true });
   loadYT().then((YT) => {
+    if (pageLeft) return;
     player = new YT.Player('yt-player', {
       videoId: video.youtube_id,
       width: '100%',
@@ -1469,11 +1489,11 @@ async function renderEditor(id) {
         } catch (e) {
           if (e instanceof AuthError) return;
         }
+        if (pageLeft) return;
         drawFaces();
       }, 3000);
     }
   }
-  let uploading = null; // { abort, ... } pendant un dépôt
   const mo = (bytes) => `${(bytes / 1024 / 1024).toFixed(bytes > 99 * 1024 * 1024 ? 0 : 1)} Mo`;
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -1722,7 +1742,13 @@ async function renderEditor(id) {
         type: 'button',
         onclick: async () => {
           if (!confirm('Supprimer cette vidéo et sa transcription ?')) return;
-          await api('DELETE', `/videos/${id}`);
+          try {
+            await api('DELETE', `/videos/${id}`);
+          } catch (e) {
+            if (e instanceof AuthError) return route();
+            alert(e.message);
+            return;
+          }
           dirty = false;
           location.hash = '#/';
         },
@@ -1769,11 +1795,15 @@ async function renderEditor(id) {
     savebar,
   );
 
+  const facesCleanup = cleanup; // set with the faces panel: stops its polling
   cleanup = () => {
+    facesCleanup();
+    pageLeft = true;
     clearInterval(timer);
     window.removeEventListener('beforeunload', beforeUnload);
     window.removeEventListener('keydown', onKey);
     player?.destroy?.();
+    uploading?.abort(); // only reached once the user confirmed leaving
   };
 }
 
