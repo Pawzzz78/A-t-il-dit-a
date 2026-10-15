@@ -35,7 +35,7 @@ function safeDecode(v) {
   }
 }
 
-function parseCookies(header = '') {
+export function parseCookies(header = '') {
   return Object.fromEntries(
     header
       .split(';')
@@ -68,7 +68,7 @@ export function isAuthenticated(req) {
   return Boolean(exp && mac && safeEqual(mac, sign(exp)) && Number(exp) > Date.now());
 }
 
-const originHost = (origin) => {
+export const originHost = (origin) => {
   try {
     return new URL(origin).host;
   } catch {

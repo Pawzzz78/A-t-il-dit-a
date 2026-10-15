@@ -1,6 +1,12 @@
 /* Studio de clips : liste des interviews, éditeur (aperçu 9:16 + onglets), sous-titres, musique, création */
 .studio { margin-top: -3.4rem; position: relative; padding-bottom: 4rem; }
-.st-empty, .st-pick { padding: 1.8rem; }
+.st-empty, .st-pick, .st-gate { padding: 1.8rem; }
+.st-gate { max-width: 40rem; margin-inline: auto; }
+.st-gate h2 { margin: 0 0 .6rem; }
+.st-gate-msg { padding: .8rem 1rem; border-left: 4px solid var(--color-accent); background: var(--color-surface-alt); border-radius: 0 var(--radius) var(--radius) 0; font-weight: 600; }
+.st-gate-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1.2rem 0 .4rem; }
+.st-member { color: var(--color-muted); text-transform: none; letter-spacing: 0; font-weight: 600; }
+.st-logout { font: inherit; font-size: inherit; font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-caps); background: none; border: 0; padding: 0; color: var(--color-primary); cursor: pointer; text-decoration: underline; }
 .st-empty h2, .st-pick h2 { margin-top: 0; }
 .st-legal { margin: 1.6rem .4rem 0; font-size: .8rem; line-height: 1.5; color: var(--color-muted); max-width: 46rem; }
 
