@@ -25,6 +25,8 @@ import {
   zoomRect,
   zoomWindows,
   sourceText,
+  fitDescription,
+  DESCRIPTION_MAX,
   buildAss,
   fitScale,
   usableWidth,
@@ -146,7 +148,19 @@ test('couleurs et temps ASS', () => {
 
 test('source à citer : titre tronqué et date en français', () => {
   assert.equal(sourceText('Mon interview', '2025-03-01'), 'Source : Mon interview · 1 mars 2025');
-  assert.match(sourceText('x'.repeat(100), '2025-12-25'), /^Source : x{55}… · 25 décembre 2025$/);
+  assert.equal(sourceText('x'.repeat(100), '2025-12-25'), `Source : ${'x'.repeat(100)} · 25 décembre 2025`); // titre jamais coupé
+  // date déjà présente dans le titre : pas de doublon
+  assert.equal(sourceText('David Lisnard face à Apolline de Malherbe mardi 13 octobre', '2026-10-13'), 'Source : David Lisnard face à Apolline de Malherbe mardi 13 octobre');
+  assert.equal(sourceText('Interview du 1er octobre', '2026-10-01'), 'Source : Interview du 1er octobre');
+  assert.equal(sourceText('Le plan pour couper 200 milliards', '2026-10-11'), 'Source : Le plan pour couper 200 milliards · 11 octobre 2026');
+  assert.equal(sourceText('Bilan du 113 octobre', '2026-10-13'), 'Source : Bilan du 113 octobre · 13 octobre 2026');
+  // description bornée à la limite des plateformes : la légende cède, la source reste entière
+  const src = sourceText('Titre', '2026-10-11');
+  const long = fitDescription('a'.repeat(3000), src);
+  assert.equal(long.length, DESCRIPTION_MAX);
+  assert.ok(long.endsWith(src) && long.includes('…'));
+  assert.equal(fitDescription('Accroche #tag', src), `Accroche #tag\n\n${src}`);
+  assert.equal(fitDescription('', src), src);
   assert.equal(sourceText('', null), 'Source : interview');
 });
 

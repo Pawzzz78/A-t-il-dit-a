@@ -1,6 +1,6 @@
 // Studio de clips : choix d'une interview, extraits (proposés par l'IA ou libres), sous-titres TikTok (style, police, couleurs,
 // contour, position, taille), musique, cadrage, puis création du MP4 sur le serveur. Aucun innerHTML : tout est posé en nœuds.
-import { BROLL, LIMITS, PRESETS, SIMILARITY_WARNING, ZOOM, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
+import { BROLL, DESCRIPTION_MAX, LIMITS, PRESETS, SIMILARITY_WARNING, ZOOM, fitDescription, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
 import { createPhone, el, outlineShadow, rgba } from './studio-preview.js';
 import { fmtDate } from './ui.js';
 
@@ -923,9 +923,16 @@ async function openEditor(youtubeId) {
   const pledge = el('input', { type: 'checkbox' });
   const makeBtn = el('button', { class: 'btn', type: 'button' }, 'Créer la vidéo');
   // description à copier-coller : légende générée une fois avec les extraits proposés (accroche + 2 à 4 hashtags), suivie de la source
-  const sourceField = el('textarea', { class: 'st-source-text', rows: '7', maxlength: '2200', 'aria-label': 'Description à copier-coller pour TikTok' });
+  const sourceField = el('textarea', { class: 'st-source-text', rows: '7', maxlength: String(DESCRIPTION_MAX), 'aria-label': 'Description à copier-coller pour TikTok' });
+  const sourceCount = el('p', { class: 'st-help st-count', 'aria-live': 'polite' });
+  const countSource = () => {
+    sourceCount.textContent = `${sourceField.value.length} / ${DESCRIPTION_MAX} caractères (limite de TikTok et d’Instagram)`;
+  };
   let captionEdited = false; // si tu la modifies, elle n'est plus recalculée
-  sourceField.addEventListener('input', () => { captionEdited = true; });
+  sourceField.addEventListener('input', () => {
+    captionEdited = true;
+    countSource();
+  });
   const copyText = async (text) => {
     try {
       await navigator.clipboard.writeText(text);
@@ -941,7 +948,7 @@ async function openEditor(youtubeId) {
     copyBtn.textContent = 'Copié ✓';
     setTimeout(() => (copyBtn.textContent = 'Copier la description'), 2000);
   });
-  const sourceBox = el('div', { class: 'st-source' }, sourceField, copyBtn);
+  const sourceBox = el('div', { class: 'st-source' }, sourceField, sourceCount, copyBtn);
   const makeMsg = el('p', { class: 'st-msg', role: 'status' });
   const makeHint = el('p', { class: 'st-help', id: 'st-make-hint' });
   makeBtn.setAttribute('aria-describedby', 'st-make-hint');
@@ -1382,7 +1389,8 @@ async function openEditor(youtubeId) {
       `${sourceText(S.video.title, S.video.published_at)} — https://www.youtube.com/watch?v=${S.video.youtube_id}` +
       (credits.length ? `\nImages : ${credits.join(', ')} (${assets.stock?.provider ?? 'banque d’images'})` : '') +
       (song?.credit ? `\nMusique : ${song.title} — ${song.credit}` : '');
-    sourceField.value = [caption, source].filter(Boolean).join('\n\n');
+    sourceField.value = fitDescription(caption, source);
+    countSource();
     sourceField.rows = (caption ? 6 : 1) + 1 + (credits.length ? 1 : 0) + (song?.credit ? 1 : 0);
   }
 

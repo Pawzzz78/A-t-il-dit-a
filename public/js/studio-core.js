@@ -277,16 +277,34 @@ export function assTime(sec) {
 /** Texte sûr pour ASS : pas d'accolades ni de retours à la ligne ni d'antislash. */
 export const assEscape = (t) => String(t).replace(/\\/g, '/').replace(/[{}]/g, '').replace(/[\r\n]+/g, ' ');
 
+// Caption limit shared by TikTok's posting API and Instagram Reels, the strictest of the target platforms
+export const DESCRIPTION_MAX = 2200;
+
+const foldText = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
 /** Ligne de source à citer dans la description de la vidéo : titre et date de l'interview d'origine. */
 export function sourceText(title, publishedAt) {
-  let t = String(title ?? '').replace(/\s+/g, ' ').trim();
-  if (t.length > 56) t = `${t.slice(0, 55).trimEnd()}…`;
+  const t = String(title ?? '').replace(/\s+/g, ' ').trim();
   let date = '';
   if (publishedAt) {
     const [y, m, d] = String(publishedAt).slice(0, 10).split('-').map(Number);
     date = y ? new Date(y, (m || 1) - 1, d || 1).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
   }
+  // The full title is kept; the date is added only when the title does not already give it
+  const dayMonth = date.split(' ').slice(0, 2).join(' ');
+  if (dayMonth && new RegExp(`(^|\\D)${foldText(dayMonth)}`).test(foldText(t).replace(/\b1er\b/g, '1'))) date = '';
   return `Source : ${t || 'interview'}${date ? ` · ${date}` : ''}`;
+}
+
+/** Description complète bornée à `max` caractères : la légende est raccourcie en premier, la source n'est jamais coupée. */
+export function fitDescription(caption, source, max = DESCRIPTION_MAX) {
+  const cap = String(caption ?? '').trim();
+  const src = String(source ?? '').trim();
+  if (!cap) return src.slice(0, max);
+  const room = max - src.length - 2;
+  if (room <= 1) return src.slice(0, max);
+  const fitted = cap.length > room ? `${cap.slice(0, room - 1).trimEnd()}…` : cap;
+  return `${fitted}\n\n${src}`;
 }
 
 const ASS_HEAD = (W, H) => [
