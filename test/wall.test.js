@@ -220,7 +220,7 @@ before(async () => {
   await db.initDb();
   await pool.query('DELETE FROM wall_clips');
   await pool.query('DELETE FROM wall_hidden_authors');
-  await pool.query("DELETE FROM settings WHERE key = 'wall_last_run'");
+  await pool.query("DELETE FROM settings WHERE key IN ('wall_last_run', 'wall_last_ok')");
   wall = await import('../src/wall/wall.js');
   const { createApp } = await import('../src/server.js');
   server = createApp().listen(0);
@@ -232,7 +232,7 @@ after(async () => {
   if (!enabled) return;
   await pool.query('DELETE FROM wall_clips');
   await pool.query('DELETE FROM wall_hidden_authors');
-  await pool.query("DELETE FROM settings WHERE key = 'wall_last_run'");
+  await pool.query("DELETE FROM settings WHERE key IN ('wall_last_run', 'wall_last_ok')");
   server.close();
   coverServer.close();
   await pool.end();
