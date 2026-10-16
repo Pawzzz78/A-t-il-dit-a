@@ -1391,7 +1391,9 @@ async function openEditor(youtubeId) {
       (song?.credit ? `\nMusique : ${song.title} — ${song.credit}` : '');
     sourceField.value = fitDescription(caption, source);
     countSource();
-    sourceField.rows = (caption ? 6 : 1) + 1 + (credits.length ? 1 : 0) + (song?.credit ? 1 : 0);
+    // Rows follow the wrapped length (~30 chars per line on a phone, links break late) so the source link is never hidden
+    const wrapped = sourceField.value.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 30)), 0);
+    sourceField.rows = Math.min(12, Math.max(3, wrapped + 1));
   }
 
   const timeField = (label, ms, onSet, extra = {}) => {

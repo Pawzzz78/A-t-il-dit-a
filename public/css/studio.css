@@ -280,7 +280,7 @@
 /* publier sur TikTok */
 .btn.tiktok { background: #0d0f2b; color: #fff; box-shadow: 3px 3px 0 #25f4ee, -3px -3px 0 #fe2c55; }
 .btn.tiktok:hover { background: #000; }
-.st-source-text { resize: vertical; }
+.st-source-text { resize: vertical; field-sizing: content; min-height: 4.5em; max-height: 22em; }
 .st-chip.on { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
 .st-help.warn { color: var(--color-danger); font-weight: 700; }
 
