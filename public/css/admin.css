@@ -169,7 +169,6 @@ label.check { display: inline-flex; gap: .4rem; align-items: center; font-weight
 .wall-hidden { background: var(--color-surface-alt); }
 .wall-hidden .wall-text, .wall-hidden a { color: var(--color-muted); }
 
-/* retour d'action flottant, boîte de reconnexion, détails techniques discrets */
 .toast { position: fixed; left: 50%; bottom: 1.2rem; transform: translateX(-50%); z-index: 50; display: flex; align-items: center; gap: .8rem; max-width: min(92vw, 34rem); background: var(--color-primary-dark); color: #fff; padding: .7rem 1rem; border-radius: var(--radius); box-shadow: 0 8px 28px rgba(0,0,0,.25); font-size: .9rem; font-weight: 600; }
 .toast.err { background: #8a1c1c; }
 .toast[hidden] { display: none; }
@@ -180,7 +179,6 @@ input.inline-num { display: inline-block; width: 5rem; font: inherit; padding: .
 .min-dur { display: inline-flex; gap: .4rem; align-items: center; flex-wrap: wrap; font-size: .85rem; color: var(--color-muted); }
 .badge.off-badge { background: var(--color-muted); color: #fff; }
 
-/* Native file inputs dressed like the admin's fields and buttons */
 input[type="file"] {
   display: block; width: 100%; max-width: 32rem; margin: .4rem 0; font: inherit; font-size: .85rem; color: var(--color-muted);
   padding: .45rem; border: 1px dashed var(--color-border); border-radius: var(--radius); background: var(--color-surface-alt); cursor: pointer;

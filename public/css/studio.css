@@ -284,7 +284,6 @@
 .st-chip.on { background: var(--color-primary); color: #fff; border-color: var(--color-primary); }
 .st-help.warn { color: var(--color-danger); font-weight: 700; }
 
-/* gros doigts : cibles d'au moins 44 px */
 @media (max-width: 900px), (pointer: coarse) {
   .st-mini { min-width: 2.75rem; height: 2.75rem; }
   .st-time, .st-select, .st-bfields .st-time { height: 2.75rem; }
@@ -306,12 +305,10 @@
   .st-edge-label { min-width: 2.4rem; }
 }
 
-/* pastilles (aussi utilisées hors admin) */
 .badge { font-size: .72rem; font-weight: 700; padding: .12rem .55rem; border-radius: var(--radius-pill); background: var(--color-border); color: var(--color-muted); text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; }
 .badge.ok { background: var(--color-success-bg); color: var(--color-success); }
 .badge.warn { background: var(--ne-chamois-light); color: var(--ne-blue-dark); }
 
-/* retour d'action près du pouce, aide du bouton Créer, étape suivante */
 .st-toast { position: fixed; left: 50%; bottom: 1rem; transform: translateX(-50%); z-index: 60; max-width: min(92vw, 28rem); margin: 0; padding: .7rem 1.1rem; border-radius: var(--radius); background: var(--ne-blue-dark); color: #fff; font-size: .85rem; font-weight: 700; box-shadow: var(--shadow-hover); text-align: center; }
 .st-toast:empty { display: none; }
 .st-toast.err { background: var(--color-danger); }

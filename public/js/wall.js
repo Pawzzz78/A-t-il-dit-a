@@ -99,7 +99,6 @@ const full = new Intl.NumberFormat('fr-FR');
 const fmt = (n) => (n < 1000 ? String(n) : compact.format(n));
 
 const parisDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' });
-/** Calendar day number (Europe/Paris) of a timestamp. */
 const dayNumber = (ms) => Date.parse(parisDay.format(ms)) / 86_400_000;
 const pts = (n) => `${n} point${n > 1 ? 's' : ''}`;
 
@@ -159,7 +158,7 @@ function openClip(c) {
   // le lecteur officiel de TikTok n'est chargé qu'ici, à la demande du visiteur
   $('dialog-player').replaceChildren(el('iframe', { src: `https://www.tiktok.com/embed/v2/${encodeURIComponent(c.id)}`, title: `Clip de @${c.author}`, allow: 'encrypted-media; fullscreen', allowfullscreen: true, referrerpolicy: 'strict-origin-when-cross-origin', loading: 'eager' }));
   dialog.showModal();
-  more.hidden = text.scrollHeight <= text.clientHeight + 1; // only offer "voir plus" when the text is really cut
+  more.hidden = text.scrollHeight <= text.clientHeight + 1;
 }
 $('dialog-more').addEventListener('click', (e) => {
   const open = !$('dialog-text').classList.toggle('clamped');
@@ -169,14 +168,13 @@ $('dialog-more').addEventListener('click', (e) => {
 dialog.addEventListener('close', () => $('dialog-player').replaceChildren()); // arrête la lecture
 dialog.addEventListener('click', (e) => {
   if (e.target !== dialog) return;
-  const r = dialog.getBoundingClientRect(); // padding clicks also target the dialog: only clicks outside its box are backdrop clicks
+  const r = dialog.getBoundingClientRect(); // Padding clicks also target the dialog: only clicks outside its box close it
   if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dialog.close();
 });
 
 // --- affichage ------------------------------------------------------------------------------------------------------------------------
 
 const sortButtons = new Map();
-/** Buttons are created once so keyboard focus survives a sort change; only aria-pressed is updated. */
 function renderSorts() {
   if (!sortButtons.size) {
     for (const [key, label] of SORTS) {
@@ -209,7 +207,7 @@ function render() {
   const all = ordered();
   const podium = state.sort === 'score' && all.length >= 3 ? all.slice(0, 3) : [];
   const rest = all.slice(podium.length);
-  const visual = [1, 0, 2].filter((i) => i < podium.length); // DOM order = visual order (2nd, 1st, 3rd) so tabbing follows the eye
+  const visual = [1, 0, 2].filter((i) => i < podium.length); // DOM order matches the visual order so tabbing follows the eye
   $('podium').replaceChildren(...visual.map((i) => card(podium[i], i + 1, { podium: true })));
   $('grid').replaceChildren(...rest.map((c, i) => card(c, podium.length + i + 1)));
   const sub = $('sub');

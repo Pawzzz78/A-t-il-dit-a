@@ -9,9 +9,8 @@ const params = new URLSearchParams(location.search);
 const SWATCHES = [['#FFFFFF', 'Blanc'], ['#FFE600', 'Jaune'], ['#25F4EE', 'Cyan'], ['#FE2C55', 'Rose'], ['#7CFF6B', 'Vert'], ['#FF9500', 'Orange'], ['#000000', 'Noir']];
 const PREF_KEY = 'studio.prefs.v1';
 
-/** replaceChildren that drops null/false/'' (the native one would print "null"). */
+// Native replaceChildren would print null/false children as text
 const put = (node, ...kids) => node.replaceChildren(...kids.flat(Infinity).filter(Boolean));
-/** put() that keeps keyboard focus on the same control (data-k, else same position) after a re-render. */
 const putKeep = (node, ...kids) => {
   const a = document.activeElement;
   const sel = 'button,input,select,textarea,summary,a[href]';
@@ -22,8 +21,8 @@ const putKeep = (node, ...kids) => {
   const next = (was.k && all.find((n) => n.dataset.k === was.k)) || (all[was.i]?.tagName === was.tag ? all[was.i] : null);
   next?.focus({ preventScroll: true });
 };
-let teardown = null; // set by the open editor: stops media and timers when the login gate takes over
-const early = new Map(); // GET requests started before the member check, consumed by api()
+let teardown = null;
+const early = new Map();
 
 const request = async (method, path, body) => {
   let res;
@@ -51,7 +50,6 @@ const api = async (method, path, body) => {
   return data;
 };
 
-// membership check and editor data are fetched in parallel (api() still handles a 401 from the early requests)
 const fetchMe = () => fetch('/api/auth/me').then((r) => r.json()).catch(() => null);
 let mePromise = fetchMe();
 if (params.get('v')) {
@@ -147,7 +145,6 @@ const loadPrefs = () => {
 };
 let prefsTimer = 0;
 let flushPrefs = () => {};
-/** Debounced: sliders and drags fire many times per second, storage is written once they settle (and on page hide). */
 const savePrefs = (S) => {
   flushPrefs = () => {
     clearTimeout(prefsTimer);
@@ -243,7 +240,6 @@ async function openEditor(youtubeId) {
     }
   };
 
-  // --- brouillon par interview : extraits, effets, style et clip en cours survivent à un rechargement
   const draftKey = `studio.draft.${S.video.youtube_id}`;
   let draftTimer = 0;
   const saveDraftNow = () => {
@@ -253,7 +249,7 @@ async function openEditor(youtubeId) {
       if (!S.extracts.length && !S.jobId) localStorage.removeItem(draftKey);
       else {
         localStorage.setItem(draftKey, JSON.stringify({
-          v: 1, extracts: S.extracts, style: S.style, music: S.music, voice: S.voice, jobId: S.jobId ?? null,
+          v: 1, extracts: S.extracts, style: S.style, music: S.music, voice: S.voice, jobId: S.jobId ?? null, delivered: S.delivered === true,
           layout: { fit: S.layout.fit, cropX: S.layout.cropX, quality: S.layout.quality, mirror: S.layout.mirror, follow: { on: S.layout.follow.on, subject: S.layout.follow.subject } },
           zoom: { on: S.zoom.on, auto: S.zoom.auto, strength: S.zoom.strength, focus: S.zoom.focus, events: S.zoom.events },
           broll: S.broll,
@@ -270,7 +266,6 @@ async function openEditor(youtubeId) {
   S.onSaved = scheduleDraft;
   const onPageHide = () => { if (draftTimer) saveDraftNow(); };
   addEventListener('pagehide', onPageHide);
-  /** Rétablit le brouillon (valeurs revalidées) ; renvoie vrai si des extraits ont été restaurés. */
   function restoreDraft() {
     let d = null;
     try {
@@ -307,6 +302,7 @@ async function openEditor(youtubeId) {
     S.broll = (Array.isArray(d.broll) ? d.broll : []).filter((b) => typeof b?.id === 'string' && Number.isFinite(b.start) && Number.isFinite(b.dur) && typeof b.thumb === 'string').slice(0, BROLL.maxItems)
       .map((b) => ({ id: b.id, start: b.start, dur: b.dur, thumb: b.thumb, photographer: b.photographer, page: b.page, alt: b.alt }));
     S.jobId = typeof d.jobId === 'string' ? d.jobId : null;
+    S.delivered = d.delivered === true;
     return true;
   }
 
@@ -327,7 +323,7 @@ async function openEditor(youtubeId) {
     }
     return best;
   };
-  // file duration may be missing: fall back to the end of the last transcript line
+  // File duration may be missing: fall back to the last transcript line
   const videoEndMs = () => (S.video.duration_s > 0 ? Math.floor(S.video.duration_s * 1000) : (S.lines.at(-1)?.end_ms ?? 0));
 
   // --- aperçu
@@ -383,7 +379,7 @@ async function openEditor(youtubeId) {
     const track = assets.music.find((m) => m.id === S.music.id);
     phone.setAudio({ url: track ? track.url : null, volume: S.music.volume, voice: S.voice });
   }
-  let previewKey = ''; // last successfully rendered request: an identical one is not sent again
+  let previewKey = '';
   async function requestPreview(force = false) {
     const mine = ++S.ticket;
     refreshFraming();
@@ -398,7 +394,7 @@ async function openEditor(youtubeId) {
       phone.setBusy(null);
       return;
     }
-    phone.setBusy('Préparation de l’aperçu…', { soft: phone.hasSource() }); // the previous video stays visible meanwhile
+    phone.setBusy('Préparation de l’aperçu…', { soft: phone.hasSource() });
     try {
       const r = await api('POST', '/preview', body);
       if (mine !== S.ticket) return;
@@ -410,7 +406,6 @@ async function openEditor(youtubeId) {
     }
   }
   let previewTimer = 0;
-  /** Fine trims (edge buttons) wait longer than other changes: each preview is a server encode with a hourly quota. */
   const schedulePreview = (ms = 450) => {
     clearTimeout(previewTimer);
     previewTimer = setTimeout(requestPreview, ms);
@@ -427,9 +422,8 @@ async function openEditor(youtubeId) {
   const panelExtracts = el('div', { class: 'st-panel' });
   const minTotalNote = () => `${secs(totalS())} sur ${LIMITS.maxTotalS} s maximum`;
 
-  let booting = true; // initial setup: no toast or scroll for the extract added by default
-  let justAdded = null; // extract to bring into view after the next render
-  /** `replace`: the new extract becomes the whole clip instead of being appended. */
+  let booting = true;
+  let justAdded = null;
   function addExtract(start_ms, end_ms, title, from, caption = null, replace = false) {
     if (!replace && S.extracts.length >= LIMITS.maxExtracts) return alertNote(`${LIMITS.maxExtracts} extraits au maximum.`);
     const ex = { start_ms, end_ms: Math.min(end_ms, videoEndMs()), title, from, caption };
@@ -440,7 +434,6 @@ async function openEditor(youtubeId) {
     extractsChanged();
     if (!booting) toast(replace ? 'Extrait choisi : il remplace ton clip (voir « Mon clip »).' : 'Extrait ajouté à ton clip (voir « Mon clip »).');
   }
-  /** `fine`: a small trim (longer preview delay). */
   function extractsChanged(fine = false) {
     rebuildSubtitles();
     keepEffectsInClip();
@@ -450,8 +443,8 @@ async function openEditor(youtubeId) {
     renderCreateSummary();
     scheduleDraft();
   }
-  const note = el('p', { class: 'st-msg', role: 'status' });
-  const toastEl = el('p', { class: 'st-toast', role: 'status' }); // fixed near the thumb: feedback stays in view whatever the scroll
+  const note = el('p', { class: 'st-msg' });
+  const toastEl = el('p', { class: 'st-toast', role: 'status' });
   let toastTimer = 0;
   const toast = (msg, err = false) => {
     toastEl.className = err ? 'st-toast err' : 'st-toast';
@@ -502,7 +495,7 @@ async function openEditor(youtubeId) {
   function extractRow(ex, i) {
     const btn = (label, title, fn, disabled, key) => el('button', { class: 'st-mini', type: 'button', title, 'aria-label': title, disabled, 'data-k': key, onclick: fn }, label);
     const edge = (label, which, lessTitle, moreTitle) => {
-      // inputmode text: iOS decimal pads have no ":" while the value reads 1:23,5
+      // iOS decimal keypads have no ':'
       const field = el('input', { class: 'st-time', type: 'text', inputmode: 'text', autocomplete: 'off', value: fmtT(ex[which]), 'aria-label': `${label} de l’extrait (minutes:secondes,dixièmes)`, title: 'Tu peux taper un instant : 1:23,5' });
       field.addEventListener('change', () => {
         const ms = parseT(field.value);
@@ -613,7 +606,6 @@ async function openEditor(youtubeId) {
   // ============================================================ onglet Sous-titres
   const ctl = {}; // références des contrôles, pour les resynchroniser
   let rowSeq = 0;
-  /** Label linked to the first form control of the row (id/for). */
   const row = (label, ...nodes) => {
     const target = nodes.flat().find((n) => n?.matches?.('input,select,textarea'));
     const lab = el('label', {}, label);
@@ -661,7 +653,6 @@ async function openEditor(youtubeId) {
     }));
   }
   const fontGrid = el('div', { class: 'st-fonts', role: 'listbox', 'aria-label': 'Police' });
-  // font files are fetched only when their sample scrolls into view (the sample takes its font on first sight)
   const fontSeen = typeof IntersectionObserver === 'function'
     ? new IntersectionObserver((entries) => {
         for (const en of entries) {
@@ -923,8 +914,8 @@ async function openEditor(youtubeId) {
   const pledge = el('input', { type: 'checkbox' });
   const makeBtn = el('button', { class: 'btn', type: 'button' }, 'Créer la vidéo');
   // description à copier-coller : légende générée une fois avec les extraits proposés (accroche + 2 à 4 hashtags), suivie de la source
-  const sourceField = el('textarea', { class: 'st-source-text', rows: '7', maxlength: String(DESCRIPTION_MAX), 'aria-label': 'Description à copier-coller pour TikTok' });
-  const sourceCount = el('p', { class: 'st-help st-count', 'aria-live': 'polite' });
+  const sourceField = el('textarea', { class: 'st-source-text', rows: '7', maxlength: String(DESCRIPTION_MAX), 'aria-label': 'Description à copier-coller pour TikTok', 'aria-describedby': 'st-source-count' });
+  const sourceCount = el('p', { class: 'st-help st-count', id: 'st-source-count' });
   const countSource = () => {
     sourceCount.textContent = `${sourceField.value.length} / ${DESCRIPTION_MAX} caractères (limite de TikTok et d’Instagram)`;
   };
@@ -955,12 +946,15 @@ async function openEditor(youtubeId) {
   const captionHelp = el('p', { class: 'st-help' });
   const jobBox = el('div', { class: 'st-job' });
   let job = null;
-  let ready = null; // vidéo chargée pour le partage sur téléphone : { id, file, failed, loading, refresh }
+  let ready = null;
   let polling = 0;
   let expiryTimer = 0;
-  let netFails = 0; // consecutive tracking failures (network or 5xx): the job lives on the server, so we keep asking
+  let netFails = 0;
   let netIssue = false;
-  let delivered = false; // the clip was downloaded, shared or sent to TikTok
+  const markDelivered = () => {
+    S.delivered = true;
+    scheduleDraft();
+  };
   const jobActive = () => Boolean(job && ['queued', 'running'].includes(job.status));
   const setJob = (next) => {
     job = next;
@@ -1002,7 +996,6 @@ async function openEditor(youtubeId) {
   }
   pledge.addEventListener('change', renderCreateSummary);
 
-  // --- création en cours : les éléments sont gardés et seulement mis à jour (le bouton Annuler garde le focus, rien n'est relu en boucle)
   const run = {
     text: el('p', { class: 'st-job-text' }),
     bar: el('progress', { max: '100', 'aria-label': 'Avancement de la création' }),
@@ -1014,7 +1007,7 @@ async function openEditor(youtubeId) {
     try {
       await api('DELETE', `/render/${job.id}`);
     } catch {
-      // déjà terminé
+      // Already finished
     }
   });
   function showRunning() {
@@ -1042,7 +1035,7 @@ async function openEditor(youtubeId) {
 
   function showDone() {
     const jobId = job.id;
-    const filename = job.filename; // captured now: `job` may be replaced before the async work below ends
+    const filename = job.filename; // Captured now: `job` may change before the async work ends
     if (job.expiresAt == null && job.expires_in_s != null) job.expiresAt = Date.now() + job.expires_in_s * 1000;
     if (job.expiresAt != null && Date.now() >= job.expiresAt) return showExpired();
     const url = `/api/studio/render/${jobId}/file`;
@@ -1052,8 +1045,7 @@ async function openEditor(youtubeId) {
     const counted = (use) => api('POST', `/render/${jobId}/used`, { use }).catch(() => {});
     const share = el('button', { class: 'btn secondary small', type: 'button' }, 'Partager');
     const publish = el('button', { class: 'btn tiktok', type: 'button' }, 'Publier sur TikTok');
-    // Sur téléphone le fichier n'est chargé qu'après un premier appui (pas de données mobiles consommées d'office) ; le partage natif
-    // exige ensuite un nouvel appui, car il n'est autorisé que juste après un geste.
+    // Mobile: load the file on first tap; native share needs a fresh user gesture
     const prepare = () => {
       if (ready?.id === jobId) return;
       const mine = (ready = { id: jobId, file: null, failed: false, loading: true, refresh: null });
@@ -1081,18 +1073,16 @@ async function openEditor(youtubeId) {
       setPublishState();
     };
     const saveFile = () => {
-      delivered = true;
+      markDelivered();
       const a = el('a', { href: `${url}?use=download`, download: filename });
       document.body.append(a);
       a.click();
       a.remove();
     };
-    /** Ouvre l'application TikTok (Android : repli sur le site si elle n'est pas installée). */
     const openTikTok = () => {
       if (/Android/i.test(navigator.userAgent)) location.href = 'intent://#Intent;scheme=snssdk1233;package=com.zhiliaoapp.musically;S.browser_fallback_url=https%3A%2F%2Fwww.tiktok.com%2Fupload;end';
       else location.href = 'snssdk1233://';
     };
-    // Partage natif : la fiche du téléphone propose TikTok ; la vidéo arrive directement dans l'éditeur de TikTok.
     const nativeShare = (withText) => {
       const file = fileReady();
       if (!file) return null;
@@ -1104,16 +1094,13 @@ async function openEditor(youtubeId) {
         const p = nativeShare(false);
         if (!p) return say('Le partage direct n’est pas disponible ici : télécharge la vidéo.', 'err');
         await p;
-        delivered = true;
+        markDelivered();
         counted('share');
       } catch { /* partage annulé */ }
     });
-    // « Publier sur TikTok » : la description est copiée (TikTok ne la reçoit pas d'un partage), puis le téléphone ouvre sa fiche de
-    // partage avec la vidéo (TikTok y figure) ; sinon la vidéo est enregistrée et l'appli TikTok s'ouvre. Sur ordinateur, la vidéo
-    // est téléchargée et la page d'envoi de TikTok s'ouvre. (La publication automatique demande une application validée par TikTok.)
     publish.addEventListener('click', async () => {
       if (!mobile) {
-        window.open('https://www.tiktok.com/upload', '_blank', 'noopener'); // ouvert tout de suite : sinon le navigateur bloque la fenêtre
+        window.open('https://www.tiktok.com/upload', '_blank', 'noopener'); // Opened synchronously, otherwise the browser blocks the popup
         saveFile();
         const copied = await copyText(sourceField.value);
         return say(`${copied ? 'Description copiée. ' : ''}La vidéo se télécharge et TikTok s’ouvre : choisis le fichier, puis colle la description.`);
@@ -1124,7 +1111,7 @@ async function openEditor(youtubeId) {
       if (sharing) {
         try {
           await sharing;
-          delivered = true;
+          markDelivered();
           counted('share');
           return say((await copying) ? 'Description copiée : colle-la dans la légende de TikTok.' : 'Vidéo envoyée.');
         } catch (e) {
@@ -1155,8 +1142,8 @@ async function openEditor(youtubeId) {
       el('p', { class: 'st-job-text ok', role: 'status' }, 'Ta vidéo est prête !'),
       job.expiresAt != null ? expiry : null,
       el('video', { class: 'st-result', src: url, controls: true, playsinline: '', preload: 'metadata' }),
-      el('div', { class: 'st-job-actions' }, publish, el('a', { class: 'btn secondary', href: `${url}?use=download`, download: filename, onclick: () => { delivered = true; } }, 'Télécharger'), mobile ? share : null,
-        el('button', { class: 'btn secondary small', type: 'button', onclick: () => { stopExpiry(); delivered = false; setJob(null); showJob(); } }, 'Faire un autre clip')),
+      el('div', { class: 'st-job-actions' }, publish, el('a', { class: 'btn secondary', href: `${url}?use=download`, download: filename, onclick: () => { markDelivered(); } }, 'Télécharger'), mobile ? share : null,
+        el('button', { class: 'btn secondary small', type: 'button', onclick: () => { stopExpiry(); S.delivered = false; setJob(null); showJob(); } }, 'Faire un autre clip')),
       el('p', { class: 'st-help' }, 'Description et source prêtes à coller : « Copier la description » ci-dessus (la vidéo n’affiche pas la source).'));
   }
 
@@ -1183,26 +1170,25 @@ async function openEditor(youtubeId) {
     const id = job.id;
     try {
       const next = await api('GET', `/render/${id}`);
-      if (job?.id !== id) return; // another clip replaced it meanwhile
+      if (job?.id !== id) return;
       netFails = 0;
       netIssue = false;
       setJob(next);
     } catch (e) {
       if (e.gate || job?.id !== id) return;
       if (e.status !== 404) {
-        // network error or 5xx: the server keeps rendering, keep the id and retry with a growing delay
+        // Network error or 5xx: the server keeps rendering, retry with backoff
         netFails += 1;
         netIssue = true;
         showJob();
         polling = setTimeout(poll, Math.min(900 * 2 ** netFails, 10000));
         return;
       }
-      setJob({ id, status: 'error', error: e.message }); // 404 only: the clip is really gone
+      setJob({ id, status: 'error', error: e.message });
     }
     showJob();
     if (jobActive()) polling = setTimeout(poll, 900);
   }
-  /** Reprend un clip commencé avant le rechargement de la page. */
   async function resumeJob(id) {
     try {
       setJob(await api('GET', `/render/${id}`));
@@ -1224,7 +1210,7 @@ async function openEditor(youtubeId) {
     try {
       netFails = 0;
       netIssue = false;
-      delivered = false;
+      S.delivered = false;
       setJob(await api('POST', '/render', {
         youtube_id: S.video.youtube_id,
         extracts: S.extracts.map(exMs),
@@ -1244,9 +1230,8 @@ async function openEditor(youtubeId) {
     }
   });
 
-  // quitter la page pendant la création, ou avant d'avoir récupéré le clip, ferait perdre le résultat
   const beforeUnload = (e) => {
-    const waiting = job?.status === 'done' && !delivered && !(job.expiresAt != null && Date.now() >= job.expiresAt);
+    const waiting = job?.status === 'done' && !S.delivered && !(job.expiresAt != null && Date.now() >= job.expiresAt);
     if (!jobActive() && !waiting) return;
     e.preventDefault();
     e.returnValue = '';
@@ -1255,7 +1240,7 @@ async function openEditor(youtubeId) {
 
   // ============================================================ onglet B-roll (zooms et images)
   const panelFx = el('div', { class: 'st-panel' });
-  const fxNote = el('p', { class: 'st-msg', role: 'status' });
+  const fxNote = el('p', { class: 'st-msg' });
   let fxTimer = 0;
   const fxAlert = (msg) => {
     fxNote.className = 'st-msg err';
@@ -1391,7 +1376,6 @@ async function openEditor(youtubeId) {
       (song?.credit ? `\nMusique : ${song.title} — ${song.credit}` : '');
     sourceField.value = fitDescription(caption, source);
     countSource();
-    // Rows follow the wrapped length (~30 chars per line on a phone, links break late) so the source link is never hidden
     const wrapped = sourceField.value.split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / 30)), 0);
     sourceField.rows = Math.min(12, Math.max(3, wrapped + 1));
   }
@@ -1407,7 +1391,7 @@ async function openEditor(youtubeId) {
   };
 
   function renderEffects() {
-    if (panelFx.hidden) return; // rebuilt when the tab opens
+    if (panelFx.hidden) return;
     const total = totalS();
     const words = clipWords();
     const strengthChips = el('div', { class: 'seg st-stepchips', role: 'group', 'aria-label': 'Force du zoom' },
@@ -1495,7 +1479,7 @@ async function openEditor(youtubeId) {
     tabBar.querySelectorAll('[role="tab"]').forEach((b) => {
       const on = b.dataset.tab === id;
       b.setAttribute('aria-selected', String(on));
-      b.tabIndex = on ? 0 : -1; // roving tabindex: one tab stop, arrows move between tabs
+      b.tabIndex = on ? 0 : -1;
       if (on && focus) b.focus();
     });
     const next = tabs[tabIds.indexOf(id) + 1];
@@ -1557,7 +1541,6 @@ async function openEditor(youtubeId) {
   pushFraming();
   openTab('extraits');
 
-  // premier extrait : le mieux noté (sauf si un brouillon est rétabli)
   const best = [...S.suggestions].sort((x, y) => y.score - x.score)[0];
   if (!restored && best) addExtract(best.start_ms, best.end_ms, best.title, best.start_ms, best.description);
   else extractsChanged();
@@ -1584,7 +1567,7 @@ async function start() {
     if (id) await openEditor(id);
     else await showList();
   } catch (e) {
-    if (e.gate) return; // the login gate is already shown: do not replace it
+    if (e.gate) return;
     put(root, el('section', { class: 'card st-empty' },
       el('h2', {}, 'Oups'),
       el('p', { role: 'alert' }, e.message),

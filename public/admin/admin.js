@@ -64,7 +64,6 @@ const fmtDuration = (sec) => {
   return h ? `${h} h ${String(m).padStart(2, '0')}` : `${m} min`;
 };
 
-/** Duration in plain French: 150 -> "2 min 30", 600 -> "10 min". */
 const fmtSpan = (sec) => {
   const m = Math.floor(sec / 60);
   const s = Math.round(sec % 60);
@@ -82,13 +81,16 @@ function status(el, msg, kind = '') {
   el.className = `status ${kind}`;
 }
 
-/** Shows an error next to a control; an expired session goes to the login screen instead. */
 function fail(e, el) {
-  if (e instanceof AuthError) return renderLogin();
+  if (e instanceof AuthError) {
+    if (!dirtyGuard()) return renderLogin();
+    // Unsaved work: sign in again over the page instead of replacing it
+    reauth().then((ok) => (ok ? status(el, 'Reconnecté : relance ton action.', 'ok') : renderLogin()));
+    return undefined;
+  }
   status(el, e.message, 'err');
 }
 
-// Safety net: an expired session in any event handler leads to the login screen, never a silent failure
 window.addEventListener('unhandledrejection', (ev) => {
   if (ev.reason instanceof AuthError) {
     ev.preventDefault();
@@ -96,7 +98,6 @@ window.addEventListener('unhandledrejection', (ev) => {
   }
 });
 
-/** Disables the control and shows a waiting label while fn runs, so an action cannot be fired twice. */
 async function busy(btn, fn) {
   if (btn.disabled) return undefined;
   const isInput = btn.tagName === 'INPUT';
@@ -115,7 +116,6 @@ async function busy(btn, fn) {
 
 let toastEl = null;
 let toastTimer = 0;
-/** Floating message (role=status) that survives page redraws; an optional action button (undo). */
 function toast(text, kind = 'ok', actionLabel, onAction) {
   toastEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status' }));
   clearTimeout(toastTimer);
@@ -130,11 +130,10 @@ function toast(text, kind = 'ok', actionLabel, onAction) {
   toastTimer = setTimeout(() => (toastEl.hidden = true), actionLabel ? 10000 : 6000);
 }
 
-/** Login dialog shown over the editor when the session expires: resolves true once signed in again. */
 function reauth() {
   return new Promise((resolve) => {
     let settled = false;
-    // Settle explicitly: the dialog's async 'close' event is not a reliable signal on its own
+    // The dialog's async 'close' event is unreliable here: settle explicitly
     const finish = (ok) => {
       if (settled) return;
       settled = true;
@@ -173,7 +172,7 @@ function reauth() {
       ),
     );
     cancel.addEventListener('click', () => finish(false));
-    dlg.addEventListener('cancel', () => finish(false)); // Escape key
+    dlg.addEventListener('cancel', () => finish(false));
     dlg.addEventListener('close', () => finish(false));
     document.body.append(dlg);
     dlg.showModal();
@@ -184,7 +183,6 @@ function reauth() {
 
 const SCRIPT_URL = 'https://github.com/Pawzzz78/A-t-il-dit-a/tree/main/tools';
 
-/** Message for a feature the developer must switch on: plain French first, technical name small and secondary. */
 const unavailable = (text, tech, cls = 'status err') => h('p', { class: cls }, `Fonction indisponible : ${text} `, h('small', { class: 'tech' }, `(à activer par le développeur : ${tech})`));
 
 /** Commande à copier-coller, avec un bouton « Copier ». */
@@ -516,7 +514,7 @@ async function renderStudioStats() {
   const switcher = h('div', { class: 'pills', role: 'group', 'aria-label': 'Période' });
   const draw = () => {
     const p = st.periods[current];
-    const got = p.retrieved ?? p.downloaded + p.shared; // distinct clips when the server provides it
+    const got = p.retrieved ?? p.downloaded + p.shared;
     const rate = p.created ? Math.min(100, Math.round((got / p.created) * 100)) : null;
     const capped = p.created > 0 && got > p.created;
     switcher.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.p === current)));
@@ -568,12 +566,11 @@ async function renderMusicLibrary() {
     h('select', { onchange, 'aria-label': 'Catégorie' }, data.categories.map((c) => h('option', { value: c.id, selected: c.id === value }, c.label)));
   const root = h('div');
   const note = h('p', { class: 'status', role: 'status' });
-  let libTitle = null; // refs to the library section, updated in place so other rows keep their edits and audio
+  let libTitle = null;
   let libBody = null;
   let libUl = null;
-  let upXhr = null; // running upload request
+  let upXhr = null;
 
-  // Runs one change through busy(); apply() patches only the affected row. Returns true on success.
   async function mutate(ctrl, method, path, body, okMsg, apply) {
     return (
       (await busy(ctrl, async () => {
@@ -667,7 +664,6 @@ async function renderMusicLibrary() {
     const creditInput = h('input', { class: 'text', type: 'text', value: t.credit ?? '', maxlength: '200', placeholder: 'Crédit (facultatif)', 'aria-label': 'Crédit' });
     const li = h('li', { class: `mrow${t.enabled ? '' : ' off'}`, 'data-id': t.id });
     const offBadge = h('span', { class: 'badge off-badge', hidden: t.enabled }, 'Masqué');
-    // Patches this row only: other rows keep their unsaved edits and playing audio
     const patch = (ctrl, body, okMsg) =>
       mutate(ctrl, 'PATCH', `/${t.id}`, body, okMsg, () => {
         const nt = [...data.library, ...data.builtin].find((x) => x.id === t.id);
@@ -708,7 +704,7 @@ async function renderMusicLibrary() {
     root.replaceChildren(
       h('section', { class: 'panel' },
         h('h2', {}, 'Ajouter un morceau'),
-        h('p', { class: 'status' }, `MP3, M4A, WAV, OGG ou FLAC, de ${data.limits.minS} s à ${fmtSpan(data.limits.maxS)}, ${Math.round(data.limits.maxBytes / 1048576)} Mo au maximum. Le morceau est converti en MP3 et son volume est égalisé pour que tous sonnent pareil sous la voix (les ${fmtSpan(data.limits.keepS)} premières minutes sont conservées).`),
+        h('p', { class: 'status' }, `MP3, M4A, WAV, OGG ou FLAC, de ${data.limits.minS} s à ${fmtSpan(data.limits.maxS)}, ${Math.round(data.limits.maxBytes / 1048576)} Mo au maximum. Le morceau est converti en MP3 et son volume est égalisé pour que tous sonnent pareil sous la voix (seules les ${fmtSpan(data.limits.keepS)} du début sont conservées).`),
         h('div', { class: 'field' }, h('label', { for: 'mfile' }, 'Fichier audio'), file),
         h('div', { class: 'field' }, h('label', { for: 'mtitle' }, 'Titre'), title),
         h('div', { class: 'field' }, h('label', { for: 'mcat' }, 'Catégorie'), category),
@@ -873,7 +869,7 @@ async function renderWallAdmin() {
   function draw() {
     clearTimeout(timer);
     const { config: cfg, last_run: last, counts, busy: wallBusy } = data;
-    // The in-memory flag is the truth; a 'running' row older than 30 min is a leftover of a restart
+    // A 'running' row older than 30 min is a leftover from a restart
     const stale = last?.status === 'running' && Date.now() - new Date(last.started_at).getTime() > 30 * 60 * 1000;
     const running = Boolean(wallBusy) || (last?.status === 'running' && !stale);
     const refreshBtn = h('button', { class: 'btn', type: 'button', disabled: running || !cfg.has_token || !cfg.enabled }, running ? 'Actualisation en cours…' : 'Actualiser maintenant');
@@ -935,9 +931,8 @@ async function renderSync() {
   const gen = routeGen;
   const o = await api('GET', '/sync/overview');
   if (gen !== routeGen) return; // left the page meanwhile: never repaint over another page
-  let inFlight = 0; // requests started from this page: the periodic refresh must not redraw under them
-  const counters = {}; // number elements, updated in place by the periodic refresh
-  // fn may return a text to show once the page is reloaded; the result goes to a floating status toast
+  let inFlight = 0;
+  const counters = {};
   const act = (btn, fn, okMsg) =>
     busy(btn, async () => {
       inFlight++;
@@ -1212,7 +1207,7 @@ async function renderSync() {
       x.failed.map((v) => v.id),
     ]);
   const sig = sigOf(o);
-  // A full redraw would wipe typed text and focus: only allowed when the page is idle
+  // A full redraw would wipe typed text and focus
   const idle = () => {
     const ae = document.activeElement;
     const typing = ae && $app.contains(ae) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(ae.tagName);
@@ -1233,7 +1228,7 @@ async function renderSync() {
       set('sFailed', fresh.summaries.failed);
       if (sigOf(fresh) !== sig && idle()) await renderSync();
     } catch (err) {
-      if (err instanceof AuthError) renderLogin(); // other errors: keep the page, retry on the next tick
+      if (err instanceof AuthError) renderLogin();
     }
   };
   const timer = setInterval(tick, 20000);
@@ -1256,7 +1251,7 @@ async function renderEditor(id) {
   let clipState = firstClipState;
   let segs = segments.map((s) => ({ ...s, orig: s.text, origStart: s.start_ms }));
   let dirty = false;
-  let rev = 0; // bumped on every edit: tells save() whether something changed while the request was in flight
+  let rev = 0;
   let saving = false;
   let player = null;
   let activeIdx = -1;
@@ -1274,7 +1269,6 @@ async function renderEditor(id) {
     setDirty(true);
   };
   const savedInfo = { title: video.title ?? '', channel: video.channel ?? '', date: video.published_at?.slice(0, 10) ?? '', lang: video.lang ?? '' };
-  // Any unsaved work: transcript segments, summary text or the video fields
   const isDirty = () => dirty || sumArea.value !== summary.content || Object.keys(savedInfo).some((k) => f[k].value !== savedInfo[k]);
   dirtyGuard = () => (uploading ? 'Un envoi de vidéo est en cours : quitter l’interrompra. Quitter quand même ?' : isDirty());
   const beforeUnload = (e) => isDirty() && e.preventDefault();
@@ -1451,10 +1445,14 @@ async function renderEditor(id) {
             renderSegs();
             rowEls[Math.min(i, rowEls.length - 1)]?.querySelector('textarea')?.focus();
             toast('Segment supprimé.', 'ok', 'Annuler', () => {
-              segs.splice(i, 0, removed);
+              if (pageLeft) return;
+              // Reinsert by time: other rows may have changed since
+              let at = segs.findIndex((x) => x.start_ms > removed.start_ms);
+              if (at < 0) at = segs.length;
+              segs.splice(at, 0, removed);
               markDirty();
               renderSegs();
-              rowEls[i]?.querySelector('textarea')?.focus();
+              rowEls[at]?.querySelector('textarea')?.focus();
             });
           }),
         ),
@@ -1493,7 +1491,6 @@ async function renderEditor(id) {
     activeIdx = idx;
     const el = rowEls[idx];
     el?.classList.add('active');
-    // No auto-scroll while the user is typing in a segment
     if (follow.checked && !document.activeElement?.classList.contains('tseg-text')) el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, 400);
 
@@ -1686,7 +1683,7 @@ async function renderEditor(id) {
         fail(e, sumMsg);
       }
     });
-    saveSum.disabled = ok; // saved: nothing left to save until the next edit
+    saveSum.disabled = ok;
   });
   const summaryPanel = h(
     'section',
@@ -1752,7 +1749,7 @@ async function renderEditor(id) {
     clearTimeout(facesTimer);
     const fc = clipState?.faces;
     if (!clipState?.file || !fc || fc.status === 'off') return facesBox.replaceChildren();
-    const busy = fc.status === 'queued' || fc.status === 'running';
+    const analysing = fc.status === 'queued' || fc.status === 'running';
     const phase = fc.phase === 'identify' ? 'Reconnaissance de David Lisnard' : 'Analyse';
     const id2 = fc.ident ?? { state: 'off' };
     const text = {
@@ -1781,7 +1778,7 @@ async function renderEditor(id) {
         drawFaces();
       } }, 'Lancer la reconnaissance')
       : null;
-    const btn = h('button', { class: 'btn secondary small', type: 'button', disabled: busy }, fc.status === 'ready' || fc.status === 'failed' || fc.status === 'stale' ? 'Relancer l’analyse' : 'Analyser les visages');
+    const btn = h('button', { class: 'btn secondary small', type: 'button', disabled: analysing }, fc.status === 'ready' || fc.status === 'failed' || fc.status === 'stale' ? 'Relancer l’analyse' : 'Analyser les visages');
     btn.addEventListener('click', async () => {
       await busy(btn, async () => {
         try {
@@ -1802,7 +1799,7 @@ async function renderEditor(id) {
         : null,
       identText ? h('p', { class: 'status' }, identText) : null,
       h('div', { class: 'actions' }, btn, identBtn));
-    if (busy) {
+    if (analysing) {
       facesTimer = setTimeout(async () => {
         try {
           clipState = await api('GET', `/videos/${id}/clips`);
@@ -2092,7 +2089,7 @@ async function renderEditor(id) {
     saving = true;
     saveBtn.disabled = true;
     status(saveMsg, 'Enregistrement…');
-    // Send a snapshot: edits made during the request stay dirty, and local rows are never dropped
+    // Snapshot: edits made during the request stay dirty
     const sentRev = rev;
     const snapshot = segs.map((s) => ({ seg: s, text: s.text, start: s.start_ms }));
     const payload = segs
@@ -2103,7 +2100,7 @@ async function renderEditor(id) {
         await putSegments(payload);
       } catch (err) {
         if (!(err instanceof AuthError) || !(await reauth())) throw err;
-        await putSegments(payload); // signed in again without leaving the page: nothing typed is lost
+        await putSegments(payload);
       }
       for (const { seg, text, start } of snapshot) {
         if (seg.text === text && seg.start_ms === start) {

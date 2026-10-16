@@ -76,7 +76,7 @@ export function createPhone({ onMove, onCrop, onPick }) {
   });
   const music = new Audio();
   music.loop = true;
-  music.preload = 'none'; // the track is fetched on first play
+  music.preload = 'none';
   music.addEventListener('loadedmetadata', () => syncMusic());
 
   let cfg = { groups: [], style: null, font: null };
@@ -380,7 +380,6 @@ export function createPhone({ onMove, onCrop, onPick }) {
       }
       if (framing.fit !== 'crop') hint.hidden = true;
     },
-    /** Overlay message. `soft`: small badge that keeps the video visible; `retry`: adds a « Réessayer » button. */
     setBusy(message, { soft = false, retry = null } = {}) {
       busy.hidden = !message;
       busy.classList.toggle('soft', Boolean(message) && soft && !retry);

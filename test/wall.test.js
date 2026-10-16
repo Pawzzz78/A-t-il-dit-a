@@ -384,6 +384,10 @@ test('actualisation : une seule à la fois, pas trop rapprochées, échec d\'Api
   const [a, b] = await Promise.all([call('POST', '/api/admin/wall/refresh'), call('POST', '/api/admin/wall/refresh')]);
   assert.deepEqual([a.status, b.status].sort(), [202, 409]);
   await wall.wallIdle();
+  polls = 0;
+  const both = await Promise.all([wall.startWallRefresh(), wall.startWallRefresh()]);
+  assert.deepEqual(both.map((r) => r.started), [true, false]);
+  await wall.wallIdle();
 });
 
 test('classement : 13 clips au plus, les meilleurs d\'après le score ; les onglets réordonnent ces 13 ; la période choisit les 13 de la période', { skip: !enabled }, async () => {
