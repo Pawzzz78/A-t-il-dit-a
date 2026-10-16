@@ -39,6 +39,7 @@ export async function recordEvent(kind, { jobId, youtubeId, ip }) {
 /** Efface les empreintes de plus de 90 jours (les compteurs restent). */
 export async function purgeVisitors() {
   await pool.query(`UPDATE studio_events SET visitor = NULL WHERE visitor IS NOT NULL AND created_at < now() - make_interval(days => $1::int)`, [VISITOR_RETENTION_DAYS]);
+  await pool.query(`DELETE FROM library_downloads WHERE who LIKE 'v:%' AND created_at < now() - make_interval(days => $1::int)`, [VISITOR_RETENTION_DAYS]);
 }
 
 const PERIODS = {

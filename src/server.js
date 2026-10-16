@@ -6,6 +6,7 @@ import { initDb } from './db.js';
 import { ffmpegAvailable, storageDir } from './media.js';
 import { requireMember } from './members/session.js';
 import { adminRouter } from './routes/admin.js';
+import { libraryRouter } from './routes/library.js';
 import { membersRouter } from './routes/members.js';
 import { publicRouter } from './routes/public.js';
 import { studioRouter } from './routes/studio.js';
@@ -14,6 +15,7 @@ import { startStudioCleanup, studioCapabilities } from './studio/render.js';
 import { startSummaryScheduler } from './auto-summaries.js';
 import { startScheduler } from './sync.js';
 import { startWallScheduler } from './wall/wall.js';
+import { startLibraryMaintenance } from './library/library.js';
 
 // Origins the pages really use: YouTube (admin player, thumbnails), TikTok (wall), Pixabay/Pexels (stock thumbnails).
 // Inline styles stay allowed: the studio injects its @font-face rules and the admin sets style attributes.
@@ -53,6 +55,7 @@ export function createApp() {
   app.use('/api/auth', membersRouter);
   app.use('/api/studio', requireMember, studioRouter);
   app.use('/api/wall', wallRouter);
+  app.use('/api/library', libraryRouter);
   app.use('/api', publicRouter);
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Route inconnue.' }));
   // anciennes adresses (recherche, vidéos, tendances, studio) : le site ne propose plus que le studio, à la racine
@@ -94,4 +97,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   startSummaryScheduler();
   startStudioCleanup();
   startWallScheduler();
+  startLibraryMaintenance();
 }
