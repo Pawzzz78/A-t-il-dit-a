@@ -370,6 +370,29 @@ Deuxième section du site, `/mur/` : un mur des meilleurs TikToks publiés avec 
   en texte brut.
 - Tables : `wall_clips`, `wall_hidden_authors` ; dernière actualisation dans `settings` (`wall_last_run`). Tests : `test/wall.test.js` (Apify simulé).
 
+## Bibliothèque de clips
+
+Troisième section du site, `/bibliotheque/` : les clips créés dans le studio, partagés par la communauté.
+
+- **Publication** : sur l'écran « vidéo prête » du studio, la case « Publier dans la bibliothèque » (cochée par défaut, mémorisée) publie le clip,
+  public par défaut ; il peut passer en privé (visible seulement dans « Mes clips ») ou être retiré. Pas de validation préalable : l'admin masque après coup.
+- **Réutilisation** : télécharger le MP4 tel quel, **Republier** (le clip apparaît dans « Mes clips », sans copie du fichier), **Modifier** (ouvre
+  l'éditeur avec les réglages du clip : extraits, style, musique, cadrage, corrections ; la nouvelle version est liée à l'original). Note de 1 à 5 étoiles
+  (une par personne, pas sur son propre clip), nombre de téléchargements (une fois par personne), tri récents / plus téléchargés / mieux notés
+  (moyenne bayésienne), filtre par interview. Chaque clip affiche sa source.
+- **Propriétaire, sans compte** : adhérent connecté (empreinte de son identifiant SSO) ou, si le studio est ouvert à tous, un cookie signé `own`
+  posé à la première action. Seule une empreinte HMAC (`OWNER_KEY_SECRET`, sinon `SESSION_SECRET`) est stockée ; elle n'est jamais renvoyée au public.
+  En mode adhérents, consulter et télécharger restent ouverts à tous ; publier, noter, republier et signaler demandent la connexion.
+- **Stockage** : `<STORAGE_DIR>/library/<id>.mp4` (lien physique vers le rendu, sans copie) et une affiche JPEG. La vidéo est gardée
+  `LIBRARY_RETENTION_DAYS` jours (**30**), puis archivée : seuls les réglages restent, et « Recréer » refait la vidéo (mêmes limites qu'un rendu du
+  studio ; refusé si l'interview a été remplacée, « Modifier » est alors proposé). Plafonds : `LIBRARY_MAX_MB` au total (1 500 Mo), espace libre minimal
+  du volume, `LIBRARY_MAX_PER_OWNER` vidéos par personne (30), publications par heure, volume téléchargé par connexion et par heure.
+- **Modération** (admin → « Bibliothèque ») : signalements (un par personne, masquage automatique à `LIBRARY_AUTOHIDE_REPORTS`, 0 pour jamais),
+  masquer un clip ou tous les clips d'un auteur, archiver la vidéo, supprimer. « Effacer mes données » (onglet « Mes clips ») supprime tout ce qui se
+  rattache à la personne.
+- Tables : `library_clips`, `library_downloads`, `library_ratings`, `library_reports`, `library_hidden_owners`. Code : `src/library/`,
+  `src/routes/library.js`, `public/js/library.js`. Tests : `test/library.test.js`.
+
 ## Structure
 
 ```
