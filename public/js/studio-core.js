@@ -23,7 +23,7 @@ export const PRESETS = {
   },
   'un-mot': {
     label: 'Un mot à la fois',
-    hint: 'Un seul gros mot, très rythmé',
+    hint: 'Un seul mot à la fois, très rythmé',
     style: { mode: 'one', wordsPerGroup: 1, font: 'montserrat', size: 128, color: '#FFFFFF', highlight: '#FFFFFF', outline: 12, outlineColor: '#000000', shadow: 0, box: false, uppercase: true, animation: 'pop', y: 0.6 },
   },
   karaoke: {
