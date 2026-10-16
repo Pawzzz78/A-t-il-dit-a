@@ -98,11 +98,16 @@ const compact = new Intl.NumberFormat('fr-FR', { notation: 'compact', maximumFra
 const full = new Intl.NumberFormat('fr-FR');
 const fmt = (n) => (n < 1000 ? String(n) : compact.format(n));
 
+const parisDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' });
+const dayNumber = (ms) => Date.parse(parisDay.format(ms)) / 86_400_000;
+const pts = (n) => `${n} point${n > 1 ? 's' : ''}`;
+
 function ago(iso) {
   if (!iso) return '';
-  const days = Math.round((Date.now() - Date.parse(iso)) / 86_400_000);
+  const days = Math.max(0, dayNumber(Date.now()) - dayNumber(Date.parse(iso)));
   const rtf = new Intl.RelativeTimeFormat('fr', { numeric: 'auto' });
   if (days < 1) return 'aujourd’hui';
+  if (days < 2) return 'hier';
   if (days < 30) return rtf.format(-days, 'day');
   if (days < 365) return rtf.format(-Math.round(days / 30), 'month');
   return rtf.format(-Math.round(days / 365), 'year');
@@ -130,7 +135,7 @@ function card(c, rank, { podium = false } = {}) {
   const button = el('button', { class: 'clip-open', type: 'button', 'aria-label': label, style: `clip-path:${tornPolygon(c.id, { amp: podium ? 6 : 5, edges: 'tblr', along: 16 })}`, onclick: () => openClip(c) },
     photo,
     el('span', { class: 'clip-caption' }, el('span', { class: 'clip-author' }, `@${c.author}`), el('span', { class: 'clip-stats' }, stats(c))));
-  return el('li', { class: 'clip', style: podium ? '' : `--tilt:${tilt.toFixed(2)}deg;--lift:${lift}px;--tape:${(rnd() * 14 - 7).toFixed(1)}deg` },
+  return el('li', { class: podium ? `clip r${rank}` : 'clip', style: podium ? '' : `--tilt:${tilt.toFixed(2)}deg;--lift:${lift}px;--tape:${(rnd() * 14 - 7).toFixed(1)}deg` },
     button,
     el('span', { class: 'clip-tape', 'aria-hidden': 'true' }),
     rank ? el('span', { class: 'clip-rank', 'aria-hidden': 'true' }, ordinal(rank)) : null);
@@ -141,20 +146,44 @@ function card(c, rank, { podium = false } = {}) {
 const dialog = $('dialog');
 function openClip(c) {
   $('dialog-title').textContent = `@${c.author}`;
-  $('dialog-text').textContent = [c.text, ago(c.created_at)].filter(Boolean).join(' · ');
+  const text = $('dialog-text');
+  text.textContent = [c.text, ago(c.created_at)].filter(Boolean).join(' · ');
+  text.classList.add('clamped');
+  const more = $('dialog-more');
+  more.hidden = true;
+  more.setAttribute('aria-expanded', 'false');
+  more.textContent = 'Voir plus';
   $('dialog-stats').replaceChildren(...stats(c, true));
   $('dialog-link').href = tiktokUrl(c);
   // le lecteur officiel de TikTok n'est chargé qu'ici, à la demande du visiteur
   $('dialog-player').replaceChildren(el('iframe', { src: `https://www.tiktok.com/embed/v2/${encodeURIComponent(c.id)}`, title: `Clip de @${c.author}`, allow: 'encrypted-media; fullscreen', allowfullscreen: true, referrerpolicy: 'strict-origin-when-cross-origin', loading: 'eager' }));
   dialog.showModal();
+  more.hidden = text.scrollHeight <= text.clientHeight + 1;
 }
+$('dialog-more').addEventListener('click', (e) => {
+  const open = !$('dialog-text').classList.toggle('clamped');
+  e.currentTarget.setAttribute('aria-expanded', String(open));
+  e.currentTarget.textContent = open ? 'Voir moins' : 'Voir plus';
+});
 dialog.addEventListener('close', () => $('dialog-player').replaceChildren()); // arrête la lecture
-dialog.addEventListener('click', (e) => e.target === dialog && dialog.close()); // clic sur le fond
+dialog.addEventListener('click', (e) => {
+  if (e.target !== dialog) return;
+  const r = dialog.getBoundingClientRect(); // Padding clicks also target the dialog: only clicks outside its box close it
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) dialog.close();
+});
 
 // --- affichage ------------------------------------------------------------------------------------------------------------------------
 
+const sortButtons = new Map();
 function renderSorts() {
-  $('sorts').replaceChildren(...SORTS.map(([key, label]) => el('button', { type: 'button', 'aria-pressed': String(state.sort === key), onclick: () => { state.sort = key; sync(); show(); } }, label)));
+  if (!sortButtons.size) {
+    for (const [key, label] of SORTS) {
+      const b = el('button', { type: 'button', onclick: () => { state.sort = key; sync(); show(); } }, label);
+      sortButtons.set(key, b);
+      $('sorts').append(b);
+    }
+  }
+  for (const [key, b] of sortButtons) b.setAttribute('aria-pressed', String(state.sort === key));
 }
 
 function sync() {
@@ -178,11 +207,13 @@ function render() {
   const all = ordered();
   const podium = state.sort === 'score' && all.length >= 3 ? all.slice(0, 3) : [];
   const rest = all.slice(podium.length);
-  $('podium').replaceChildren(...podium.map((c, i) => card(c, i + 1, { podium: true })));
+  const visual = [1, 0, 2].filter((i) => i < podium.length); // DOM order matches the visual order so tabbing follows the eye
+  $('podium').replaceChildren(...visual.map((i) => card(podium[i], i + 1, { podium: true })));
   $('grid').replaceChildren(...rest.map((c, i) => card(c, podium.length + i + 1)));
   const sub = $('sub');
   sub.hidden = !rest.length;
-  sub.textContent = podium.length ? `Du ${podium.length + 1}ᵉ au ${all.length}ᵉ rang` : `Classés par ${{ views: 'vues', likes: 'j’aime', comments: 'commentaires' }[state.sort]}`;
+  const by = { score: 'le classement', views: 'les vues', likes: 'les j’aime', comments: 'les commentaires' }[state.sort];
+  sub.textContent = podium.length ? `Du ${podium.length + 1}ᵉ au ${all.length}ᵉ rang` : `Classés selon ${by}`;
 }
 
 /** Affiche la réponse du serveur pour la période choisie. */
@@ -193,10 +224,11 @@ function show(data) {
   state.total = data.total;
   state.max = data.max ?? state.max;
   state.loading = false;
-  $('stamp-n').textContent = state.max;
-  $('stamp').hidden = false;
+  $('stamp-n').textContent = Math.min(data.total, state.max);
+  $('stamp').hidden = !data.total || data.enabled === false;
+  $('wall-bar').hidden = data.enabled === false || (!data.total && state.period === 'all');
   $('updated').textContent = data.updated_at ? `Mis à jour ${ago(data.updated_at)}, ${new Date(data.updated_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.` : '';
-  $('explain').textContent = `Le mur présente les ${data.max} meilleurs clips ; les onglets les réordonnent. Le classement additionne les vues, ${data.weights.likes} fois les j’aime et ${data.weights.comments} fois les commentaires (${data.weights.views === 1 ? 'les vues comptent pour 1' : `les vues comptent pour ${data.weights.views}`}). Sont repris les clips publiés avec #${data.hashtag}.`;
+  $('explain').textContent = `Le mur présente les ${data.max} meilleurs clips ; les onglets les réordonnent. Chaque clip reçoit un score : ${pts(data.weights.views)} par vue, ${pts(data.weights.likes)} par j’aime et ${pts(data.weights.comments)} par commentaire. Sont repris les clips publiés avec #${data.hashtag}.`;
   if (state.total) $('state').textContent = '';
   else if (data.enabled === false) $('state').textContent = 'Le mur est désactivé pour le moment.';
   else if (state.period === 'all') $('state').textContent = 'Le mur se remplit : aucun clip pour le moment. Sois le premier : publie ton TikTok avec #lisnard2027 !';

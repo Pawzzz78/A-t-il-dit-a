@@ -18,7 +18,11 @@ function h(tag, props = {}, ...children) {
   return el;
 }
 
-class AuthError extends Error {}
+class AuthError extends Error {
+  constructor(message = 'Session expirée : reconnecte-toi.') {
+    super(message);
+  }
+}
 
 async function api(method, path, body) {
   const res = await fetch(`/api/admin${path}`, {
@@ -60,6 +64,12 @@ const fmtDuration = (sec) => {
   return h ? `${h} h ${String(m).padStart(2, '0')}` : `${m} min`;
 };
 
+const fmtSpan = (sec) => {
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return m ? `${m} min${s ? ` ${String(s).padStart(2, '0')}` : ''}` : `${s} s`;
+};
+
 const fmtDate = (d) => {
   if (!d) return '—';
   const [y, m, day] = d.slice(0, 10).split('-').map(Number);
@@ -71,8 +81,109 @@ function status(el, msg, kind = '') {
   el.className = `status ${kind}`;
 }
 
+function fail(e, el) {
+  if (e instanceof AuthError) {
+    if (!dirtyGuard()) return renderLogin();
+    // Unsaved work: sign in again over the page instead of replacing it
+    reauth().then((ok) => (ok ? status(el, 'Reconnecté : relance ton action.', 'ok') : renderLogin()));
+    return undefined;
+  }
+  status(el, e.message, 'err');
+}
+
+window.addEventListener('unhandledrejection', (ev) => {
+  if (ev.reason instanceof AuthError) {
+    ev.preventDefault();
+    renderLogin();
+  }
+});
+
+async function busy(btn, fn) {
+  if (btn.disabled) return undefined;
+  const isInput = btn.tagName === 'INPUT';
+  const label = btn.textContent;
+  btn.disabled = true;
+  if (!isInput) btn.textContent = '… en cours';
+  try {
+    return await fn();
+  } finally {
+    if (btn.isConnected) {
+      btn.disabled = false;
+      if (!isInput) btn.textContent = label;
+    }
+  }
+}
+
+let toastEl = null;
+let toastTimer = 0;
+function toast(text, kind = 'ok', actionLabel, onAction) {
+  toastEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status' }));
+  clearTimeout(toastTimer);
+  toastEl.className = `toast ${kind}`;
+  toastEl.replaceChildren(
+    text,
+    actionLabel
+      ? h('button', { type: 'button', class: 'btn secondary small', onclick: () => { toastEl.hidden = true; onAction(); } }, actionLabel)
+      : null,
+  );
+  toastEl.hidden = false;
+  toastTimer = setTimeout(() => (toastEl.hidden = true), actionLabel ? 10000 : 6000);
+}
+
+function reauth() {
+  return new Promise((resolve) => {
+    let settled = false;
+    // The dialog's async 'close' event is unreliable here: settle explicitly
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      if (dlg.open) dlg.close();
+      dlg.remove();
+      resolve(ok);
+    };
+    const msg = h('p', { class: 'status', role: 'status' });
+    const pw = h('input', { type: 'password', autocomplete: 'current-password', required: true });
+    const ok = h('button', { class: 'btn', type: 'submit' }, 'Se reconnecter');
+    const cancel = h('button', { class: 'btn secondary', type: 'button' }, 'Annuler');
+    const dlg = h(
+      'dialog',
+      { class: 'panel reauth', 'aria-labelledby': 'reauth-title' },
+      h(
+        'form',
+        {
+          onsubmit: (ev) => {
+            ev.preventDefault();
+            busy(ok, async () => {
+              try {
+                await api('POST', '/login', { password: pw.value });
+                finish(true);
+              } catch (err) {
+                status(msg, err.message, 'err');
+                pw.select();
+              }
+            });
+          },
+        },
+        h('h2', { id: 'reauth-title' }, 'Session expirée'),
+        h('p', { class: 'status' }, 'Reconnecte-toi pour enregistrer : tes modifications sont conservées.'),
+        h('label', { class: 'field' }, 'Mot de passe', pw),
+        h('div', { class: 'actions' }, ok, cancel),
+        msg,
+      ),
+    );
+    cancel.addEventListener('click', () => finish(false));
+    dlg.addEventListener('cancel', () => finish(false));
+    dlg.addEventListener('close', () => finish(false));
+    document.body.append(dlg);
+    dlg.showModal();
+    pw.focus();
+  });
+}
+
 
 const SCRIPT_URL = 'https://github.com/Pawzzz78/A-t-il-dit-a/tree/main/tools';
+
+const unavailable = (text, tech, cls = 'status err') => h('p', { class: cls }, `Fonction indisponible : ${text} `, h('small', { class: 'tech' }, `(à activer par le développeur : ${tech})`));
 
 /** Commande à copier-coller, avec un bouton « Copier ». */
 function commandBox(command) {
@@ -121,22 +232,33 @@ function loadYT() {
 
 // --------------------------------------------------------------------- routeur
 
-async function route() {
+function confirmLeave() {
   const ask = dirtyGuard();
-  if (ask && !confirm(typeof ask === 'string' ? ask : 'Des modifications ne sont pas enregistrées. Quitter quand même ?')) {
+  return !ask || confirm(typeof ask === 'string' ? ask : 'Des modifications ne sont pas enregistrées. Quitter quand même ?');
+}
+
+function resetPage() {
+  routeGen++;
+  cleanup();
+  cleanup = () => {};
+  dirtyGuard = () => false;
+}
+
+async function route() {
+  if (!confirmLeave()) {
     // Restore the previous address without firing hashchange (history.back() would ask again)
     history.replaceState(null, '', `${location.pathname}${location.search}${lastHash}`);
     return;
   }
   lastHash = location.hash;
-  routeGen++;
-  cleanup();
-  cleanup = () => {};
-  dirtyGuard = () => false;
+  resetPage();
+  const gen = routeGen;
   try {
     const me = await api('GET', '/me');
+    if (gen !== routeGen) return;
     if (!me.authenticated) return renderLogin();
     renderNav();
+    $app.replaceChildren(h('p', { class: 'status', role: 'status' }, 'Chargement…'));
     const m = location.hash.match(/^#\/video\/(\d+)/);
     if (m) await renderEditor(Number(m[1]));
     else if (location.hash === '#/sync') await renderSync();
@@ -145,21 +267,31 @@ async function route() {
     else if (location.hash === '#/visages') await renderFaceReferences();
     else if (location.hash === '#/mur') await renderWallAdmin();
     else await renderList();
+    if (gen !== routeGen) return;
+    const title = $app.querySelector('h2, h1');
+    if (title) {
+      title.tabIndex = -1;
+      title.focus({ preventScroll: true });
+    }
   } catch (e) {
+    if (gen !== routeGen) return;
     if (e instanceof AuthError) return renderLogin();
-    $app.replaceChildren(h('p', { class: 'status err' }, e.message));
+    $app.replaceChildren(h('p', { class: 'status err', role: 'alert' }, e.message));
   }
 }
 window.addEventListener('hashchange', route);
 
 function renderNav() {
+  const hash = location.hash;
+  const here = hash === '' || hash === '#' || hash === '#/' || hash.startsWith('#/video/') ? '#/' : hash;
+  const link = (href, label) => h('a', { href, 'aria-current': href === here ? 'page' : null }, label);
   $nav.replaceChildren(
-    h('a', { href: '#/' }, 'Vidéos'),
-    h('a', { href: '#/sync' }, 'Synchronisation'),
-    h('a', { href: '#/studio' }, 'Studio'),
-    h('a', { href: '#/musique' }, 'Musique'),
-    h('a', { href: '#/visages' }, 'Reconnaissance'),
-    h('a', { href: '#/mur' }, 'Mur'),
+    link('#/', 'Vidéos'),
+    link('#/sync', 'Synchronisation'),
+    link('#/studio', 'Stats studio'),
+    link('#/musique', 'Musique'),
+    link('#/visages', 'Reconnaissance'),
+    link('#/mur', 'Mur'),
     h('a', { href: '/' }, 'Voir le site'),
     h(
       'a',
@@ -167,11 +299,11 @@ function renderNav() {
         href: '#',
         onclick: async (e) => {
           e.preventDefault();
+          if (!confirmLeave()) return;
           try {
             await api('POST', '/logout', {});
           } catch (err) {
-            alert(err.message);
-            return;
+            if (!(err instanceof AuthError)) return alert(err.message);
           }
           renderLogin();
         },
@@ -184,26 +316,30 @@ function renderNav() {
 // ----------------------------------------------------------------------- login
 
 function renderLogin() {
+  resetPage();
   $nav.replaceChildren();
-  const msg = h('p', { class: 'status' });
+  const msg = h('p', { class: 'status', role: 'status' });
   const pw = h('input', { type: 'password', autocomplete: 'current-password', required: true, autofocus: true });
+  const submit = h('button', { class: 'btn', type: 'submit' }, 'Se connecter');
   const form = h(
     'form',
     {
       class: 'panel login',
-      onsubmit: async (e) => {
+      onsubmit: (e) => {
         e.preventDefault();
-        try {
-          await api('POST', '/login', { password: pw.value });
-          route();
-        } catch (err) {
-          status(msg, err.message, 'err');
-        }
+        busy(submit, async () => {
+          try {
+            await api('POST', '/login', { password: pw.value });
+            route();
+          } catch (err) {
+            status(msg, err.message, 'err');
+          }
+        });
       },
     },
     h('h2', {}, 'Connexion'),
     h('label', { class: 'field' }, 'Mot de passe', pw),
-    h('button', { class: 'btn', type: 'submit' }, 'Se connecter'),
+    submit,
     msg,
   );
   $app.replaceChildren(form);
@@ -213,16 +349,18 @@ function renderLogin() {
 // ----------------------------------------------------------------------- liste
 
 async function renderList() {
+  const gen = routeGen;
   const [videos, config] = await Promise.all([api('GET', '/videos'), api('GET', '/config')]);
+  if (gen !== routeGen) return;
 
   const tbody = h('tbody');
   for (const v of videos) {
     tbody.append(
       h(
         'tr',
-        { class: 'clickable', onclick: () => (location.hash = `#/video/${v.id}`) },
+        { class: 'clickable', 'data-q': [v.title, v.channel, v.youtube_id].filter(Boolean).join(' ').toLowerCase(), onclick: () => (location.hash = `#/video/${v.id}`) },
         h('td', {}, v.thumbnail_url ? h('img', { src: v.thumbnail_url, alt: '', loading: 'lazy' }) : null),
-        h('td', {}, h('div', { class: 't' }, v.title || v.youtube_id), h('div', { class: 'status' }, [v.channel, fmtDuration(v.duration_s)].filter(Boolean).join(' · '))),
+        h('td', {}, h('div', { class: 't' }, h('a', { href: `#/video/${v.id}` }, v.title || v.youtube_id)), h('div', { class: 'status' }, [v.channel, fmtDuration(v.duration_s)].filter(Boolean).join(' · '))),
         h('td', {}, fmtDate(v.published_at)),
         h('td', {}, String(v.segment_count)),
         h(
@@ -233,23 +371,45 @@ async function renderList() {
           v.sync_status === 'pending' ? h('span', { class: 'badge' }, 'en attente') : null,
           v.sync_status === 'failed' ? h('span', { class: 'badge warn', title: v.sync_error ?? '' }, 'échec') : null,
           v.segment_count === 0 && !v.sync_status ? h('span', { class: 'badge' }, 'vide') : null,
-          v.edited ? h('span', { class: 'badge ok' }, 'corrigée') : h('span', { class: 'badge' }, { supadata: 'auto', whisper: 'whisper' }[v.source] ?? 'manuelle'),
+          v.edited ? h('span', { class: 'badge ok' }, 'corrigée') : h('span', { class: 'badge' }, { supadata: 'auto', whisper: 'whisper' }[v.source] ?? (v.sync_status ? 'synchro' : 'manuelle')),
         ),
       ),
     );
   }
 
+  const count = h('h2', {}, `Vidéos (${videos.length})`);
+  const none = h('p', { class: 'status', role: 'status', hidden: true }, 'Aucune vidéo ne correspond.');
+  const filter = h('input', {
+    type: 'search',
+    class: 'text',
+    placeholder: 'Filtrer par titre ou chaîne…',
+    'aria-label': 'Filtrer les vidéos par titre ou chaîne',
+    oninput: () => {
+      const q = filter.value.trim().toLowerCase();
+      let shown = 0;
+      for (const tr of tbody.children) {
+        tr.hidden = Boolean(q) && !tr.dataset.q.includes(q);
+        if (!tr.hidden) shown++;
+      }
+      count.textContent = q ? `Vidéos (${shown} sur ${videos.length})` : `Vidéos (${videos.length})`;
+      none.hidden = shown > 0;
+    },
+  });
   const list = h(
     'section',
     { class: 'panel' },
-    h('h2', {}, `Vidéos (${videos.length})`),
+    count,
     videos.length
-      ? h(
-          'table',
-          { class: 'videos' },
-          h('thead', {}, h('tr', {}, ...['', 'Titre', 'Date', 'Segments', 'Transcription'].map((t) => h('th', {}, t)))),
-          tbody,
-        )
+      ? [
+          filter,
+          none,
+          h(
+            'table',
+            { class: 'videos list' },
+            h('thead', {}, h('tr', {}, ...['', 'Titre', 'Date', 'Segments', 'Transcription'].map((t) => h('th', {}, t)))),
+            tbody,
+          ),
+        ]
       : h('p', { class: 'status' }, 'Aucune vidéo pour le moment. Ajoute-en une ci-dessous.'),
   );
 
@@ -257,7 +417,7 @@ async function renderList() {
 }
 
 function addForm(config) {
-  const msg = h('p', { class: 'status' });
+  const msg = h('p', { class: 'status', role: 'status' });
   const url = h('input', { type: 'text', placeholder: 'https://www.youtube.com/watch?v=…', required: true });
   const lang = h('input', { type: 'text', value: 'fr', maxlength: '5' });
   const title = h('input', { type: 'text', placeholder: 'Rempli automatiquement si vide' });
@@ -287,10 +447,10 @@ function addForm(config) {
     'form',
     {
       class: 'panel',
-      onsubmit: async (e) => {
+      onsubmit: (e) => {
         e.preventDefault();
+        busy(submit, async () => {
         const chosen = form.querySelector('input[name=mode]:checked').value;
-        submit.disabled = true;
         status(msg, chosen === 'supadata' ? 'Récupération de la transcription…' : 'Ajout…');
         try {
           const { id } = await api('POST', '/videos', {
@@ -307,10 +467,9 @@ function addForm(config) {
           if (err.status === 409 && err.data?.id) {
             status(msg, 'Déjà ajoutée — ouverture…', 'ok');
             location.hash = `#/video/${err.data.id}`;
-          } else status(msg, err.message, 'err');
-        } finally {
-          submit.disabled = false;
+          } else fail(err, msg);
         }
+        });
       },
     },
     h('h2', {}, 'Ajouter une vidéo'),
@@ -319,7 +478,7 @@ function addForm(config) {
       'div',
       { class: 'field' },
       'Transcription',
-      mode('supadata', config.supadata ? 'Récupérer automatiquement (Supadata)' : 'Récupérer automatiquement — SUPADATA_API_KEY non configurée', config.supadata, !config.supadata),
+      mode('supadata', config.supadata ? 'Récupérer automatiquement (Supadata)' : 'Récupérer automatiquement (indisponible : à activer par le développeur)', config.supadata, !config.supadata),
       mode('paste', 'Coller une transcription', !config.supadata),
       mode('empty', 'Vide (je la saisis dans l’éditeur)', false),
     ),
@@ -341,12 +500,12 @@ function addForm(config) {
 
 // ------------------------------------------------------------- synchronisation
 
-let syncFlash = null; // message affiché après le rechargement de la page
-
 // --------------------------------------------------------------- statistiques du studio
 
 async function renderStudioStats() {
+  const gen = routeGen;
   const st = await api('GET', '/studio/stats');
+  if (gen !== routeGen) return;
   const periods = [['today', 'Aujourd’hui'], ['d7', '7 jours'], ['d30', '30 jours'], ['all', 'Depuis le début']];
   let current = 'd7';
   const plural = (n, one, many) => (n > 1 ? many : one);
@@ -355,27 +514,29 @@ async function renderStudioStats() {
   const switcher = h('div', { class: 'pills', role: 'group', 'aria-label': 'Période' });
   const draw = () => {
     const p = st.periods[current];
-    const got = p.downloaded + p.shared;
+    const got = p.retrieved ?? p.downloaded + p.shared;
+    const rate = p.created ? Math.min(100, Math.round((got / p.created) * 100)) : null;
+    const capped = p.created > 0 && got > p.created;
     switcher.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.p === current)));
     grid.replaceChildren(
       stat(p.created, plural(p.created, 'clip créé', 'clips créés'), 'Clips dont la création a été lancée'),
       stat(p.downloaded, plural(p.downloaded, 'clip téléchargé', 'clips téléchargés'), 'Clics sur « Télécharger » (un clip compte une fois)'),
       stat(p.shared, plural(p.shared, 'clip partagé', 'clips partagés'), 'Partages depuis le téléphone'),
       stat(p.people_downloaded, plural(p.people_downloaded, 'personne a récupéré son clip', 'personnes ont récupéré leur clip'), 'Personnes distinctes (approximation par connexion) ayant téléchargé ou partagé'),
-      stat(p.created ? `${Math.round((got / p.created) * 100)} %` : '–', 'clips récupérés', 'Part des clips créés qui ont été téléchargés ou partagés'),
+      stat(rate == null ? '–' : `${rate} %`, capped ? 'clips récupérés (plafonné à 100 %)' : 'clips récupérés', 'Part des clips créés qui ont été téléchargés ou partagés (100 % au maximum)'),
     );
   };
   for (const [key, label] of periods) switcher.append(h('button', { type: 'button', 'data-p': key, onclick: () => { current = key; draw(); } }, label));
   draw();
 
-  const max = Math.max(1, ...st.daily.map((d) => Math.max(d.created, d.downloaded + d.shared)));
+  const max = Math.max(1, ...st.daily.map((d) => Math.max(d.created, d.retrieved ?? d.downloaded + d.shared)));
   const dayRows = [...st.daily].reverse().map((d) =>
     h('tr', {},
       h('td', {}, fmtDate(d.day)),
       h('td', {}, String(d.created)),
-      h('td', {}, String(d.downloaded + d.shared)),
-      h('td', { class: 'bars' }, h('span', { class: 'bar a', style: `width:${(d.created / max) * 100}%` }), h('span', { class: 'bar b', style: `width:${((d.downloaded + d.shared) / max) * 100}%` }))));
-  const videoRows = st.videos.map((v) => h('tr', {}, h('td', {}, v.title || v.youtube_id), h('td', {}, String(v.created)), h('td', {}, String(v.downloaded))));
+      h('td', {}, String(d.retrieved ?? d.downloaded + d.shared)),
+      h('td', { class: 'bars' }, h('span', { class: 'bar a', style: `width:${(d.created / max) * 100}%` }), h('span', { class: 'bar b', style: `width:${((d.retrieved ?? d.downloaded + d.shared) / max) * 100}%` }))));
+  const videoRows = st.videos.map((v) => h('tr', {}, h('td', {}, v.title || v.youtube_id), h('td', {}, String(v.created)), h('td', {}, String(v.retrieved ?? v.downloaded))));
 
   $app.replaceChildren(
     h('section', { class: 'panel' },
@@ -396,24 +557,45 @@ async function renderStudioStats() {
 }
 
 async function renderMusicLibrary() {
+  const gen = routeGen;
   let data = await api('GET', '/studio/music');
+  if (gen !== routeGen) return;
   const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1).replace('.', ',')} Mo` : `${Math.max(1, Math.round(b / 1024))} Ko`);
   const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
   const catSelect = (value, onchange) =>
-    h('select', { onchange }, data.categories.map((c) => h('option', { value: c.id, selected: c.id === value }, c.label)));
+    h('select', { onchange, 'aria-label': 'Catégorie' }, data.categories.map((c) => h('option', { value: c.id, selected: c.id === value }, c.label)));
   const root = h('div');
   const note = h('p', { class: 'status', role: 'status' });
+  let libTitle = null;
+  let libBody = null;
+  let libUl = null;
+  let upXhr = null;
 
-  async function mutate(method, path, body, okMsg) {
-    try {
-      data = await api(method, `/studio/music${path}`, body);
-      draw();
-      status(note, okMsg ?? 'Enregistré.', 'ok');
-    } catch (e) {
-      if (e instanceof AuthError) throw e;
-      status(note, e.message, 'err');
-    }
+  async function mutate(ctrl, method, path, body, okMsg, apply) {
+    return (
+      (await busy(ctrl, async () => {
+        try {
+          data = await api(method, `/studio/music${path}`, body);
+          apply?.();
+          status(note, okMsg ?? 'Enregistré.', 'ok');
+          return true;
+        } catch (e) {
+          fail(e, note);
+          return false;
+        }
+      })) ?? false
+    );
   }
+
+  const upGuard = (ev) => {
+    ev.preventDefault();
+    ev.returnValue = '';
+  };
+  dirtyGuard = () => (upXhr ? 'Un envoi de musique est en cours : quitter l’interrompra. Quitter quand même ?' : false);
+  cleanup = () => {
+    upXhr?.abort();
+    window.removeEventListener('beforeunload', upGuard);
+  };
 
   // --- ajout
   const file = h('input', { type: 'file', accept: 'audio/*,.mp3,.m4a,.wav,.ogg,.flac,.aac', id: 'mfile' });
@@ -422,12 +604,21 @@ async function renderMusicLibrary() {
   const credit = h('input', { class: 'text', type: 'text', maxlength: '200', placeholder: 'Ex. : Auteur, site (facultatif)', id: 'mcredit' });
   const rights = h('input', { type: 'checkbox', id: 'mrights' });
   const send = h('button', { class: 'btn', type: 'button' }, 'Ajouter à la bibliothèque');
+  const cancelUp = h('button', { class: 'btn secondary small', type: 'button', hidden: true }, 'Annuler l’envoi');
   const upStatus = h('span', { class: 'status', role: 'status' });
+  const endUpload = () => {
+    upXhr = null;
+    send.disabled = false;
+    cancelUp.hidden = true;
+    window.removeEventListener('beforeunload', upGuard);
+  };
+  cancelUp.addEventListener('click', () => upXhr?.abort());
   file.addEventListener('change', () => {
     const f = file.files[0];
     if (f && !title.value) title.value = f.name.replace(/\.[A-Za-z0-9]{2,5}$/, '').replace(/[_-]+/g, ' ').trim().slice(0, 80);
   });
   send.addEventListener('click', () => {
+    if (upXhr) return;
     const f = file.files[0];
     if (!f) return status(upStatus, 'Choisis d’abord un fichier audio.', 'err');
     if (!rights.checked) return status(upStatus, 'Coche la case : tu confirmes avoir le droit d’utiliser ce morceau.', 'err');
@@ -437,58 +628,92 @@ async function renderMusicLibrary() {
     xhr.open('POST', `/api/admin/studio/music?${q}`);
     xhr.withCredentials = true;
     xhr.setRequestHeader('Content-Type', f.type || 'application/octet-stream');
+    upXhr = xhr;
     send.disabled = true;
-    xhr.upload.onprogress = (e) => e.lengthComputable && status(upStatus, e.loaded < e.total ? `Envoi… ${Math.round((e.loaded / e.total) * 100)} %` : 'Conversion et normalisation du volume…');
+    cancelUp.hidden = false;
+    window.addEventListener('beforeunload', upGuard);
+    xhr.upload.onprogress = (ev) => ev.lengthComputable && status(upStatus, ev.loaded < ev.total ? `Envoi… ${Math.round((ev.loaded / ev.total) * 100)} %` : 'Conversion et normalisation du volume…');
     xhr.onload = () => {
-      send.disabled = false;
+      endUpload();
       let body = {};
       try { body = JSON.parse(xhr.responseText); } catch { /* corps vide */ }
-      if (xhr.status === 401) return route();
+      if (xhr.status === 401) return renderLogin();
       if (xhr.status >= 400) return status(upStatus, body.error || `Erreur ${xhr.status}`, 'err');
       data = body;
       file.value = ''; title.value = ''; credit.value = ''; rights.checked = false;
-      draw();
+      const fresh = libUl && data.library.find((t) => !libUl.querySelector(`[data-id="${t.id}"]`));
+      if (fresh) {
+        libUl.append(row(fresh, true));
+        libTitle.textContent = `Ma bibliothèque (${data.library.length})`;
+      } else draw();
+      status(upStatus, '');
       status(note, 'Morceau ajouté : il est disponible dans le studio.', 'ok');
     };
-    xhr.onerror = () => { send.disabled = false; status(upStatus, 'Envoi interrompu. Réessaie.', 'err'); };
+    xhr.onerror = () => { endUpload(); status(upStatus, 'Envoi interrompu. Réessaie.', 'err'); };
+    xhr.onabort = () => { endUpload(); status(upStatus, 'Envoi annulé.'); };
     status(upStatus, 'Envoi…');
     xhr.send(f);
   });
+
+  const emptyLib = () => h('p', { class: 'status' }, 'Aucun morceau ajouté pour le moment. Pour des musiques motivantes, épiques ou cinématiques libres de droits, regarde la bibliothèque audio de YouTube Studio, Pixabay Music, Uppbeat ou Mixkit, puis ajoute ici les fichiers que tu télécharges.');
 
   const row = (t, own) => {
     const src = own ? `/api/admin/studio/music/${t.id}/file` : t.url;
     const meta = [mmss(t.duration_s), t.size_bytes ? fmtSize(t.size_bytes) : '', t.bpm ? `${t.bpm} bpm` : '', t.mood].filter(Boolean).join(' · ');
     const titleInput = h('input', { class: 'text', type: 'text', value: t.title, maxlength: '80', 'aria-label': 'Titre' });
     const creditInput = h('input', { class: 'text', type: 'text', value: t.credit ?? '', maxlength: '200', placeholder: 'Crédit (facultatif)', 'aria-label': 'Crédit' });
-    return h('li', { class: `mrow${t.enabled ? '' : ' off'}`, 'data-id': t.id },
+    const li = h('li', { class: `mrow${t.enabled ? '' : ' off'}`, 'data-id': t.id });
+    const offBadge = h('span', { class: 'badge off-badge', hidden: t.enabled }, 'Masqué');
+    const patch = (ctrl, body, okMsg) =>
+      mutate(ctrl, 'PATCH', `/${t.id}`, body, okMsg, () => {
+        const nt = [...data.library, ...data.builtin].find((x) => x.id === t.id);
+        if (nt) Object.assign(t, nt);
+        li.classList.toggle('off', !t.enabled);
+        offBadge.hidden = t.enabled;
+      });
+    li.append(
       own ? h('div', { class: 'mfields' }, titleInput, creditInput) : h('div', { class: 'mfields' }, h('strong', {}, t.title)),
-      h('small', { class: 'mmeta' }, meta),
+      h('small', { class: 'mmeta' }, meta, ' ', offBadge),
       h('audio', { controls: true, preload: 'none', src }),
       h('div', { class: 'actions' },
-        own ? catSelect(t.category, (e) => mutate('PATCH', `/${t.id}`, { category: e.target.value })) : h('span', { class: 'badge' }, data.categories.find((c) => c.id === t.category)?.label ?? ''),
-        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: t.enabled, onchange: (e) => mutate('PATCH', `/${t.id}`, { enabled: e.target.checked }, e.target.checked ? 'Morceau visible dans le studio.' : 'Morceau masqué du studio.') }), ' Visible'),
-        own && h('button', { class: 'btn secondary small', type: 'button', onclick: () => { if (titleInput.value !== t.title || creditInput.value !== (t.credit ?? '')) mutate('PATCH', `/${t.id}`, { title: titleInput.value, credit: creditInput.value }); else status(note, 'Aucun changement.'); } }, 'Enregistrer'),
-        own && h('button', { class: 'btn danger small', type: 'button', onclick: () => { if (confirm(`Supprimer « ${t.title} » définitivement ?`)) mutate('DELETE', `/${t.id}`, undefined, 'Morceau supprimé.'); } }, 'Supprimer')));
+        own ? catSelect(t.category, (ev) => patch(ev.target, { category: ev.target.value })) : h('span', { class: 'badge' }, data.categories.find((c) => c.id === t.category)?.label ?? ''),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: t.enabled, onchange: async (ev) => {
+          const box = ev.target;
+          const want = box.checked;
+          if (!(await patch(box, { enabled: want }, want ? 'Morceau visible dans le studio.' : 'Morceau masqué du studio.'))) box.checked = t.enabled;
+        } }), ' Visible'),
+        own && h('button', { class: 'btn secondary small', type: 'button', onclick: (ev) => { if (titleInput.value !== t.title || creditInput.value !== (t.credit ?? '')) patch(ev.currentTarget, { title: titleInput.value, credit: creditInput.value }); else status(note, 'Aucun changement.'); } }, 'Enregistrer'),
+        own && h('button', { class: 'btn danger small', type: 'button', onclick: (ev) => {
+          if (!confirm(`Supprimer « ${t.title} » définitivement ?`)) return;
+          mutate(ev.currentTarget, 'DELETE', `/${t.id}`, undefined, 'Morceau supprimé.', () => {
+            li.remove();
+            libTitle.textContent = `Ma bibliothèque (${data.library.length})`;
+            if (!data.library.length) {
+              libUl = null;
+              libBody.replaceChildren(emptyLib());
+            }
+          });
+        } }, 'Supprimer')));
+    return li;
   };
 
   function draw() {
+    libTitle = h('h2', {}, `Ma bibliothèque (${data.library.length})`);
+    libUl = data.library.length ? h('ul', { class: 'mlist' }, data.library.map((t) => row(t, true))) : null;
+    libBody = h('div', {}, libUl ?? emptyLib());
     root.replaceChildren(
       h('section', { class: 'panel' },
         h('h2', {}, 'Ajouter un morceau'),
-        h('p', { class: 'status' }, `MP3, M4A, WAV, OGG ou FLAC, de ${data.limits.minS} s à ${data.limits.maxS / 60} min, ${Math.round(data.limits.maxBytes / 1048576)} Mo au maximum. Le morceau est converti en MP3 et son volume est égalisé pour que tous sonnent pareil sous la voix (les ${data.limits.keepS / 60} premières minutes sont conservées).`),
+        h('p', { class: 'status' }, `MP3, M4A, WAV, OGG ou FLAC, de ${data.limits.minS} s à ${fmtSpan(data.limits.maxS)}, ${Math.round(data.limits.maxBytes / 1048576)} Mo au maximum. Le morceau est converti en MP3 et son volume est égalisé pour que tous sonnent pareil sous la voix (seules les ${fmtSpan(data.limits.keepS)} du début sont conservées).`),
         h('div', { class: 'field' }, h('label', { for: 'mfile' }, 'Fichier audio'), file),
         h('div', { class: 'field' }, h('label', { for: 'mtitle' }, 'Titre'), title),
         h('div', { class: 'field' }, h('label', { for: 'mcat' }, 'Catégorie'), category),
         h('div', { class: 'field' }, h('label', { for: 'mcredit' }, 'Crédit à afficher dans la description'), credit,
           h('small', {}, 'Certaines licences (CC BY, bibliothèque audio YouTube…) demandent de citer l’auteur : le crédit est alors ajouté à la description TikTok.')),
         h('label', { class: 'check' }, rights, ' Je confirme avoir le droit d’utiliser ce morceau (licence libre de droits, achetée ou créée par moi).'),
-        h('div', { class: 'actions' }, send, upStatus)),
+        h('div', { class: 'actions' }, send, cancelUp, upStatus)),
       note,
-      h('section', { class: 'panel' },
-        h('h2', {}, `Ma bibliothèque (${data.library.length})`),
-        data.library.length
-          ? h('ul', { class: 'mlist' }, data.library.map((t) => row(t, true)))
-          : h('p', { class: 'status' }, 'Aucun morceau ajouté pour le moment. Pour des musiques motivantes, épiques ou cinématiques libres de droits, regarde la bibliothèque audio de YouTube Studio, Pixabay Music, Uppbeat ou Mixkit, puis ajoute ici les fichiers que tu télécharges.')),
+      h('section', { class: 'panel' }, libTitle, libBody),
       h('section', { class: 'panel' },
         h('h2', {}, `Morceaux d’origine (${data.builtin.length})`),
         h('p', { class: 'status' }, 'Créés pour le site, libres de droits. Décoche « Visible » pour retirer un morceau du studio.'),
@@ -500,7 +725,9 @@ async function renderMusicLibrary() {
 }
 
 async function renderFaceReferences() {
+  const gen = routeGen;
   let data = await api('GET', '/faces/references');
+  if (gen !== routeGen) return;
   const root = h('div');
   const note = h('p', { class: 'status', role: 'status' });
   const results = h('ul', { class: 'upload-results' });
@@ -525,10 +752,10 @@ async function renderFaceReferences() {
     }
   }
 
-  sendBtn.addEventListener('click', async () => {
+  sendBtn.addEventListener('click', () => {
     const files = [...(input.files ?? [])];
     if (!files.length) return status(note, 'Choisis d’abord une ou plusieurs photos.', 'err');
-    sendBtn.disabled = true;
+    busy(sendBtn, async () => {
     results.replaceChildren();
     try {
       for (const [i, f] of files.entries()) {
@@ -540,36 +767,35 @@ async function renderFaceReferences() {
       const ok = results.querySelectorAll('li.ok').length;
       status(note, `${ok} photo${ok > 1 ? 's' : ''} ajoutée${ok > 1 ? 's' : ''} sur ${files.length}. Pense à mettre à jour les vidéos déjà analysées.`, ok ? 'ok' : 'err');
     } catch (e) {
-      if (e instanceof AuthError) return route();
-      status(note, e.message, 'err');
-    } finally {
-      sendBtn.disabled = false;
+      fail(e, note);
     }
+    });
   });
 
-  async function remove(r) {
+  async function remove(r, btn) {
     if (!confirm('Retirer cette photo de la liste ?')) return;
-    try {
-      data = await api('DELETE', `/faces/references/${r.id}`);
-      draw();
-      status(note, 'Photo retirée. Pense à mettre à jour les vidéos déjà analysées.', 'ok');
-    } catch (e) {
-      status(note, e.message, 'err');
-    }
+    await busy(btn, async () => {
+      try {
+        data = await api('DELETE', `/faces/references/${r.id}`);
+        draw();
+        status(note, 'Photo retirée. Pense à mettre à jour les vidéos déjà analysées.', 'ok');
+      } catch (e) {
+        fail(e, note);
+      }
+    });
   }
 
   const updateBtn = h('button', { class: 'btn secondary', type: 'button' }, 'Mettre à jour les vidéos déjà analysées');
-  updateBtn.addEventListener('click', async () => {
-    updateBtn.disabled = true;
-    try {
-      const r = await api('POST', '/faces/identify-all', {});
-      status(note, r.queued ? `Reconnaissance relancée pour ${r.queued} vidéo${r.queued > 1 ? 's' : ''} (en arrière-plan, quelques minutes chacune).` : 'Toutes les vidéos analysées sont déjà à jour.', 'ok');
-    } catch (e) {
-      status(note, e.message, 'err');
-    } finally {
-      updateBtn.disabled = false;
-    }
-  });
+  updateBtn.addEventListener('click', () =>
+    busy(updateBtn, async () => {
+      try {
+        const r = await api('POST', '/faces/identify-all', {});
+        status(note, r.queued ? `Reconnaissance relancée pour ${r.queued} vidéo${r.queued > 1 ? 's' : ''} (en arrière-plan, quelques minutes chacune).` : 'Toutes les vidéos analysées sont déjà à jour.', 'ok');
+      } catch (e) {
+        fail(e, note);
+      }
+    }),
+  );
 
   function draw() {
     const n = data.count;
@@ -577,7 +803,7 @@ async function renderFaceReferences() {
       h('section', { class: 'panel' },
         h('h2', {}, 'Reconnaissance de David Lisnard'),
         h('p', { class: 'status' }, 'Donne des photos de David Lisnard : dans les interviews où plusieurs personnes apparaissent (journaliste, public), le cadrage automatique du studio suivra lui plutôt que la personne la plus visible. Seules les empreintes des visages sont conservées, pas les photos.'),
-        data.enabled ? null : h('p', { class: 'status err' }, 'Le cadrage automatique est désactivé sur ce serveur (STUDIO_FACES=off).'),
+        data.enabled ? null : unavailable('le cadrage automatique est désactivé sur ce serveur.', 'STUDIO_FACES=off'),
         h('ul', { class: 'tips' },
           h('li', {}, 'Une vingtaine de photos, variées : de face et de trois quarts, avec et sans lunettes, en intérieur et en extérieur, à différentes années.'),
           h('li', {}, `Une seule personne par photo, visage net et assez grand (au moins ${data.minFacePx} pixels de large) ; la photo est refusée sinon.`),
@@ -594,7 +820,7 @@ async function renderFaceReferences() {
           h('figure', { class: `ref${r.suspicious ? ' suspicious' : ''}` },
             h('img', { src: `/api/admin/faces/references/${r.id}/thumb`, alt: r.name || `Photo ${r.id}`, width: 112, height: 112, loading: 'lazy' }),
             h('figcaption', {}, h('span', { class: 'ref-name', title: r.name }, r.name || `Photo ${r.id}`), r.suspicious ? h('span', { class: 'badge warn' }, 'à vérifier') : null,
-              h('button', { class: 'btn danger small', type: 'button', onclick: () => remove(r) }, 'Retirer'))))),
+              h('button', { class: 'btn danger small', type: 'button', onclick: (ev) => remove(r, ev.currentTarget) }, 'Retirer'))))),
         h('div', { class: 'actions' }, updateBtn),
         h('p', { class: 'status' }, 'Les vidéos analysées plus tard utilisent automatiquement les photos actuelles. Pour celles déjà analysées, ce bouton relance seulement la reconnaissance (pas la détection des visages).')),
     );
@@ -606,6 +832,7 @@ async function renderFaceReferences() {
 async function renderWallAdmin() {
   const gen = routeGen;
   let data = await api('GET', '/wall');
+  if (gen !== routeGen) return;
   const root = h('div');
   const note = h('p', { class: 'status', role: 'status' });
   let timer = 0;
@@ -621,56 +848,62 @@ async function renderWallAdmin() {
     try {
       data = await api('GET', '/wall');
     } catch (e) {
-      if (e instanceof AuthError) return route();
+      if (e instanceof AuthError) return renderLogin();
     }
     if (gen !== routeGen) return; // left the page meanwhile: no redraw, no new timer
     draw();
   }
-  const act = async (fn, okMsg) => {
-    try {
-      await fn();
-      status(note, okMsg, 'ok');
-    } catch (e) {
-      if (e instanceof AuthError) throw e;
-      status(note, e.message, 'err');
-    }
-    await reload();
-  };
+  const act = (btn, fn, okMsg) =>
+    busy(btn, async () => {
+      try {
+        await fn();
+        status(note, okMsg, 'ok');
+      } catch (e) {
+        if (e instanceof AuthError) return renderLogin();
+        status(note, e.message, 'err');
+      }
+      await reload();
+    });
+  const go = (fn, okMsg) => (ev) => act(ev.currentTarget, fn, okMsg);
 
   function draw() {
     clearTimeout(timer);
-    const { config: cfg, last_run: last, counts, busy } = data;
-    const running = Boolean(busy) || last?.status === 'running';
+    const { config: cfg, last_run: last, counts, busy: wallBusy } = data;
+    // A 'running' row older than 30 min is a leftover from a restart
+    const stale = last?.status === 'running' && Date.now() - new Date(last.started_at).getTime() > 30 * 60 * 1000;
+    const running = Boolean(wallBusy) || (last?.status === 'running' && !stale);
     const refreshBtn = h('button', { class: 'btn', type: 'button', disabled: running || !cfg.has_token || !cfg.enabled }, running ? 'Actualisation en cours…' : 'Actualiser maintenant');
-    refreshBtn.addEventListener('click', () => act(() => api('POST', '/wall/refresh', {}), 'Actualisation lancée : elle prend quelques minutes (Apify visite TikTok).'));
+    refreshBtn.addEventListener('click', go(() => api('POST', '/wall/refresh', {}), 'Actualisation lancée : elle prend quelques minutes (Apify visite TikTok).'));
     const perRun = cfg.results * 0.0017;
     const lastText = !last
       ? 'Jamais actualisé.'
       : last.status === 'running'
-        ? `Actualisation en cours depuis ${when(last.started_at)}…`
+        ? stale
+          ? `Une actualisation commencée le ${when(last.started_at)} semble interrompue (redémarrage du serveur ?). Tu peux en lancer une nouvelle.`
+          : `Actualisation en cours depuis ${when(last.started_at)}…`
         : last.status === 'ok'
           ? `Dernière actualisation réussie : ${when(last.finished_at)} (${last.trigger === 'schedule' ? 'automatique' : 'à la demande'}) : ${fmtNum(last.received ?? 0)} vidéos reçues, ${fmtNum(last.kept ?? 0)} retenues, ${fmtNum(last.added ?? 0)} nouvelle${last.added > 1 ? 's' : ''}, ${fmtNum(last.covers ?? 0)} vignette${last.covers > 1 ? 's' : ''} copiée${last.covers > 1 ? 's' : ''}${last.cost_usd != null ? `, coût Apify ${last.cost_usd.toFixed(2).replace('.', ',')} $` : ''}.`
-          : `Dernière tentative en échec (${when(last.finished_at)}) : ${last.error ?? 'erreur inconnue'}`;
+          : `Dernière tentative en échec ou interrompue (${when(last.finished_at ?? last.started_at)}) : ${last.error ?? 'erreur inconnue'}`;
     const skipped = last?.status === 'ok' && last.skipped ? Object.entries(last.skipped).map(([k, v]) => `${v} ${{ ad: 'publicité(s)', hashtag: 'sans le hashtag', error: 'erreur(s) de l’acteur', invalid: 'illisible(s)' }[k] ?? k}`).join(', ') : '';
 
     const clipRow = (c) =>
       h('tr', { class: c.hidden || c.author_hidden ? 'wall-hidden' : '' },
         h('td', {}, c.cover ? h('img', { src: c.cover, alt: '', width: 36, height: 64, loading: 'lazy', class: 'wall-thumb' }) : h('span', { class: 'wall-thumb none' }, '·')),
-        h('td', {}, h('a', { href: c.url, target: '_blank', rel: 'noopener noreferrer' }, `@${c.author}`), h('div', { class: 'status wall-text' }, c.text)),
+        h('td', {}, h('a', { href: c.url, target: '_blank', rel: 'noopener noreferrer' }, `@${c.author}`), c.hidden || c.author_hidden ? h('span', { class: 'badge' }, 'Masqué') : null, h('div', { class: 'status wall-text' }, c.text)),
         h('td', { class: 'num' }, fmtNum(c.views)),
         h('td', { class: 'num' }, fmtNum(c.likes)),
         h('td', { class: 'num' }, fmtNum(c.comments)),
         h('td', { class: 'num' }, h('strong', {}, fmtNum(c.score))),
-        h('td', { class: 'actions' },
-          h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/wall/clips/${c.id}`, { hidden: !c.hidden }), c.hidden ? 'Clip rétabli.' : 'Clip masqué.') }, c.hidden ? 'Rétablir' : 'Masquer'),
-          h('button', { class: 'btn secondary small', type: 'button', title: 'Masque tous les clips de cet auteur', onclick: () => act(() => api('PUT', `/wall/authors/${encodeURIComponent(c.author)}`, { hidden: !c.author_hidden }), c.author_hidden ? 'Auteur rétabli.' : 'Auteur masqué.') }, c.author_hidden ? 'Rétablir l’auteur' : 'Masquer l’auteur')));
+        h('td', {}, h('div', { class: 'actions' },
+          h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('PATCH', `/wall/clips/${c.id}`, { hidden: !c.hidden }), c.hidden ? 'Clip rétabli.' : 'Clip masqué.') }, c.hidden ? 'Rétablir' : 'Masquer'),
+          h('button', { class: 'btn secondary small', type: 'button', title: 'Masque tous les clips de cet auteur', onclick: go(() => api('PUT', `/wall/authors/${encodeURIComponent(c.author)}`, { hidden: !c.author_hidden }), c.author_hidden ? 'Auteur rétabli.' : 'Auteur masqué.') }, c.author_hidden ? 'Rétablir l’auteur' : 'Masquer l’auteur'))));
 
     root.replaceChildren(
       h('section', { class: 'panel' },
         h('h2', {}, 'Mur des clips'),
         h('p', { class: 'status' }, `Les TikToks publiés avec #${cfg.hashtag} sont récupérés avec Apify (acteur ${cfg.actor}), classés par vues, j’aime et commentaires (score = ${cfg.weights[0]} × vues + ${cfg.weights[1]} × j’aime + ${cfg.weights[2]} × commentaires), et les ${cfg.max} meilleurs sont affichés sur la page publique « Le mur ». `, h('a', { href: '/mur/', target: '_blank' }, 'Voir le mur')),
-        !cfg.has_token ? h('p', { class: 'status err' }, 'Jeton Apify absent : ajoute la variable APIFY_TOKEN dans Railway (Apify → Settings → API & Integrations → Personal API token), puis redéploie.') : null,
-        !cfg.enabled ? h('p', { class: 'status err' }, 'Le mur est désactivé (WALL_ENABLED=false).') : null,
+        !cfg.has_token ? unavailable('la connexion à Apify (récupération des TikToks) n’est pas configurée.', 'APIFY_TOKEN') : null,
+        !cfg.enabled ? unavailable('le mur est désactivé.', 'WALL_ENABLED=false') : null,
         h('p', { class: 'status' }, lastText),
         skipped ? h('p', { class: 'status' }, `Écartés : ${skipped}.`) : null,
         last?.status === 'ok' && last.received > 0 && last.kept === 0 ? h('p', { class: 'status err' }, `Aucune vidéo retenue sur ${last.received} reçues : le format des résultats de l’acteur a peut-être changé. Champs du premier élément : ${(last.sample_keys ?? []).join(', ') || '(aucun)'}.`) : null,
@@ -680,7 +913,7 @@ async function renderWallAdmin() {
       note,
       h('section', { class: 'panel' },
         h('h3', {}, `Clips (${fmtNum(counts.total)}, dont ${fmtNum(counts.hidden)} masqué${counts.hidden > 1 ? 's' : ''}, ${fmtNum(counts.covers)} avec vignette)`),
-        data.hidden_authors.length ? h('p', { class: 'status' }, 'Auteurs masqués : ', data.hidden_authors.map((a) => h('button', { class: 'btn secondary small', type: 'button', title: 'Rétablir', onclick: () => act(() => api('PUT', `/wall/authors/${encodeURIComponent(a)}`, { hidden: false }), 'Auteur rétabli.') }, `@${a} ×`))) : null,
+        data.hidden_authors.length ? h('p', { class: 'status' }, 'Auteurs masqués : ', data.hidden_authors.map((a) => h('button', { class: 'btn secondary small', type: 'button', title: 'Rétablir', onclick: go(() => api('PUT', `/wall/authors/${encodeURIComponent(a)}`, { hidden: false }), 'Auteur rétabli.') }, `@${a} ×`))) : null,
         data.clips.length
           ? h('div', { class: 'wall-table-wrap' }, h('table', { class: 'videos wall-table' },
             h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Clip'), h('th', {}, 'Vues'), h('th', {}, 'J’aime'), h('th', {}, 'Comm.'), h('th', {}, 'Score'), h('th', {}, ''))),
@@ -698,22 +931,24 @@ async function renderSync() {
   const gen = routeGen;
   const o = await api('GET', '/sync/overview');
   if (gen !== routeGen) return; // left the page meanwhile: never repaint over another page
-  const msg = h('p', { class: 'status' });
-  if (syncFlash) {
-    status(msg, syncFlash.text, syncFlash.kind);
-    syncFlash = null;
-  }
-  // fn peut renvoyer un texte à afficher une fois la page rechargée
-  const act = async (fn, okMsg) => {
-    try {
-      const result = await fn();
-      const text = typeof result === 'string' ? result : okMsg;
-      if (text) syncFlash = { text, kind: 'ok' };
-      await renderSync();
-    } catch (e) {
-      status(msg, e.message, 'err');
-    }
-  };
+  let inFlight = 0;
+  const counters = {};
+  const act = (btn, fn, okMsg) =>
+    busy(btn, async () => {
+      inFlight++;
+      try {
+        const result = await fn();
+        const text = typeof result === 'string' ? result : okMsg;
+        await renderSync();
+        if (text) toast(text, 'ok');
+      } catch (e) {
+        if (e instanceof AuthError) renderLogin();
+        else toast(e.message, 'err');
+      } finally {
+        inFlight--;
+      }
+    });
+  const go = (fn, okMsg) => (ev) => act(ev.currentTarget, fn, okMsg);
 
   const plural = (n, one, many) => (n > 1 ? many : one);
   /** Aperçu puis, après confirmation, suppression des Shorts déjà importés d'une chaîne. */
@@ -740,10 +975,14 @@ async function renderSync() {
     return `${r.removed} Short${plural(r.removed, '', 's')} supprimé${plural(r.removed, '', 's')}. Ils ne seront plus importés.`;
   };
   const when = (d) => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
-  const keyLine = (ok, name, help) =>
-    h('li', {}, ok ? '✅ ' : '❌ ', h('strong', {}, name), ok ? ' configurée' : ` manquante — ${help}`);
+  const keyLine = (ok, label, envName, help) =>
+    h('li', {}, ok ? '✅ ' : '❌ ', h('strong', {}, label), ok ? ' : disponible' : ` : fonction indisponible, à activer par le développeur (${help}). `, ok ? null : h('small', { class: 'tech' }, `variable ${envName}`));
 
-  const stat = (n, label) => h('div', { class: 'stat' }, h('div', { class: 'n' }, String(n)), h('div', { class: 'l' }, label));
+  const stat = (n, label, key) => {
+    const num = h('div', { class: 'n' }, String(n));
+    counters[key] = num;
+    return h('div', { class: 'stat' }, num, h('div', { class: 'l' }, label));
+  };
 
   const state = h(
     'section',
@@ -752,10 +991,10 @@ async function renderSync() {
     h(
       'ul',
       { class: 'checks' },
-      keyLine(o.keys.youtube, 'YOUTUBE_API_KEY', 'nécessaire pour lister les vidéos d’une chaîne (clé « YouTube Data API v3 », gratuite)'),
-      keyLine(o.keys.supadata, 'SUPADATA_API_KEY', 'nécessaire pour récupérer les transcriptions'),
+      keyLine(o.keys.youtube, 'Liste des vidéos d’une chaîne YouTube', 'YOUTUBE_API_KEY', 'nécessaire pour lister les vidéos d’une chaîne'),
+      keyLine(o.keys.supadata, 'Récupération des transcriptions', 'SUPADATA_API_KEY', 'nécessaire pour récupérer les transcriptions'),
     ),
-    h('div', { class: 'stats' }, stat(o.counts.pending, 'en attente'), stat(o.counts.done, 'transcrites auto.'), stat(o.counts.failed, 'en échec'), stat(o.counts.manual, 'ajoutées à la main')),
+    h('div', { class: 'stats' }, stat(o.counts.pending, 'en attente', 'pending'), stat(o.counts.done, 'transcrites auto.', 'done'), stat(o.counts.failed, 'en échec', 'failed'), stat(o.counts.manual, 'ajoutées à la main', 'manual')),
     h(
       'p',
       { class: 'status' },
@@ -782,10 +1021,9 @@ async function renderSync() {
       'div',
       { class: 'actions' },
       o.paused
-        ? h('button', { class: 'btn', type: 'button', disabled: !o.keys.supadata, onclick: () => act(() => api('POST', '/sync/resume', {}), 'Traitement démarré.') }, 'Démarrer le traitement')
-        : h('button', { class: 'btn secondary', type: 'button', onclick: () => act(() => api('POST', '/sync/pause', {}), 'Mis en pause.') }, 'Mettre en pause'),
-      !o.paused ? h('button', { class: 'btn secondary', type: 'button', onclick: () => act(() => api('POST', '/sync/run', {}), 'Passe lancée.') }, 'Lancer une passe maintenant') : null,
-      msg,
+        ? h('button', { class: 'btn', type: 'button', disabled: !o.keys.supadata, onclick: go(() => api('POST', '/sync/resume', {}), 'Traitement démarré.') }, 'Démarrer le traitement')
+        : h('button', { class: 'btn secondary', type: 'button', onclick: go(() => api('POST', '/sync/pause', {}), 'Mis en pause.') }, 'Mettre en pause'),
+      !o.paused ? h('button', { class: 'btn secondary', type: 'button', onclick: go(() => api('POST', '/sync/run', {}), 'Passe lancée.') }, 'Lancer une passe maintenant') : null,
     ),
   );
 
@@ -796,8 +1034,8 @@ async function renderSync() {
     'section',
     { class: 'panel' },
     h('h2', {}, 'Résumés automatiques'),
-    h('ul', { class: 'checks' }, keyLine(sm.configured, 'OPENROUTER_API_KEY', 'nécessaire pour rédiger les résumés')),
-    h('div', { class: 'stats' }, stat(sm.ready, 'résumés prêts'), stat(sm.waiting, 'en attente'), stat(sm.failed, 'en échec')),
+    h('ul', { class: 'checks' }, keyLine(sm.configured, 'Rédaction des résumés par l’IA', 'OPENROUTER_API_KEY', 'nécessaire pour rédiger les résumés')),
+    h('div', { class: 'stats' }, stat(sm.ready, 'résumés prêts', 'sReady'), stat(sm.waiting, 'en attente', 'sWaiting'), stat(sm.failed, 'en échec', 'sFailed')),
     h(
       'p',
       { class: 'status' },
@@ -813,9 +1051,9 @@ async function renderSync() {
       'div',
       { class: 'actions' },
       sm.paused
-        ? h('button', { class: 'btn', type: 'button', disabled: !sm.configured, onclick: () => act(() => api('POST', '/sync/summaries/resume', {}), 'Génération des résumés relancée.') }, 'Relancer les résumés')
-        : h('button', { class: 'btn secondary', type: 'button', onclick: () => act(() => api('POST', '/sync/summaries/pause', {}), 'Génération des résumés mise en pause.') }, 'Mettre en pause'),
-      !sm.paused && sm.configured ? h('button', { class: 'btn secondary', type: 'button', onclick: () => act(() => api('POST', '/sync/summaries/run', {}), 'Passe lancée : les résumés en attente sont rédigés (une minute environ chacun).') }, 'Lancer maintenant') : null,
+        ? h('button', { class: 'btn', type: 'button', disabled: !sm.configured, onclick: go(() => api('POST', '/sync/summaries/resume', {}), 'Génération des résumés relancée.') }, 'Relancer les résumés')
+        : h('button', { class: 'btn secondary', type: 'button', onclick: go(() => api('POST', '/sync/summaries/pause', {}), 'Génération des résumés mise en pause.') }, 'Mettre en pause'),
+      !sm.paused && sm.configured ? h('button', { class: 'btn secondary', type: 'button', onclick: go(() => api('POST', '/sync/summaries/run', {}), 'Passe lancée : les résumés en attente sont rédigés (une minute environ chacun).') }, 'Lancer maintenant') : null,
     ),
     sm.failed_list.length
       ? h(
@@ -831,7 +1069,7 @@ async function renderSync() {
               h(
                 'div',
                 { class: 'actions' },
-                h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('POST', `/sync/summaries/${v.id}/retry`, {}), 'Nouvelle tentative lancée.') }, 'Réessayer'),
+                h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('POST', `/sync/summaries/${v.id}/retry`, {}), 'Nouvelle tentative lancée.') }, 'Réessayer'),
                 h('a', { class: 'btn small', href: `#/video/${v.id}` }, 'Ouvrir'),
               ),
             ),
@@ -844,27 +1082,29 @@ async function renderSync() {
   const input = h('input', { type: 'text', placeholder: 'https://www.youtube.com/@nomdelachaine', required: true });
   const minD = h('input', { type: 'number', min: '0', value: '0' });
   const noShorts = h('input', { type: 'checkbox', checked: true });
-  const addMsg = h('p', { class: 'status' });
+  const addMsg = h('p', { class: 'status', role: 'status' });
   const addBtn = h('button', { class: 'btn', type: 'submit', disabled: !o.keys.youtube }, 'Ajouter et lister les vidéos');
   const addForm = h(
     'form',
     {
-      onsubmit: async (e) => {
+      onsubmit: (e) => {
         e.preventDefault();
-        addBtn.disabled = true;
-        status(addMsg, 'Recherche de la chaîne et liste des vidéos… (peut prendre quelques secondes)');
-        try {
-          const r = await api('POST', '/sync/channels', { input: input.value, min_duration_s: Number(minD.value) || 0, exclude_shorts: noShorts.checked });
-          if (r.error) status(addMsg, `Chaîne ajoutée, mais la liste a échoué : ${r.error}`, 'err');
-          else {
-            await renderSync();
-            const syncMsg = document.querySelector('#sync-msg');
-            if (syncMsg) status(syncMsg, `${r.added} vidéo${r.added > 1 ? 's' : ''} trouvée${r.added > 1 ? 's' : ''} et mise${r.added > 1 ? 's' : ''} en file d’attente.`, 'ok');
+        busy(addBtn, async () => {
+          inFlight++;
+          status(addMsg, 'Recherche de la chaîne et liste des vidéos… (peut prendre quelques secondes)');
+          try {
+            const r = await api('POST', '/sync/channels', { input: input.value, min_duration_s: Number(minD.value) || 0, exclude_shorts: noShorts.checked });
+            if (r.error) status(addMsg, `Chaîne ajoutée, mais la liste a échoué : ${r.error}`, 'err');
+            else {
+              await renderSync();
+              toast(`${r.added} vidéo${r.added > 1 ? 's' : ''} trouvée${r.added > 1 ? 's' : ''} et mise${r.added > 1 ? 's' : ''} en file d’attente.`, 'ok');
+            }
+          } catch (err) {
+            fail(err, addMsg);
+          } finally {
+            inFlight--;
           }
-        } catch (err) {
-          status(addMsg, err.message, 'err');
-          addBtn.disabled = !o.keys.youtube;
-        }
+        });
       },
     },
     h('div', { class: 'row' }, h('label', { class: 'field' }, 'Chaîne YouTube (URL, @nom ou identifiant UC…)', input), h('label', { class: 'field' }, 'Durée minimale (secondes, 0 = aucune)', minD)),
@@ -872,8 +1112,9 @@ async function renderSync() {
     h('div', { class: 'actions' }, addBtn, addMsg),
   );
 
-  const rows = o.channels.map((c) =>
-    h(
+  const rows = o.channels.map((c) => {
+    const minInput = h('input', { type: 'number', min: '0', step: '1', class: 'inline-num', value: String(c.min_duration_s || 0), 'aria-label': 'Durée minimale en secondes' });
+    return h(
       'article',
       { class: 'chan' },
       h('div', { class: 't' }, c.title || c.youtube_channel_id, c.handle ? h('span', { class: 'status' }, ` ${c.handle}`) : null),
@@ -889,36 +1130,37 @@ async function renderSync() {
       h(
         'div',
         { class: 'actions' },
-        h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(async () => { const r = await api('POST', `/sync/channels/${c.id}/discover`, {}); return `${r.added} nouvelle${r.added > 1 ? 's' : ''} vidéo${r.added > 1 ? 's' : ''}.`; }) }, 'Chercher maintenant'),
-        h('button', { class: 'btn small', type: 'button', title: 'Supprime les Shorts déjà importés (aperçu et confirmation avant)', onclick: () => act(() => purgeShortsFlow(c)) }, 'Retirer les Shorts…'),
+        h('button', { class: 'btn secondary small', type: 'button', onclick: go(async () => { const r = await api('POST', `/sync/channels/${c.id}/discover`, {}); return `${r.added} nouvelle${r.added > 1 ? 's' : ''} vidéo${r.added > 1 ? 's' : ''}.`; }) }, 'Chercher maintenant'),
+        h('button', { class: 'btn small', type: 'button', title: 'Supprime les Shorts déjà importés (aperçu et confirmation avant)', onclick: go(() => purgeShortsFlow(c)) }, 'Retirer les Shorts…'),
         h(
-          'button',
-          {
-            class: 'btn secondary small',
-            type: 'button',
-            title: 'Les vidéos plus courtes ne sont pas importées, et « Retirer les Shorts… » supprime celles déjà importées',
-            onclick: () => act(async () => {
-              const v = prompt('Durée minimale des vidéos, en secondes (0 = aucune).\n\nAstuce : 181 écarte tous les Shorts, même ceux de 1 à 3 minutes (les vidéos de moins de 3 minutes ne sont alors plus importées).\n\nPuis clique sur « Retirer les Shorts… » pour supprimer celles déjà importées.', String(c.min_duration_s || 0));
-              if (v === null) return null;
-              const n = Number(v);
-              if (!Number.isFinite(n) || n < 0) throw new Error('Durée invalide.');
-              await api('PATCH', `/sync/channels/${c.id}`, { min_duration_s: Math.round(n) });
-              return n ? `Durée minimale : ${Math.round(n)} s. Clique sur « Retirer les Shorts… » pour supprimer celles déjà importées.` : 'Plus de durée minimale.';
-            }),
-          },
-          'Durée minimale…',
+          'span',
+          { class: 'min-dur', title: 'Les vidéos plus courtes ne sont pas importées. Astuce : 181 écarte tous les Shorts, même ceux de 1 à 3 minutes. Clique ensuite sur « Retirer les Shorts… » pour supprimer ceux déjà importés.' },
+          h('label', {}, 'Durée min. (s) ', minInput),
+          h(
+            'button',
+            {
+              class: 'btn secondary small',
+              type: 'button',
+              onclick: go(async () => {
+                const n = Number(minInput.value);
+                if (!Number.isFinite(n) || n < 0) throw new Error('Durée invalide.');
+                await api('PATCH', `/sync/channels/${c.id}`, { min_duration_s: Math.round(n) });
+                return n ? `Durée minimale : ${Math.round(n)} s. Clique sur « Retirer les Shorts… » pour supprimer celles déjà importées.` : 'Plus de durée minimale.';
+              }),
+            },
+            'Appliquer',
+          ),
         ),
-        c.exclude_shorts ? null : h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/sync/channels/${c.id}`, { exclude_shorts: true }), 'Les Shorts sont désormais exclus.') }, 'Exclure les Shorts'),
-        h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/sync/channels/${c.id}`, { enabled: !c.enabled })) }, c.enabled ? 'Suspendre' : 'Reprendre'),
-        h('button', { class: 'btn danger small', type: 'button', onclick: () => confirm('Ne plus suivre cette chaîne ? Les vidéos déjà importées sont conservées.') && act(() => api('DELETE', `/sync/channels/${c.id}`)) }, 'Retirer la chaîne'),
+        c.exclude_shorts ? null : h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('PATCH', `/sync/channels/${c.id}`, { exclude_shorts: true }), 'Les Shorts sont désormais exclus.') }, 'Exclure les Shorts'),
+        h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('PATCH', `/sync/channels/${c.id}`, { enabled: !c.enabled })) }, c.enabled ? 'Suspendre' : 'Reprendre'),
+        h('button', { class: 'btn danger small', type: 'button', onclick: (ev) => confirm('Ne plus suivre cette chaîne ? Les vidéos déjà importées sont conservées.') && act(ev.currentTarget, () => api('DELETE', `/sync/channels/${c.id}`)) }, 'Retirer la chaîne'),
       ),
-    ),
-  );
+    );
+  });
   const channels = h(
     'section',
     { class: 'panel' },
     h('h2', {}, 'Chaînes suivies'),
-    h('p', { id: 'sync-msg', class: 'status' }),
     rows.length ? h('div', { class: 'chan-list' }, rows) : h('p', { class: 'status' }, 'Aucune chaîne suivie.'),
     h('h3', { style: 'margin-top:1.2rem' }, 'Ajouter une chaîne'),
     addForm,
@@ -945,7 +1187,7 @@ async function renderSync() {
               h(
                 'div',
                 { class: 'actions' },
-                h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('POST', `/sync/videos/${v.id}/retry`, {}), 'Remise en file d’attente.') }, 'Réessayer'),
+                h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('POST', `/sync/videos/${v.id}/retry`, {}), 'Remise en file d’attente.') }, 'Réessayer'),
                 h('a', { class: 'btn small', href: `#/video/${v.id}` }, 'Ouvrir'),
               ),
             ),
@@ -956,51 +1198,117 @@ async function renderSync() {
 
   $app.replaceChildren(...[state, summariesPanel, channels, failed].filter(Boolean));
   cleanup(); // a re-render (timer, action) replaces the previous timer instead of adding one
-  const timer = setInterval(() => document.hidden || renderSync().catch(() => {}), 20000);
+
+  const sigOf = (x) =>
+    JSON.stringify([
+      x.paused, x.cooldown_until, x.last_error, x.llm_error, x.keys,
+      x.summaries.paused, x.summaries.configured, x.summaries.cooldown_until, x.summaries.failed_list.map((v) => v.id),
+      x.channels.map((c) => [c.id, c.title, c.enabled, c.exclude_shorts, c.min_duration_s, c.last_discovery_error]),
+      x.failed.map((v) => v.id),
+    ]);
+  const sig = sigOf(o);
+  // A full redraw would wipe typed text and focus
+  const idle = () => {
+    const ae = document.activeElement;
+    const typing = ae && $app.contains(ae) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(ae.tagName);
+    return !typing && !input.value && !addBtn.disabled && !inFlight;
+  };
+  const tick = async () => {
+    if (document.hidden || inFlight) return;
+    try {
+      const fresh = await api('GET', '/sync/overview');
+      if (gen !== routeGen || inFlight) return;
+      const set = (k, v) => counters[k] && (counters[k].textContent = String(v));
+      set('pending', fresh.counts.pending);
+      set('done', fresh.counts.done);
+      set('failed', fresh.counts.failed);
+      set('manual', fresh.counts.manual);
+      set('sReady', fresh.summaries.ready);
+      set('sWaiting', fresh.summaries.waiting);
+      set('sFailed', fresh.summaries.failed);
+      if (sigOf(fresh) !== sig && idle()) await renderSync();
+    } catch (err) {
+      if (err instanceof AuthError) renderLogin();
+    }
+  };
+  const timer = setInterval(tick, 20000);
   cleanup = () => clearInterval(timer);
 }
 
 // ---------------------------------------------------------------------- éditeur
 
 async function renderEditor(id) {
-  const { video, segments, summary } = await api('GET', `/videos/${id}`);
-  const config = await api('GET', '/config');
-  let clipState = await api('GET', `/videos/${id}/clips`).catch(() => null);
+  const gen = routeGen;
+  const [{ video, segments, summary }, config, firstClipState] = await Promise.all([
+    api('GET', `/videos/${id}`),
+    api('GET', '/config'),
+    api('GET', `/videos/${id}/clips`).catch((err) => {
+      if (err instanceof AuthError) throw err;
+      return null;
+    }),
+  ]);
+  if (gen !== routeGen) return;
+  let clipState = firstClipState;
   let segs = segments.map((s) => ({ ...s, orig: s.text, origStart: s.start_ms }));
   let dirty = false;
+  let rev = 0;
+  let saving = false;
   let player = null;
   let activeIdx = -1;
   let pageLeft = false; // set by cleanup: late async callbacks must not act on a page that is gone
   let uploading = null; // AbortController of a running video upload
 
-  const markDirty = (v = true) => {
+  const setDirty = (v) => {
     dirty = v;
-    saveBtn.disabled = !dirty;
+    saveBtn.disabled = !dirty || saving;
     saveMsg.textContent = dirty ? 'Modifications non enregistrées' : 'À jour';
     saveMsg.className = `status${dirty ? '' : ' ok'}`;
   };
-  dirtyGuard = () => (uploading ? 'Un envoi de vidéo est en cours : quitter l’interrompra. Quitter quand même ?' : dirty);
-  const beforeUnload = (e) => dirty && e.preventDefault();
+  const markDirty = () => {
+    rev++;
+    setDirty(true);
+  };
+  const savedInfo = { title: video.title ?? '', channel: video.channel ?? '', date: video.published_at?.slice(0, 10) ?? '', lang: video.lang ?? '' };
+  const isDirty = () => dirty || sumArea.value !== summary.content || Object.keys(savedInfo).some((k) => f[k].value !== savedInfo[k]);
+  dirtyGuard = () => (uploading ? 'Un envoi de vidéo est en cours : quitter l’interrompra. Quitter quand même ?' : isDirty());
+  const beforeUnload = (e) => isDirty() && e.preventDefault();
   window.addEventListener('beforeunload', beforeUnload);
   const onKey = (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault();
-      save();
+      const focus = document.activeElement;
+      if (sumArea.contains(focus)) saveSum.click();
+      else if (info.contains(focus)) saveInfoBtn.click();
+      else save();
     }
   };
   window.addEventListener('keydown', onKey);
 
   // --- infos de la vidéo
-  const infoMsg = h('span', { class: 'status' });
+  const infoMsg = h('span', { class: 'status', role: 'status' });
   const f = {
     title: h('input', { type: 'text', value: video.title }),
     channel: h('input', { type: 'text', value: video.channel }),
     date: h('input', { type: 'date', value: video.published_at?.slice(0, 10) ?? '' }),
     lang: h('input', { type: 'text', value: video.lang ?? '', maxlength: '5' }),
   };
+  const saveInfoBtn = h('button', { class: 'btn secondary small', type: 'button' }, 'Enregistrer les infos');
+  saveInfoBtn.addEventListener('click', () =>
+    busy(saveInfoBtn, async () => {
+      try {
+        const sent = { title: f.title.value, channel: f.channel.value, date: f.date.value, lang: f.lang.value };
+        await api('PATCH', `/videos/${id}`, { title: sent.title, channel: sent.channel, published_at: sent.date || null, lang: sent.lang });
+        Object.assign(savedInfo, sent);
+        status(infoMsg, 'Infos enregistrées', 'ok');
+      } catch (err) {
+        fail(err, infoMsg);
+      }
+    }),
+  );
   const info = h(
     'section',
     { class: 'panel' },
+    h('h2', {}, video.title || video.youtube_id),
     h(
       'div',
       { class: 'row' },
@@ -1012,27 +1320,7 @@ async function renderEditor(id) {
     h(
       'div',
       { class: 'actions' },
-      h(
-        'button',
-        {
-          class: 'btn secondary small',
-          type: 'button',
-          onclick: async () => {
-            try {
-              await api('PATCH', `/videos/${id}`, {
-                title: f.title.value,
-                channel: f.channel.value,
-                published_at: f.date.value || null,
-                lang: f.lang.value,
-              });
-              status(infoMsg, 'Infos enregistrées', 'ok');
-            } catch (e) {
-              status(infoMsg, e.message, 'err');
-            }
-          },
-        },
-        'Enregistrer les infos',
-      ),
+      saveInfoBtn,
       infoMsg,
       config.youtube
         ? h(
@@ -1041,17 +1329,20 @@ async function renderEditor(id) {
               class: 'btn secondary small',
               type: 'button',
               title: 'Remplace titre, chaîne, date de publication et miniature par ceux de YouTube',
-              onclick: async () => {
+              onclick: (ev) => {
                 if (!confirm('Remplacer titre, chaîne et date de publication par ceux de YouTube ?')) return;
-                try {
-                  const v = await api('POST', `/videos/${id}/refresh-meta`, {});
-                  f.title.value = v.title;
-                  f.channel.value = v.channel;
-                  f.date.value = v.published_at?.slice(0, 10) ?? '';
-                  status(infoMsg, 'Mis à jour depuis YouTube', 'ok');
-                } catch (e) {
-                  status(infoMsg, e.message, 'err');
-                }
+                busy(ev.currentTarget, async () => {
+                  try {
+                    const v = await api('POST', `/videos/${id}/refresh-meta`, {});
+                    f.title.value = v.title;
+                    f.channel.value = v.channel;
+                    f.date.value = v.published_at?.slice(0, 10) ?? '';
+                    Object.assign(savedInfo, { title: f.title.value, channel: f.channel.value, date: f.date.value });
+                    status(infoMsg, 'Mis à jour depuis YouTube', 'ok');
+                  } catch (err) {
+                    fail(err, infoMsg);
+                  }
+                });
               },
             },
             'Mettre à jour depuis YouTube',
@@ -1092,7 +1383,8 @@ async function renderEditor(id) {
         },
       });
       const ta = h('textarea', {
-        class: 'seg',
+        class: 'tseg-text',
+        'aria-label': `Texte du segment à ${fmtTs(s.start_ms)}`,
         rows: '1',
         value: s.text,
         spellcheck: 'true',
@@ -1107,7 +1399,7 @@ async function renderEditor(id) {
       const btn = (label, title, fn) => h('button', { type: 'button', title, 'aria-label': title, onclick: fn }, label);
       const row = h(
         'div',
-        { class: `seg${s.text !== s.orig || s.start_ms !== s.origStart ? ' dirty' : ''}` },
+        { class: `tseg${s.text !== s.orig || s.start_ms !== s.origStart ? ' dirty' : ''}` },
         h(
           'div',
           { class: 'tcell' },
@@ -1122,7 +1414,7 @@ async function renderEditor(id) {
             const at = ta.selectionStart;
             const left = s.text.slice(0, at).trim();
             const right = s.text.slice(at).trim();
-            if (!left || !right) return;
+            if (!left || !right) return toast('Place d’abord le curseur dans le texte, à l’endroit où couper, puis clique sur ✂.', 'err');
             const next = segs[i + 1];
             const span = s.duration_ms ?? (next ? next.start_ms - s.start_ms : 0);
             const newStart = s.start_ms + Math.round(Math.max(span, 0) * (left.length / s.text.length));
@@ -1148,16 +1440,27 @@ async function renderEditor(id) {
             rowEls[i + 1]?.querySelector('textarea').focus();
           }),
           btn('✕', 'Supprimer', () => {
-            segs.splice(i, 1);
+            const [removed] = segs.splice(i, 1);
             markDirty();
             renderSegs();
+            rowEls[Math.min(i, rowEls.length - 1)]?.querySelector('textarea')?.focus();
+            toast('Segment supprimé.', 'ok', 'Annuler', () => {
+              if (pageLeft) return;
+              // Reinsert by time: other rows may have changed since
+              let at = segs.findIndex((x) => x.start_ms > removed.start_ms);
+              if (at < 0) at = segs.length;
+              segs.splice(at, 0, removed);
+              markDirty();
+              renderSegs();
+              rowEls[at]?.querySelector('textarea')?.focus();
+            });
           }),
         ),
       );
       rowEls.push(row);
       list.append(row);
     });
-    requestAnimationFrame(() => list.querySelectorAll('textarea.seg').forEach(autosize));
+    requestAnimationFrame(() => list.querySelectorAll('textarea.tseg-text').forEach(autosize));
     activeIdx = -1;
   }
 
@@ -1188,13 +1491,13 @@ async function renderEditor(id) {
     activeIdx = idx;
     const el = rowEls[idx];
     el?.classList.add('active');
-    if (follow.checked) el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (follow.checked && !document.activeElement?.classList.contains('tseg-text')) el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, 400);
 
   // --- chercher / remplacer
   const findIn = h('input', { class: 'text', type: 'text', placeholder: 'Chercher…' });
   const replIn = h('input', { class: 'text', type: 'text', placeholder: 'Remplacer par…' });
-  const findMsg = h('span', { class: 'status' });
+  const findMsg = h('span', { class: 'status', role: 'status' });
   const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const countMatches = () => {
     if (!findIn.value) return status(findMsg, '');
@@ -1241,7 +1544,7 @@ async function renderEditor(id) {
   );
 
   // --- source de la transcription
-  const srcMsg = h('p', { class: 'status' });
+  const srcMsg = h('p', { class: 'status', role: 'status' });
   const pasteArea = h('textarea', { class: 'text', rows: '6', placeholder: 'SRT, VTT, « [00:12] texte »…' });
   const source = h(
     'section',
@@ -1257,16 +1560,18 @@ async function renderEditor(id) {
             {
               class: 'btn secondary small',
               type: 'button',
-              onclick: async () => {
+              onclick: (ev) => {
                 if (!confirm(video.edited ? 'Tes corrections manuelles seront perdues. Continuer ?' : 'Récupérer à nouveau la transcription ?')) return;
-                status(srcMsg, 'Récupération…');
-                try {
-                  await api('POST', `/videos/${id}/refetch`, { lang: f.lang.value || undefined });
-                  dirty = false;
-                  route();
-                } catch (e) {
-                  status(srcMsg, e.message, 'err');
-                }
+                busy(ev.currentTarget, async () => {
+                  status(srcMsg, 'Récupération…');
+                  try {
+                    await api('POST', `/videos/${id}/refetch`, { lang: f.lang.value || undefined });
+                    dirty = false;
+                    route();
+                  } catch (err) {
+                    fail(err, srcMsg);
+                  }
+                });
               },
             },
             'Récupérer via Supadata',
@@ -1280,15 +1585,17 @@ async function renderEditor(id) {
           class: 'btn secondary small',
           type: 'button',
           style: 'margin-top:.5rem',
-          onclick: async () => {
+          onclick: (ev) => {
             if (!pasteArea.value.trim() || !confirm('Remplacer toute la transcription par ce texte ?')) return;
-            try {
-              await api('POST', `/videos/${id}/import`, { transcript: pasteArea.value });
-              dirty = false;
-              route();
-            } catch (e) {
-              status(srcMsg, e.message, 'err');
-            }
+            busy(ev.currentTarget, async () => {
+              try {
+                await api('POST', `/videos/${id}/import`, { transcript: pasteArea.value });
+                dirty = false;
+                route();
+              } catch (err) {
+                fail(err, srcMsg);
+              }
+            });
           },
         },
         'Importer le texte collé',
@@ -1299,7 +1606,7 @@ async function renderEditor(id) {
 
 
   // --- traduction
-  const trMsg = h('p', { class: 'status' });
+  const trMsg = h('p', { class: 'status', role: 'status' });
   const translatable = Boolean(video.lang) && video.lang !== 'fr';
   const translatePanel = h(
     'section',
@@ -1321,21 +1628,23 @@ async function renderEditor(id) {
               {
                 class: 'btn secondary small',
                 type: 'button',
-                onclick: async () => {
+                onclick: (ev) => {
                   if (dirty) return status(trMsg, 'Enregistre d’abord tes modifications.', 'err');
                   if (!confirm('Le texte affiché sera remplacé par une traduction automatique en français (le texte d’origine est conservé). Continuer ?')) return;
-                  status(trMsg, 'Traduction en cours… (une à deux minutes pour une longue vidéo)');
-                  try {
-                    await api('POST', `/videos/${id}/translate`, { lang: 'fr' });
-                    route();
-                  } catch (e) {
-                    status(trMsg, e.message, 'err');
-                  }
+                  busy(ev.currentTarget, async () => {
+                    status(trMsg, 'Traduction en cours… (une à deux minutes pour une longue vidéo)');
+                    try {
+                      await api('POST', `/videos/${id}/translate`, { lang: 'fr' });
+                      route();
+                    } catch (err) {
+                      fail(err, trMsg);
+                    }
+                  });
                 },
               },
               'Traduire en français',
             )
-          : h('p', { class: 'status err' }, 'OPENROUTER_API_KEY manquante : impossible de traduire automatiquement.')
+          : unavailable('la traduction automatique n’est pas configurée.', 'OPENROUTER_API_KEY')
         : null,
       trMsg,
     ),
@@ -1344,7 +1653,7 @@ async function renderEditor(id) {
 
 
   // --- résumé IA (modifiable à la main)
-  const sumMsg = h('p', { class: 'status' });
+  const sumMsg = h('p', { class: 'status', role: 'status' });
   const sumDate = (d) => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '');
   const sumText = {
     edited: `Corrigé à la main le ${sumDate(summary.edited_at)} : il n’est jamais régénéré automatiquement.${summary.outdated ? ' La transcription a été modifiée depuis : relis ce résumé.' : ''}`,
@@ -1361,16 +1670,20 @@ async function renderEditor(id) {
     status(sumMsg, '');
   });
   saveSum.addEventListener('click', async () => {
-    saveSum.disabled = true;
-    try {
-      const r = await api('PUT', `/videos/${id}/summary`, { markdown: sumArea.value });
-      sumArea.value = r.markdown;
-      summary.content = r.markdown;
-      status(sumMsg, 'Résumé enregistré : il est affiché tel quel sur le site.', 'ok');
-    } catch (e) {
-      saveSum.disabled = false;
-      status(sumMsg, e.message, 'err');
-    }
+    if (saveSum.disabled) return;
+    let ok = false;
+    await busy(saveSum, async () => {
+      try {
+        const r = await api('PUT', `/videos/${id}/summary`, { markdown: sumArea.value });
+        sumArea.value = r.markdown;
+        summary.content = r.markdown;
+        ok = true;
+        status(sumMsg, 'Résumé enregistré : il est affiché tel quel sur le site.', 'ok');
+      } catch (e) {
+        fail(e, sumMsg);
+      }
+    });
+    saveSum.disabled = ok;
   });
   const summaryPanel = h(
     'section',
@@ -1398,16 +1711,18 @@ async function renderEditor(id) {
                 {
                   class: 'btn secondary small',
                   type: 'button',
-                  onclick: async () => {
+                  onclick: (ev) => {
                     if (dirty) return status(sumMsg, 'Enregistre d’abord tes modifications de la transcription.', 'err');
                     if (summary.content && !confirm('Régénérer remplacera le résumé actuel (y compris tes corrections) par un nouveau résumé IA. Continuer ?')) return;
-                    status(sumMsg, 'Rédaction du résumé… (environ une minute)');
-                    try {
-                      await api('POST', `/videos/${id}/summary`, {});
-                      route();
-                    } catch (e) {
-                      status(sumMsg, e.message, 'err');
-                    }
+                    busy(ev.currentTarget, async () => {
+                      status(sumMsg, 'Rédaction du résumé… (environ une minute)');
+                      try {
+                        await api('POST', `/videos/${id}/summary`, {});
+                        route();
+                      } catch (err) {
+                        fail(err, sumMsg);
+                      }
+                    });
                   },
                 },
                 'Régénérer avec l’IA',
@@ -1434,7 +1749,7 @@ async function renderEditor(id) {
     clearTimeout(facesTimer);
     const fc = clipState?.faces;
     if (!clipState?.file || !fc || fc.status === 'off') return facesBox.replaceChildren();
-    const busy = fc.status === 'queued' || fc.status === 'running';
+    const analysing = fc.status === 'queued' || fc.status === 'running';
     const phase = fc.phase === 'identify' ? 'Reconnaissance de David Lisnard' : 'Analyse';
     const id2 = fc.ident ?? { state: 'off' };
     const text = {
@@ -1452,24 +1767,26 @@ async function renderEditor(id) {
       ready: `Reconnaissance de David Lisnard : à jour (${id2.matches ?? 0} visage${id2.matches > 1 ? 's' : ''} reconnu${id2.matches > 1 ? 's' : ''} sur ${id2.samples ?? 0} comparé${id2.samples > 1 ? 's' : ''}, dans les plans à plusieurs personnes).`,
     }[id2.state];
     const identBtn = fc.status === 'ready' && (id2.state === 'none' || id2.state === 'stale')
-      ? h('button', { class: 'btn secondary small', type: 'button', onclick: async (e) => {
-        e.target.disabled = true;
-        try {
-          clipState = await api('POST', `/videos/${id}/faces/identify`, {});
-        } catch (err) {
-          status(clipMsg, err.message, 'err');
-        }
+      ? h('button', { class: 'btn secondary small', type: 'button', onclick: async (ev) => {
+        await busy(ev.currentTarget, async () => {
+          try {
+            clipState = await api('POST', `/videos/${id}/faces/identify`, {});
+          } catch (err) {
+            fail(err, clipMsg);
+          }
+        });
         drawFaces();
       } }, 'Lancer la reconnaissance')
       : null;
-    const btn = h('button', { class: 'btn secondary small', type: 'button', disabled: busy }, fc.status === 'ready' || fc.status === 'failed' || fc.status === 'stale' ? 'Relancer l’analyse' : 'Analyser les visages');
+    const btn = h('button', { class: 'btn secondary small', type: 'button', disabled: analysing }, fc.status === 'ready' || fc.status === 'failed' || fc.status === 'stale' ? 'Relancer l’analyse' : 'Analyser les visages');
     btn.addEventListener('click', async () => {
-      btn.disabled = true;
-      try {
-        clipState = await api('POST', `/videos/${id}/faces`, {});
-      } catch (e) {
-        status(clipMsg, e.message, 'err');
-      }
+      await busy(btn, async () => {
+        try {
+          clipState = await api('POST', `/videos/${id}/faces`, {});
+        } catch (err) {
+          fail(err, clipMsg);
+        }
+      });
       drawFaces();
     });
     facesBox.replaceChildren(
@@ -1482,7 +1799,7 @@ async function renderEditor(id) {
         : null,
       identText ? h('p', { class: 'status' }, identText) : null,
       h('div', { class: 'actions' }, btn, identBtn));
-    if (busy) {
+    if (analysing) {
       facesTimer = setTimeout(async () => {
         try {
           clipState = await api('GET', `/videos/${id}/clips`);
@@ -1547,7 +1864,7 @@ async function renderEditor(id) {
     return api('POST', `/videos/${id}/file/finish`, { size: total });
   }
 
-  const clipMsg = h('p', { class: 'status' });
+  const clipMsg = h('p', { class: 'status', role: 'status' });
   function renderClips() {
     const st = clipState;
     if (!st) {
@@ -1599,7 +1916,7 @@ async function renderEditor(id) {
         progress.hidden = true;
         cancelBtn.hidden = true;
         progressText.textContent = '';
-        status(clipMsg, e.message, 'err');
+        fail(e, clipMsg);
       }
     });
 
@@ -1627,24 +1944,24 @@ async function renderEditor(id) {
       } catch (e) {
         toggle.checked = !toggle.checked;
         toggle.disabled = false;
-        status(clipMsg, e.message, 'err');
+        fail(e, clipMsg);
       }
     });
 
     const sg = st.suggestions;
     const suggestBtn = h('button', { class: 'btn secondary small', type: 'button', disabled: !st.llm || !st.has_text }, sg ? 'Régénérer les extraits' : 'Proposer des extraits');
-    suggestBtn.addEventListener('click', async () => {
-      suggestBtn.disabled = true;
-      status(clipMsg, 'Recherche des meilleurs extraits… (une minute environ)');
-      try {
-        clipState = await api('POST', `/videos/${id}/clips/suggest`, {});
-        renderClips();
-        status(clipMsg, 'Extraits proposés.', 'ok');
-      } catch (e) {
-        suggestBtn.disabled = false;
-        status(clipMsg, e.message, 'err');
-      }
-    });
+    suggestBtn.addEventListener('click', () =>
+      busy(suggestBtn, async () => {
+        status(clipMsg, 'Recherche des meilleurs extraits… (une minute environ)');
+        try {
+          clipState = await api('POST', `/videos/${id}/clips/suggest`, {});
+          renderClips();
+          status(clipMsg, 'Extraits proposés.', 'ok');
+        } catch (e) {
+          fail(e, clipMsg);
+        }
+      }),
+    );
 
     const cards = (sg?.clips ?? []).map((c) => {
       const seek = h('button', { class: 'btn secondary small', type: 'button' }, 'Voir');
@@ -1670,19 +1987,21 @@ async function renderEditor(id) {
         'details',
         { open: Boolean(f) || Boolean(sg) },
         h('summary', {}, `Clips TikTok : ${label}`),
-        st.ffmpeg ? null : h('p', { class: 'status err' }, 'ffmpeg n’est pas installé sur ce serveur : le dépôt de vidéos est impossible.'),
-        st.ffmpeg && !st.render_ready ? h('p', { class: 'status err' }, 'Le ffmpeg de ce serveur ne sait pas incruster de sous-titres ou encoder en H.264 : le studio ne pourra pas créer de clips (voir les journaux de démarrage).') : null,
+        st.ffmpeg ? null : unavailable('le dépôt de vidéos est impossible sur ce serveur.', 'ffmpeg absent'),
+        st.ffmpeg && !st.render_ready ? unavailable('le studio ne pourra pas créer de clips (le serveur ne sait pas incruster les sous-titres ni encoder la vidéo).', 'ffmpeg sans sous-titres / H.264 ; voir les journaux de démarrage') : null,
         ...fileBlock,
         clipsPreview,
         h('div', { class: 'actions' }, fileInput),
-        h('div', { class: 'actions' }, sendBtn, cancelBtn, f ? h('button', { class: 'btn secondary small', type: 'button', onclick: async () => {
+        h('div', { class: 'actions' }, sendBtn, cancelBtn, f ? h('button', { class: 'btn secondary small', type: 'button', onclick: (ev) => {
           if (!confirm('Supprimer le fichier vidéo ? Les clips ne seront plus proposés au public pour cette vidéo.')) return;
-          try {
-            clipState = await api('DELETE', `/videos/${id}/file`);
-            renderClips();
-          } catch (e) {
-            status(clipMsg, e.message, 'err');
-          }
+          busy(ev.currentTarget, async () => {
+            try {
+              clipState = await api('DELETE', `/videos/${id}/file`);
+              renderClips();
+            } catch (e) {
+              fail(e, clipMsg);
+            }
+          });
         } }, 'Supprimer le fichier') : null),
         progress,
         progressText,
@@ -1691,7 +2010,7 @@ async function renderEditor(id) {
         facesBox,
         h('h3', { class: 'clips-sub' }, 'Extraits proposés par l’IA'),
         sg?.outdated ? h('p', { class: 'status err' }, 'La transcription a changé depuis : régénère les extraits.') : null,
-        cards.length ? h('div', { class: 'clip-list' }, cards) : h('p', { class: 'status' }, st.llm ? 'Pas encore d’extraits.' : 'OPENROUTER_API_KEY manquante : impossible de proposer des extraits.'),
+        cards.length ? h('div', { class: 'clip-list' }, cards) : st.llm ? h('p', { class: 'status' }, 'Pas encore d’extraits.') : unavailable('la proposition d’extraits par l’IA n’est pas configurée.', 'OPENROUTER_API_KEY'),
         h('div', { class: 'actions' }, suggestBtn),
         clipMsg,
       ),
@@ -1740,17 +2059,21 @@ async function renderEditor(id) {
       {
         class: 'btn danger small',
         type: 'button',
-        onclick: async () => {
+        onclick: (ev) => {
           if (!confirm('Supprimer cette vidéo et sa transcription ?')) return;
-          try {
-            await api('DELETE', `/videos/${id}`);
-          } catch (e) {
-            if (e instanceof AuthError) return route();
-            alert(e.message);
-            return;
-          }
-          dirty = false;
-          location.hash = '#/';
+          busy(ev.currentTarget, async () => {
+            try {
+              await api('DELETE', `/videos/${id}`);
+            } catch (e) {
+              if (e instanceof AuthError) return renderLogin();
+              alert(e.message);
+              return;
+            }
+            dirty = false;
+            sumArea.value = summary.content;
+            Object.keys(savedInfo).forEach((k) => (savedInfo[k] = f[k].value));
+            location.hash = '#/';
+          });
         },
       },
       'Supprimer la vidéo',
@@ -1758,23 +2081,41 @@ async function renderEditor(id) {
   );
 
   // --- enregistrement
-  const saveMsg = h('span', { class: 'status ok' }, 'À jour');
+  const saveMsg = h('span', { class: 'status ok', role: 'status' }, 'À jour');
   const saveBtn = h('button', { class: 'btn', type: 'button', disabled: true, onclick: () => save() }, 'Enregistrer (Ctrl+S)');
+  const putSegments = (list) => api('PUT', `/videos/${id}/segments`, { segments: list });
   async function save() {
-    if (!dirty) return;
+    if (!dirty || saving) return;
+    saving = true;
     saveBtn.disabled = true;
     status(saveMsg, 'Enregistrement…');
+    // Snapshot: edits made during the request stay dirty
+    const sentRev = rev;
+    const snapshot = segs.map((s) => ({ seg: s, text: s.text, start: s.start_ms }));
+    const payload = segs
+      .filter((s) => s.text.trim())
+      .map(({ start_ms, duration_ms, text, text_original }) => ({ start_ms, duration_ms, text, text_original }));
     try {
-      segs = segs.filter((s) => s.text.trim());
-      await api('PUT', `/videos/${id}/segments`, {
-        segments: segs.map(({ start_ms, duration_ms, text, text_original }) => ({ start_ms, duration_ms, text, text_original })),
-      });
-      segs.forEach((s) => ((s.orig = s.text), (s.origStart = s.start_ms)));
-      renderSegs();
-      markDirty(false);
-    } catch (e) {
-      status(saveMsg, e.message, 'err');
-      saveBtn.disabled = false;
+      try {
+        await putSegments(payload);
+      } catch (err) {
+        if (!(err instanceof AuthError) || !(await reauth())) throw err;
+        await putSegments(payload);
+      }
+      for (const { seg, text, start } of snapshot) {
+        if (seg.text === text && seg.start_ms === start) {
+          seg.orig = text;
+          seg.origStart = start;
+        }
+      }
+      segs.forEach((s, i) => rowEls[i]?.classList.toggle('dirty', s.text !== s.orig || s.start_ms !== s.origStart));
+      saving = false;
+      if (rev === sentRev) setDirty(false);
+      else setDirty(true);
+    } catch (err) {
+      saving = false;
+      setDirty(true);
+      status(saveMsg, err instanceof AuthError ? 'Session expirée : reconnecte-toi pour enregistrer.' : err.message, 'err');
     }
   }
 

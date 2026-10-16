@@ -219,3 +219,18 @@ test('admin : corps lus après la session, cookie abîmé et Origin null refusé
   assert.equal((await call('POST', '/api/admin/videos', { input: 'x', mode: 'empty' }, { Origin: 'null' })).status, 403);
   assert.equal((await raw('/api/admin/videos', '{pas du json', { Cookie: cookie })).status, 400);
 });
+
+test('session glissante : le cookie est renouvelé quand il reste moins de la moitié de la durée', { skip: !enabled }, async () => {
+  const { createHmac } = await import('node:crypto');
+  const mk = (ms) => {
+    const exp = String(Date.now() + ms);
+    return `adm=${exp}.${createHmac('sha256', process.env.SESSION_SECRET).update(exp).digest('base64url')}`;
+  };
+  const get = (c) => fetch(`${base}/api/admin/videos`, { headers: { Cookie: c } });
+  const fresh = await get(mk(11 * 3600 * 1000));
+  assert.equal(fresh.status, 200);
+  assert.equal(fresh.headers.get('set-cookie'), null);
+  const old = await get(mk(3 * 3600 * 1000));
+  assert.equal(old.status, 200);
+  assert.match(old.headers.get('set-cookie') ?? '', /^adm=\d+\./);
+});

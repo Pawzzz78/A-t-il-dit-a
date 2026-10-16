@@ -57,12 +57,12 @@ export function createPhone({ onMove, onCrop, onPick }) {
   const guideV = el('div', { class: 'ph-guide v', hidden: true });
   const guideH = el('div', { class: 'ph-guide h', hidden: true });
   const hint = el('div', { class: 'ph-hint', hidden: true }, '↔ Glisse la vidéo pour la recentrer');
-  const busy = el('div', { class: 'ph-busy', hidden: true });
+  const busy = el('div', { class: 'ph-busy', hidden: true, role: 'status' });
   const playBtn = el('button', { class: 'ph-play', type: 'button', 'aria-label': 'Lire l’aperçu' }, '▶');
   const screen = el('div', { class: 'ph-screen' }, stage, brollImg, subBox, pickLayer, pickDot, guideV, guideH, guides, hint, busy, playBtn);
   const range = el('input', { class: 'ph-range', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': 'Position dans l’aperçu' });
   const time = el('span', { class: 'ph-time' }, '0:00 / 0:00');
-  const guideToggle = el('label', { class: 'ph-toggle' }, el('input', { type: 'checkbox' }), 'Zones TikTok');
+  const guideToggle = el('label', { class: 'ph-toggle' }, el('input', { type: 'checkbox' }), 'Zones masquées par TikTok');
   const bar = el('div', { class: 'ph-bar' }, range, time);
   // téléphone : « Agrandir » donne un aperçu presque plein écran pour vérifier le rendu (le réglage reste dessous)
   const sizeBtn = el('button', { class: 'ph-size', type: 'button', 'aria-pressed': 'false', 'aria-label': 'Agrandir l’aperçu' }, '⤢ Agrandir');
@@ -76,7 +76,8 @@ export function createPhone({ onMove, onCrop, onPick }) {
   });
   const music = new Audio();
   music.loop = true;
-  music.preload = 'auto';
+  music.preload = 'none';
+  music.addEventListener('loadedmetadata', () => syncMusic());
 
   let cfg = { groups: [], style: null, font: null };
   let fx = { plan: [], focus: { x: 0.5, y: 0.42 }, broll: [], picking: false }; // zooms et images b-roll
@@ -229,6 +230,11 @@ export function createPhone({ onMove, onCrop, onPick }) {
     music.currentTime = video.currentTime % music.duration;
   };
   const play = () => video.play().catch(() => {});
+  const showPlayState = () => {
+    playBtn.classList.toggle('playing', playing);
+    playBtn.textContent = playing ? '❚❚' : '▶';
+    playBtn.setAttribute('aria-label', playing ? 'Mettre l’aperçu en pause' : 'Lire l’aperçu');
+  };
   playBtn.addEventListener('click', () => (video.paused ? play() : video.pause()));
   // clic = lecture / pause ; glissement horizontal en plein écran = recentrer la vidéo (comme déplacer une image dans Canva)
   let pan = null;
@@ -261,7 +267,7 @@ export function createPhone({ onMove, onCrop, onPick }) {
   video.addEventListener('pointercancel', endPan);
   video.addEventListener('play', () => {
     playing = true;
-    playBtn.hidden = true;
+    showPlayState();
     syncMusic();
     if (music.src) music.play().catch(() => {});
     cancelAnimationFrame(raf);
@@ -269,7 +275,7 @@ export function createPhone({ onMove, onCrop, onPick }) {
   });
   video.addEventListener('pause', () => {
     playing = false;
-    playBtn.hidden = false;
+    showPlayState();
     music.pause();
     tick();
   });
@@ -374,10 +380,14 @@ export function createPhone({ onMove, onCrop, onPick }) {
       }
       if (framing.fit !== 'crop') hint.hidden = true;
     },
-    setBusy(message) {
+    setBusy(message, { soft = false, retry = null } = {}) {
       busy.hidden = !message;
-      busy.textContent = message ?? '';
+      busy.classList.toggle('soft', Boolean(message) && soft && !retry);
+      const kids = [el('span', {}, message ?? '')];
+      if (message && retry) kids.push(el('button', { class: 'btn small', type: 'button', onclick: retry }, 'Réessayer'));
+      busy.replaceChildren(...kids);
     },
+    hasSource: () => Boolean(video.getAttribute('src')),
     /** Sous-titres : groupes horodatés, style complet, police (métriques). */
     configure(next) {
       cfg = { ...cfg, ...next };

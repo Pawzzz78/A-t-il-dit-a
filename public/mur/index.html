@@ -33,7 +33,7 @@
   </section>
 
   <main class="wrap wall" id="wall">
-    <div class="wall-bar" role="group" aria-label="Classement">
+    <div class="wall-bar" id="wall-bar" role="group" aria-label="Classement">
       <div class="pills" id="sorts" role="group" aria-label="Trier par"></div>
       <label class="wall-period">Période
         <select id="period">
@@ -65,12 +65,15 @@
   <dialog class="clip-dialog" id="dialog" aria-labelledby="dialog-title">
     <span class="tape" aria-hidden="true"></span>
     <form method="dialog" class="dialog-close"><button aria-label="Fermer" class="close">×</button></form>
-    <h2 id="dialog-title"></h2>
-    <p class="dialog-text" id="dialog-text"></p>
-    <div class="dialog-stats" id="dialog-stats"></div>
-    <div class="dialog-player" id="dialog-player"></div>
-    <p class="dialog-note">Le lecteur de TikTok se charge à l’ouverture de cette fenêtre : TikTok peut alors déposer ses propres cookies.</p>
-    <a class="btn secondary small" id="dialog-link" target="_blank" rel="noopener noreferrer">Ouvrir sur TikTok</a>
+    <div class="dialog-scroll">
+      <h2 id="dialog-title"></h2>
+      <p class="dialog-text clamped" id="dialog-text"></p>
+      <button class="dialog-more" id="dialog-more" type="button" aria-expanded="false" aria-controls="dialog-text" hidden>Voir plus</button>
+      <div class="dialog-stats" id="dialog-stats"></div>
+      <div class="dialog-player" id="dialog-player"></div>
+      <p class="dialog-note">Le lecteur de TikTok se charge à l’ouverture de cette fenêtre : TikTok peut alors déposer ses propres cookies.</p>
+      <a class="btn secondary small" id="dialog-link" target="_blank" rel="noopener noreferrer">Ouvrir sur TikTok</a>
+    </div>
   </dialog>
 
   <footer class="site-footer">

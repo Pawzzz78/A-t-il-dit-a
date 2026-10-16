@@ -231,7 +231,15 @@ export const wallBusy = () => (running ? { trigger: running.trigger, started_at:
 /** Attend la fin de l'actualisation en cours (tests). */
 export const wallIdle = () => running?.promise.catch(() => {}) ?? Promise.resolve();
 
-export const lastRun = () => getSetting('wall_last_run', null);
+const STALE_RUNNING_MS = 30 * 60_000;
+export async function lastRun() {
+  const last = await getSetting('wall_last_run', null);
+  if (last?.status === 'running' && !running && Date.now() - Date.parse(last.started_at) > STALE_RUNNING_MS) {
+    return { ...last, status: 'failed', finished_at: last.started_at, error: 'Actualisation interrompue.' };
+  }
+  return last;
+}
+export const lastOkAt = () => getSetting('wall_last_ok', null);
 
 /**
  * Lance une actualisation en arrière-plan. Renvoie { started: true } ou { started: false, reason } (déjà en cours, pas de jeton, trop tôt).
@@ -242,15 +250,25 @@ export async function startWallRefresh({ trigger = 'admin', fetchImpl = fetch, m
   if (!cfg.enabled) return { started: false, reason: 'Le mur est désactivé (WALL_ENABLED=false).' };
   if (!cfg.token) return { started: false, reason: 'APIFY_TOKEN manquant : ajoute le jeton Apify aux variables du serveur.' };
   if (running) return { started: false, reason: 'Une actualisation est déjà en cours.' };
-  const last = await lastRun();
+  const startedAt = new Date().toISOString();
+  // Reserve before any await so concurrent requests cannot both start
+  const slot = { promise: Promise.resolve(), trigger, startedAt };
+  running = slot;
+  let last;
+  try {
+    last = await getSetting('wall_last_run', null);
+  } catch (e) {
+    running = null;
+    throw e;
+  }
   if (minGapMs && last?.started_at && Date.now() - Date.parse(last.started_at) < minGapMs) {
+    running = null;
     return { started: false, reason: `Actualisation récente : réessaie dans ${Math.ceil((minGapMs - (Date.now() - Date.parse(last.started_at))) / 60000)} min.` };
   }
-  const startedAt = new Date().toISOString();
   const promise = doRefresh(cfg, { trigger, startedAt, fetchImpl }).finally(() => {
-    running = null;
+    if (running === slot) running = null;
   });
-  running = { promise, trigger, startedAt };
+  slot.promise = promise;
   promise.catch(() => {});
   return { started: true };
 }
@@ -290,6 +308,7 @@ async function doRefresh(cfg, { trigger, startedAt, fetchImpl }) {
     const sample = items.find((x) => x && typeof x === 'object');
     const done = { ...record, status: 'ok', finished_at: new Date().toISOString(), received: items.length, kept: clips.length, added, skipped, covers, sample_keys: sample ? Object.keys(sample).slice(0, 40) : [], cost_usd: Number.isFinite(apifyRun.usageTotalUsd) ? apifyRun.usageTotalUsd : null };
     await setSetting('wall_last_run', done);
+    await setSetting('wall_last_ok', done.finished_at);
     return done;
   } catch (e) {
     console.error(`mur : ${e.message}`);
@@ -302,7 +321,7 @@ async function doRefresh(cfg, { trigger, startedAt, fetchImpl }) {
 export function refreshDue(last, hours, now = Date.now()) {
   if (!hours) return false;
   if (!last) return true;
-  if (last.status === 'running') return now - Date.parse(last.started_at) > 30 * 60_000; // exécution restée « en cours » après un redémarrage du serveur
+  if (last.status === 'running') return now - Date.parse(last.started_at) > STALE_RUNNING_MS;
   const at = Date.parse(last.finished_at ?? last.started_at);
   return now - at >= (last.status === 'ok' ? hours * 3_600_000 : 3_600_000);
 }

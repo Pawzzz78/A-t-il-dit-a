@@ -10,6 +10,10 @@
   <link rel="preload" href="/fonts/montserrat-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/fraunces-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="/fonts/fraunces-italic-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="modulepreload" href="/js/studio-core.js">
+  <link rel="modulepreload" href="/js/studio-preview.js">
+  <link rel="modulepreload" href="/js/framing.js">
+  <link rel="modulepreload" href="/js/ui.js">
   <link rel="stylesheet" href="/css/theme.css">
   <link rel="stylesheet" href="/css/app.css">
   <link rel="stylesheet" href="/css/studio.css">
@@ -30,8 +34,8 @@
     </div>
   </section>
 
-  <main class="wrap studio" id="studio" aria-live="polite">
-    <p class="hint" id="loading">Chargement du studio…</p>
+  <main class="wrap studio" id="studio">
+    <p class="hint" id="loading" role="status">Chargement du studio…</p>
   </main>
 
   <footer class="site-footer">

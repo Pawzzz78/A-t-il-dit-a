@@ -220,7 +220,7 @@ before(async () => {
   await db.initDb();
   await pool.query('DELETE FROM wall_clips');
   await pool.query('DELETE FROM wall_hidden_authors');
-  await pool.query("DELETE FROM settings WHERE key = 'wall_last_run'");
+  await pool.query("DELETE FROM settings WHERE key IN ('wall_last_run', 'wall_last_ok')");
   wall = await import('../src/wall/wall.js');
   const { createApp } = await import('../src/server.js');
   server = createApp().listen(0);
@@ -232,7 +232,7 @@ after(async () => {
   if (!enabled) return;
   await pool.query('DELETE FROM wall_clips');
   await pool.query('DELETE FROM wall_hidden_authors');
-  await pool.query("DELETE FROM settings WHERE key = 'wall_last_run'");
+  await pool.query("DELETE FROM settings WHERE key IN ('wall_last_run', 'wall_last_ok')");
   server.close();
   coverServer.close();
   await pool.end();
@@ -383,6 +383,10 @@ test('actualisation : une seule à la fois, pas trop rapprochées, échec d\'Api
   polls = 0;
   const [a, b] = await Promise.all([call('POST', '/api/admin/wall/refresh'), call('POST', '/api/admin/wall/refresh')]);
   assert.deepEqual([a.status, b.status].sort(), [202, 409]);
+  await wall.wallIdle();
+  polls = 0;
+  const both = await Promise.all([wall.startWallRefresh(), wall.startWallRefresh()]);
+  assert.deepEqual(both.map((r) => r.started), [true, false]);
   await wall.wallIdle();
 });
 

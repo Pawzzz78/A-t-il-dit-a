@@ -23,7 +23,7 @@ export const PRESETS = {
   },
   'un-mot': {
     label: 'Un mot à la fois',
-    hint: 'Un seul gros mot, très rythmé',
+    hint: 'Un seul mot à la fois, très rythmé',
     style: { mode: 'one', wordsPerGroup: 1, font: 'montserrat', size: 128, color: '#FFFFFF', highlight: '#FFFFFF', outline: 12, outlineColor: '#000000', shadow: 0, box: false, uppercase: true, animation: 'pop', y: 0.6 },
   },
   karaoke: {
@@ -277,16 +277,33 @@ export function assTime(sec) {
 /** Texte sûr pour ASS : pas d'accolades ni de retours à la ligne ni d'antislash. */
 export const assEscape = (t) => String(t).replace(/\\/g, '/').replace(/[{}]/g, '').replace(/[\r\n]+/g, ' ');
 
+// Strictest caption limit among TikTok's posting API and Instagram Reels
+export const DESCRIPTION_MAX = 2200;
+
+const foldText = (s) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
 /** Ligne de source à citer dans la description de la vidéo : titre et date de l'interview d'origine. */
 export function sourceText(title, publishedAt) {
-  let t = String(title ?? '').replace(/\s+/g, ' ').trim();
-  if (t.length > 56) t = `${t.slice(0, 55).trimEnd()}…`;
+  const t = String(title ?? '').replace(/\s+/g, ' ').trim();
   let date = '';
   if (publishedAt) {
     const [y, m, d] = String(publishedAt).slice(0, 10).split('-').map(Number);
     date = y ? new Date(y, (m || 1) - 1, d || 1).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
   }
+  // Skip the date when the title already contains it
+  const dayMonth = date.split(' ').slice(0, 2).join(' ');
+  if (dayMonth && new RegExp(`(^|\\D)${foldText(dayMonth)}`).test(foldText(t).replace(/\b1er\b/g, '1'))) date = '';
   return `Source : ${t || 'interview'}${date ? ` · ${date}` : ''}`;
+}
+
+export function fitDescription(caption, source, max = DESCRIPTION_MAX) {
+  const cap = String(caption ?? '').trim();
+  const src = String(source ?? '').trim();
+  if (!cap) return src.slice(0, max);
+  const room = max - src.length - 2;
+  if (room <= 1) return src.slice(0, max);
+  const fitted = cap.length > room ? `${cap.slice(0, room - 1).trimEnd()}…` : cap;
+  return `${fitted}\n\n${src}`;
 }
 
 const ASS_HEAD = (W, H) => [

@@ -19,7 +19,11 @@ const safeNext = (value) => (typeof value === 'string' && /^\/(?![/\\])/.test(va
 
 /** Codes d'erreur du SSO (error_description) que la page sait expliquer ; le reste est un échec neutre. */
 const KNOWN_ERRORS = new Set(['membership_not_found', 'membership_unavailable', 'code_throttled', 'code_send_failed', 'sso_unavailable']);
-const failure = (res, code) => res.redirect(302, `/?connexion=${KNOWN_ERRORS.has(code) ? code : 'echec'}`);
+const failure = (res, code, next = '/') => {
+  const target = new URL(safeNext(next), 'http://x');
+  target.searchParams.set('connexion', KNOWN_ERRORS.has(code) ? code : 'echec');
+  res.redirect(302, `${target.pathname}${target.search}${target.hash}`);
+};
 
 membersRouter.get('/me', (req, res) => {
   const member = memberOf(req);
@@ -35,7 +39,7 @@ membersRouter.get('/login', async (req, res) => {
     res.redirect(302, url);
   } catch (e) {
     console.error(`Connexion adhérents : ${e.message}`);
-    failure(res, 'sso_unavailable');
+    failure(res, 'sso_unavailable', req.query.next);
   }
 });
 
@@ -45,8 +49,8 @@ membersRouter.get('/callback', async (req, res) => {
   endFlow(req, res);
   const q = req.query;
   if (!flow || typeof q.state !== 'string' || q.state !== flow.state) return failure(res, 'echec');
-  if (q.error) return failure(res, String(q.error_description ?? '')); // ex. access_denied + membership_not_found
-  if (typeof q.code !== 'string' || !q.code) return failure(res, 'echec');
+  if (q.error) return failure(res, String(q.error_description ?? ''), flow.next); // ex. access_denied + membership_not_found
+  if (typeof q.code !== 'string' || !q.code) return failure(res, 'echec', flow.next);
   try {
     const tokens = await exchangeCode({ code: q.code, redirectUri: redirectUri(req), verifier: flow.verifier });
     const claims = await verifyIdToken(tokens.id_token, { nonce: flow.nonce });
@@ -54,7 +58,7 @@ membersRouter.get('/callback', async (req, res) => {
     res.redirect(302, safeNext(flow.next));
   } catch (e) {
     console.error(`Connexion adhérents : ${e instanceof OidcError ? e.message : e.stack}`);
-    failure(res, 'echec');
+    failure(res, 'echec', flow.next);
   }
 });
 

@@ -68,6 +68,11 @@ export function isAuthenticated(req) {
   return Boolean(exp && mac && safeEqual(mac, sign(exp)) && Number(exp) > Date.now());
 }
 
+function remainingMs(req) {
+  const [exp] = (parseCookies(req.headers.cookie)[COOKIE] ?? '').split('.');
+  return Number(exp) - Date.now();
+}
+
 export const originHost = (origin) => {
   try {
     return new URL(origin).host;
@@ -82,6 +87,7 @@ export function requireAdmin(req, res, next) {
     return res.status(503).json({ error: "L'admin n'est pas configurée (ADMIN_PASSWORD / SESSION_SECRET)." });
   }
   if (!isAuthenticated(req)) return res.status(401).json({ error: 'Non authentifié.' });
+  if (remainingMs(req) < TTL_MS / 2) startSession(req, res); // Sliding session: renew past half the TTL
   if (!['GET', 'HEAD'].includes(req.method)) {
     const origin = req.get('origin');
     if (origin && originHost(origin) !== req.get('host')) {
