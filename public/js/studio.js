@@ -6,19 +6,58 @@ import { fmtDate } from './ui.js';
 
 const root = document.getElementById('studio');
 const params = new URLSearchParams(location.search);
-const SWATCHES = ['#FFFFFF', '#FFE600', '#25F4EE', '#FE2C55', '#7CFF6B', '#FF9500', '#000000'];
+const SWATCHES = [['#FFFFFF', 'Blanc'], ['#FFE600', 'Jaune'], ['#25F4EE', 'Cyan'], ['#FE2C55', 'Rose'], ['#7CFF6B', 'Vert'], ['#FF9500', 'Orange'], ['#000000', 'Noir']];
 const PREF_KEY = 'studio.prefs.v1';
 
+/** replaceChildren that drops null/false/'' (the native one would print "null"). */
+const put = (node, ...kids) => node.replaceChildren(...kids.flat(Infinity).filter(Boolean));
+/** put() that keeps keyboard focus on the same control (data-k, else same position) after a re-render. */
+const putKeep = (node, ...kids) => {
+  const a = document.activeElement;
+  const sel = 'button,input,select,textarea,summary,a[href]';
+  const was = a && a !== document.body && node.contains(a) ? { k: a.dataset?.k ?? null, i: [...node.querySelectorAll(sel)].indexOf(a), tag: a.tagName } : null;
+  put(node, ...kids);
+  if (!was) return;
+  const all = [...node.querySelectorAll(sel)];
+  const next = (was.k && all.find((n) => n.dataset.k === was.k)) || (all[was.i]?.tagName === was.tag ? all[was.i] : null);
+  next?.focus({ preventScroll: true });
+};
+let teardown = null; // set by the open editor: stops media and timers when the login gate takes over
+const early = new Map(); // GET requests started before the member check, consumed by api()
+
+const request = async (method, path, body) => {
+  let res;
+  try {
+    res = await fetch(`/api/studio${path}`, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+  } catch {
+    throw Object.assign(new Error('Connexion impossible : vérifie ton réseau.'), { status: 0, network: true });
+  }
+  return { res, data: await res.json().catch(() => ({})) };
+};
+const prefetch = (path) => {
+  const p = request('GET', path);
+  p.catch(() => {});
+  early.set(path, p);
+};
 const api = async (method, path, body) => {
-  const res = await fetch(`/api/studio${path}`, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
-  const data = await res.json().catch(() => ({}));
+  const pending = method === 'GET' ? early.get(path) : null;
+  early.delete(path);
+  const { res, data } = await (pending ?? request(method, path, body));
   if (res.status === 401 && data.login) {
     showGate();
-    throw Object.assign(new Error(data.error), { status: 401 });
+    throw Object.assign(new Error(data.error), { status: 401, gate: true });
   }
   if (!res.ok) throw Object.assign(new Error(data.error || `Erreur ${res.status}`), { status: res.status });
   return data;
 };
+
+// membership check and editor data are fetched in parallel (api() still handles a 401 from the early requests)
+const fetchMe = () => fetch('/api/auth/me').then((r) => r.json()).catch(() => null);
+let mePromise = fetchMe();
+if (params.get('v')) {
+  prefetch('/assets');
+  prefetch(`/videos/${encodeURIComponent(params.get('v'))}`);
+}
 
 // --- accès réservé aux adhérents Nouvelle Énergie (SSO) ---------------------------------------------------------------------------------
 const JOIN_URL = 'https://soutenir.unenouvelleenergie.fr/?form=adhesion';
@@ -35,13 +74,17 @@ const loginHref = () => `/api/auth/login?next=${encodeURIComponent(location.path
 /** Écran de connexion : le studio est réservé aux adhérents ; la personne reçoit un code par e-mail (SSO de NE, sans mot de passe). */
 function showGate(failure, configured = true) {
   const [text, canJoin] = GATE_MESSAGES[failure] ?? [null, false];
+  teardown?.();
+  teardown = null;
+  document.querySelector('.hero .st-top')?.remove();
   document.querySelector('.hero')?.classList.remove('editor');
   root.classList.remove('editing');
-  root.replaceChildren(
+  put(root,
     el('section', { class: 'card st-gate' },
       el('p', { class: 'eyebrow' }, 'Réservé aux adhérents'),
       el('h2', {}, 'Connecte-toi avec ton compte adhérent'),
-      el('p', {}, 'Le studio est réservé aux adhérents de Nouvelle Énergie. Tu saisis ton adresse e-mail d’adhérent, tu reçois un code à 6 chiffres, et c’est tout : pas de mot de passe.'),
+      el('p', {}, 'L’accès au studio est réservé aux adhérents, grâce à la connexion de leur parti (Nouvelle Énergie). Tu saisis ton adresse e-mail d’adhérent, tu reçois un code à 6 chiffres, et c’est tout : pas de mot de passe.'),
+      el('p', { class: 'hint' }, 'Le site lui-même est tenu de façon indépendante : il sert seulement à vérifier ton adhésion.'),
       text ? el('p', { class: 'st-gate-msg', role: 'alert' }, text) : null,
       configured
         ? el('p', { class: 'st-gate-actions' }, el('a', { class: 'btn', href: loginHref() }, 'Me connecter'), canJoin ? el('a', { class: 'btn small secondary', href: JOIN_URL, rel: 'noopener' }, 'Adhérer') : null)
@@ -53,7 +96,7 @@ function showGate(failure, configured = true) {
 
 /** Vérifie l'accès avant d'afficher le studio ; affiche « Bonjour Camille · Se déconnecter » pour un adhérent connecté. */
 async function memberGate() {
-  const me = await fetch('/api/auth/me').then((r) => r.json()).catch(() => null);
+  const me = await mePromise;
   const failure = params.get('connexion');
   if (failure) {
     params.delete('connexion');
@@ -66,7 +109,7 @@ async function memberGate() {
     return false;
   }
   const nav = document.querySelector('.site-header nav');
-  if (nav) {
+  if (nav && !nav.querySelector('.st-logout')) {
     const logout = el('button', { type: 'button', class: 'st-logout' }, 'Se déconnecter');
     logout.addEventListener('click', async () => {
       logout.disabled = true;
@@ -102,13 +145,24 @@ const loadPrefs = () => {
     return {};
   }
 };
+let prefsTimer = 0;
+let flushPrefs = () => {};
+/** Debounced: sliders and drags fire many times per second, storage is written once they settle (and on page hide). */
 const savePrefs = (S) => {
-  try {
-    localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror }, step: S.step, zoom: { strength: S.zoom.strength, focus: S.zoom.focus } }));
-  } catch {
-    // stockage indisponible : sans importance
-  }
+  flushPrefs = () => {
+    clearTimeout(prefsTimer);
+    prefsTimer = 0;
+    try {
+      localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror }, step: S.step, zoom: { strength: S.zoom.strength, focus: S.zoom.focus } }));
+      S.onSaved?.();
+    } catch {
+      // stockage indisponible : sans importance
+    }
+  };
+  clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(flushPrefs, 300);
 };
+addEventListener('pagehide', () => { if (prefsTimer) flushPrefs(); });
 const debounce = (fn, ms) => {
   let t;
   return (...a) => {
@@ -126,10 +180,10 @@ const fail = (node, e) => {
 async function showList() {
   const { videos } = await api('GET', '/videos');
   if (!videos.length) {
-    root.replaceChildren(el('section', { class: 'card st-empty' }, el('h2', {}, 'Le studio arrive bientôt'), el('p', {}, 'Aucune interview n’est encore disponible dans le studio. Reviens bientôt !')));
+    put(root, el('section', { class: 'card st-empty' }, el('h2', {}, 'Le studio arrive bientôt'), el('p', {}, 'Aucune interview n’est encore disponible dans le studio. Reviens bientôt !')));
     return;
   }
-  root.replaceChildren(
+  put(root,
     el('section', { class: 'card st-pick' }, el('p', { class: 'eyebrow' }, 'Étape 1'), el('h2', { class: 'section-title' }, 'Choisis une interview'),
       el('div', { class: 'st-list' }, videos.map((v) =>
         el('a', { class: 'st-video', href: `/?v=${v.youtube_id}` },
@@ -189,6 +243,73 @@ async function openEditor(youtubeId) {
     }
   };
 
+  // --- brouillon par interview : extraits, effets, style et clip en cours survivent à un rechargement
+  const draftKey = `studio.draft.${S.video.youtube_id}`;
+  let draftTimer = 0;
+  const saveDraftNow = () => {
+    clearTimeout(draftTimer);
+    draftTimer = 0;
+    try {
+      if (!S.extracts.length && !S.jobId) localStorage.removeItem(draftKey);
+      else {
+        localStorage.setItem(draftKey, JSON.stringify({
+          v: 1, extracts: S.extracts, style: S.style, music: S.music, voice: S.voice, jobId: S.jobId ?? null,
+          layout: { fit: S.layout.fit, cropX: S.layout.cropX, quality: S.layout.quality, mirror: S.layout.mirror, follow: { on: S.layout.follow.on, subject: S.layout.follow.subject } },
+          zoom: { on: S.zoom.on, auto: S.zoom.auto, strength: S.zoom.strength, focus: S.zoom.focus, events: S.zoom.events },
+          broll: S.broll,
+        }));
+      }
+    } catch {
+      // stockage indisponible : sans importance
+    }
+  };
+  const scheduleDraft = () => {
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(saveDraftNow, 400);
+  };
+  S.onSaved = scheduleDraft;
+  const onPageHide = () => { if (draftTimer) saveDraftNow(); };
+  addEventListener('pagehide', onPageHide);
+  /** Rétablit le brouillon (valeurs revalidées) ; renvoie vrai si des extraits ont été restaurés. */
+  function restoreDraft() {
+    let d = null;
+    try {
+      d = JSON.parse(localStorage.getItem(draftKey) ?? 'null');
+    } catch {
+      return false;
+    }
+    if (!d || d.v !== 1) return false;
+    const endMs = videoEndMs();
+    let total = 0;
+    for (const e of Array.isArray(d.extracts) ? d.extracts : []) {
+      const start_ms = Math.round(Number(e?.start_ms));
+      const end_ms = Math.round(Number(e?.end_ms));
+      const dur = (end_ms - start_ms) / 1000;
+      if (!(start_ms >= 0 && end_ms <= endMs && dur >= LIMITS.minExtractS)) continue;
+      if (S.extracts.length >= LIMITS.maxExtracts || total + dur > LIMITS.maxTotalS) break;
+      total += dur;
+      S.extracts.push({ start_ms, end_ms, title: typeof e.title === 'string' ? e.title : null, from: Number.isFinite(e.from) ? e.from : null, caption: typeof e.caption === 'string' ? e.caption : null });
+    }
+    if (!S.extracts.length) return false;
+    if (d.style) S.style = sanitizeStyle(d.style, fontIds);
+    if (assets.music.some((m) => m.id === d.music?.id)) S.music.id = d.music.id;
+    else if (d.music && d.music.id == null) S.music.id = null;
+    if (Number.isFinite(d.music?.volume)) S.music.volume = Math.min(1, Math.max(0, d.music.volume));
+    if (Number.isFinite(d.voice)) S.voice = Math.min(1.5, Math.max(0, d.voice));
+    const l = d.layout ?? {};
+    S.layout.fit = l.fit === 'crop' ? 'crop' : 'blur';
+    if (Number.isFinite(l.cropX)) S.layout.cropX = Math.min(1, Math.max(0, l.cropX));
+    S.layout.quality = l.quality === 'fast' ? 'fast' : 'hd';
+    S.layout.mirror = l.mirror === true;
+    S.layout.follow.on = l.follow?.on === true && S.framing.ready;
+    if (['lisnard', 'auto', 'left', 'right'].includes(l.follow?.subject) && (l.follow.subject !== 'lisnard' || S.framing.identified)) S.layout.follow.subject = l.follow.subject;
+    S.zoom = { ...S.zoom, ...sanitizeZoom(d.zoom, total), on: d.zoom?.on === true, auto: d.zoom?.auto !== false };
+    S.broll = (Array.isArray(d.broll) ? d.broll : []).filter((b) => typeof b?.id === 'string' && Number.isFinite(b.start) && Number.isFinite(b.dur) && typeof b.thumb === 'string').slice(0, BROLL.maxItems)
+      .map((b) => ({ id: b.id, start: b.start, dur: b.dur, thumb: b.thumb, photographer: b.photographer, page: b.page, alt: b.alt }));
+    S.jobId = typeof d.jobId === 'string' ? d.jobId : null;
+    return true;
+  }
+
   // @font-face de toutes les polices (le navigateur ne télécharge que celles qui servent)
   const fontCss = fonts.map((f) => `@font-face{font-family:'ST-${f.id}';src:url('/fonts/studio/${f.file}') format('truetype');font-display:swap}`).join('');
   document.head.append(el('style', {}, fontCss));
@@ -206,7 +327,8 @@ async function openEditor(youtubeId) {
     }
     return best;
   };
-  const videoEndMs = () => Math.floor(S.video.duration_s * 1000);
+  // file duration may be missing: fall back to the end of the last transcript line
+  const videoEndMs = () => (S.video.duration_s > 0 ? Math.floor(S.video.duration_s * 1000) : (S.lines.at(-1)?.end_ms ?? 0));
 
   // --- aperçu
   let cropSlider = null; // curseur « position du cadrage » de l'onglet Cadrage, tenu à jour quand on glisse la vidéo
@@ -261,24 +383,38 @@ async function openEditor(youtubeId) {
     const track = assets.music.find((m) => m.id === S.music.id);
     phone.setAudio({ url: track ? track.url : null, volume: S.music.volume, voice: S.voice });
   }
-  async function requestPreview() {
+  let previewKey = ''; // last successfully rendered request: an identical one is not sent again
+  async function requestPreview(force = false) {
     const mine = ++S.ticket;
     refreshFraming();
     if (!S.extracts.length) {
+      previewKey = '';
       phone.setBusy('Ajoute un extrait pour voir l’aperçu');
       return;
     }
-    phone.setBusy('Préparation de l’aperçu…');
+    const body = { youtube_id: S.video.youtube_id, extracts: S.extracts.map(exMs), layout: S.layout };
+    const key = JSON.stringify(body);
+    if (force !== true && key === previewKey && phone.hasSource()) {
+      phone.setBusy(null);
+      return;
+    }
+    phone.setBusy('Préparation de l’aperçu…', { soft: phone.hasSource() }); // the previous video stays visible meanwhile
     try {
-      const r = await api('POST', '/preview', { youtube_id: S.video.youtube_id, extracts: S.extracts.map(exMs), layout: S.layout });
+      const r = await api('POST', '/preview', body);
       if (mine !== S.ticket) return;
+      previewKey = key;
       phone.setBusy(null);
       phone.setSource(r.url);
     } catch (e) {
-      if (mine === S.ticket) phone.setBusy(e.message);
+      if (mine === S.ticket && !e.gate) phone.setBusy(e.message, { retry: () => requestPreview(true) });
     }
   }
-  const schedulePreview = debounce(requestPreview, 450);
+  let previewTimer = 0;
+  /** Fine trims (edge buttons) wait longer than other changes: each preview is a server encode with a hourly quota. */
+  const schedulePreview = (ms = 450) => {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(requestPreview, ms);
+  };
 
   function setStyle(patch) {
     S.style = sanitizeStyle({ ...S.style, ...patch }, fontIds);
@@ -291,26 +427,43 @@ async function openEditor(youtubeId) {
   const panelExtracts = el('div', { class: 'st-panel' });
   const minTotalNote = () => `${secs(totalS())} sur ${LIMITS.maxTotalS} s maximum`;
 
-  function addExtract(start_ms, end_ms, title, from, caption = null) {
-    if (S.extracts.length >= LIMITS.maxExtracts) return alertNote(`${LIMITS.maxExtracts} extraits au maximum.`);
+  let booting = true; // initial setup: no toast or scroll for the extract added by default
+  let justAdded = null; // extract to bring into view after the next render
+  /** `replace`: the new extract becomes the whole clip instead of being appended. */
+  function addExtract(start_ms, end_ms, title, from, caption = null, replace = false) {
+    if (!replace && S.extracts.length >= LIMITS.maxExtracts) return alertNote(`${LIMITS.maxExtracts} extraits au maximum.`);
     const ex = { start_ms, end_ms: Math.min(end_ms, videoEndMs()), title, from, caption };
-    if (totalS() + exDur(ex) > LIMITS.maxTotalS) return alertNote(`Le clip ne peut pas dépasser ${LIMITS.maxTotalS} secondes.`);
-    S.extracts.push(ex);
+    if ((replace ? 0 : totalS()) + exDur(ex) > LIMITS.maxTotalS) return alertNote(`Le clip ne peut pas dépasser ${LIMITS.maxTotalS} secondes.`);
+    if (replace) S.extracts = [ex];
+    else S.extracts.push(ex);
+    justAdded = booting ? null : ex;
     extractsChanged();
+    if (!booting) toast(replace ? 'Extrait choisi : il remplace ton clip (voir « Mon clip »).' : 'Extrait ajouté à ton clip (voir « Mon clip »).');
   }
-  function extractsChanged() {
+  /** `fine`: a small trim (longer preview delay). */
+  function extractsChanged(fine = false) {
     rebuildSubtitles();
     keepEffectsInClip();
     renderExtracts();
     renderTextEditor();
-    schedulePreview();
+    schedulePreview(fine ? 1400 : 450);
     renderCreateSummary();
+    scheduleDraft();
   }
-  const note = el('p', { class: 'st-msg' });
+  const note = el('p', { class: 'st-msg', role: 'status' });
+  const toastEl = el('p', { class: 'st-toast', role: 'status' }); // fixed near the thumb: feedback stays in view whatever the scroll
+  let toastTimer = 0;
+  const toast = (msg, err = false) => {
+    toastEl.className = err ? 'st-toast err' : 'st-toast';
+    toastEl.textContent = msg;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (toastEl.textContent = ''), 4000);
+  };
   let noteTimer = 0;
   const alertNote = (msg) => {
     note.className = 'st-msg err';
     note.textContent = msg;
+    toast(msg, true);
     clearTimeout(noteTimer); // the latest message keeps its full display time
     noteTimer = setTimeout(() => (note.textContent = ''), 4000);
   };
@@ -325,7 +478,7 @@ async function openEditor(youtubeId) {
     if (exDur(next) < LIMITS.minExtractS) return alertNote(`Un extrait doit durer au moins ${LIMITS.minExtractS} secondes.`);
     if (totalS() - exDur(ex) + exDur(next) > LIMITS.maxTotalS) return alertNote(`Le clip ne peut pas dépasser ${LIMITS.maxTotalS} secondes.`);
     Object.assign(ex, next);
-    extractsChanged();
+    extractsChanged(true);
   }
   /** Avance (+1) ou recule (-1) une borne d'un pas : une durée, ou jusqu'à la limite de ligne suivante / précédente. */
   function nudge(ex, which, dir) {
@@ -346,29 +499,28 @@ async function openEditor(youtubeId) {
   };
   const excerpt = (t, n = 70) => (t.length > n ? `${t.slice(0, n - 1)}…` : t);
 
-  let focusKey = '';
   function extractRow(ex, i) {
     const btn = (label, title, fn, disabled, key) => el('button', { class: 'st-mini', type: 'button', title, 'aria-label': title, disabled, 'data-k': key, onclick: fn }, label);
     const edge = (label, which, lessTitle, moreTitle) => {
-      const field = el('input', { class: 'st-time', type: 'text', inputmode: 'decimal', value: fmtT(ex[which]), 'aria-label': `${label} de l’extrait (minutes:secondes,dixièmes)`, title: 'Tu peux taper un instant : 1:23,5' });
+      // inputmode text: iOS decimal pads have no ":" while the value reads 1:23,5
+      const field = el('input', { class: 'st-time', type: 'text', inputmode: 'text', autocomplete: 'off', value: fmtT(ex[which]), 'aria-label': `${label} de l’extrait (minutes:secondes,dixièmes)`, title: 'Tu peux taper un instant : 1:23,5' });
       field.addEventListener('change', () => {
         const ms = parseT(field.value);
         if (ms == null) { field.value = fmtT(ex[which]); return alertNote('Instant illisible : écris par exemple 1:23,5 ou 83,5.'); }
-        focusKey = `${i}:${which}:t`;
         setEdge(ex, which, ms);
         field.value = fmtT(ex[which]);
       });
       field.dataset.k = `${i}:${which}:t`;
-      const go = (dir) => { focusKey = `${i}:${which}:${dir}`; nudge(ex, which, dir); };
+      const go = (dir) => nudge(ex, which, dir);
       return el('div', { class: 'st-edge' },
         el('div', { class: 'st-edge-ctl' }, el('span', { class: 'st-edge-label' }, label), btn('−', lessTitle, () => go(-1), false, `${i}:${which}:-1`), field, btn('+', moreTitle, () => go(1), false, `${i}:${which}:1`)),
         el('span', { class: 'st-edge-text' }, `« ${excerpt(lineAround(ex[which]).text)} »`));
     };
-    return el('li', { class: 'st-ex' },
+    return el('li', { class: 'st-ex', 'data-ex': String(i) },
       el('div', { class: 'st-ex-head' }, el('strong', {}, ex.title || 'Passage libre'), el('span', { class: 'badge' }, `${fmtT(ex.start_ms)} → ${fmtT(ex.end_ms)} · ${secs(exDur(ex))}`)),
       edge('Début', 'start_ms', 'Commencer plus tôt (ajoute du temps avant)', 'Commencer plus tard (retire du temps au début)'),
       edge('Fin', 'end_ms', 'Finir plus tôt (retire du temps à la fin)', 'Finir plus tard (ajoute du temps après)'),
-      el('div', { class: 'st-ex-tools' }, btn('↑', 'Monter', () => move(i, -1), i === 0), btn('↓', 'Descendre', () => move(i, 1), i === S.extracts.length - 1),
+      el('div', { class: 'st-ex-tools' }, btn('↑', 'Monter', () => move(i, -1), i === 0, `${i}:up`), btn('↓', 'Descendre', () => move(i, 1), i === S.extracts.length - 1, `${i}:down`),
         el('button', { class: 'st-link', type: 'button', onclick: () => { S.extracts.splice(i, 1); extractsChanged(); } }, 'Retirer')),
     );
   }
@@ -376,7 +528,7 @@ async function openEditor(youtubeId) {
   /** Pas de réglage des bornes : quelques valeurs rapides, ou n'importe quelle durée (champ libre). */
   function stepBar() {
     const chips = [[100, '0,1 s'], [500, '0,5 s'], [1000, '1 s'], [2000, '2 s'], ['line', 'Ligne']];
-    const custom = el('input', { class: 'st-time short', type: 'text', inputmode: 'decimal', 'aria-label': 'Autre pas, en secondes', placeholder: 'autre' });
+    const custom = el('input', { class: 'st-time short', type: 'text', inputmode: 'text', autocomplete: 'off', 'aria-label': 'Autre pas, en secondes', placeholder: 'autre' });
     const group = el('div', { class: 'seg st-stepchips', role: 'group', 'aria-label': 'Pas de réglage' });
     const sync = () => {
       group.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(String(S.step) === b.dataset.step)));
@@ -392,7 +544,7 @@ async function openEditor(youtubeId) {
       sync();
     });
     sync();
-    return el('div', { class: 'st-stepbar' }, el('span', { class: 'st-step-label' }, 'Pas des boutons − / +'), group, el('span', { class: 'st-step-custom' }, custom, el('small', {}, 's')));
+    return el('div', { class: 'st-stepbar' }, el('span', { class: 'st-step-label' }, 'Précision des boutons − / +'), group, el('span', { class: 'st-step-custom' }, custom, el('small', {}, 's')));
   }
 
   const search = el('input', { type: 'search', class: 'st-search', placeholder: 'Chercher un mot dans la transcription…', 'aria-label': 'Chercher dans la transcription' });
@@ -401,7 +553,7 @@ async function openEditor(youtubeId) {
   function renderLines() {
     const q = search.value.trim().toLowerCase();
     const matches = S.lines.map((l, i) => ({ l, i })).filter(({ l }) => !q || l.text.toLowerCase().includes(q));
-    lineList.replaceChildren(
+    put(lineList,
       ...matches.slice(0, shown).map(({ l, i }) =>
         el('li', {}, el('button', { type: 'button', onclick: () => startFree(i) }, el('span', { class: 'st-t' }, mmss(l.start_ms)), el('span', {}, l.text))),
       ),
@@ -419,10 +571,11 @@ async function openEditor(youtubeId) {
   let suggShown = 6; // extraits proposés affichés d'emblée (les mieux notés d'abord) ; le reste sur demande
   function renderExtracts() {
     const taken = new Set(S.extracts.map((e) => e.from).filter((v) => v != null));
-    panelExtracts.replaceChildren(
+    const addLabel = S.extracts.length === 1 ? 'Utiliser cet extrait' : 'Remplacer mon clip par cet extrait';
+    putKeep(panelExtracts,
       el('h3', {}, 'Mon clip'),
       S.extracts.length ? stepBar() : null,
-      S.extracts.length ? el('ol', { class: 'st-exlist' }, S.extracts.map(extractRow)) : el('p', { class: 'st-help' }, 'Ajoute un extrait ci-dessous : l’aperçu apparaît à gauche.'),
+      S.extracts.length ? el('ol', { class: 'st-exlist' }, S.extracts.map(extractRow)) : el('p', { class: 'st-help' }, 'Ajoute un extrait ci-dessous : l’aperçu apparaît avec la vidéo.'),
       el('p', { class: totalS() > LIMITS.maxTotalS ? 'st-total err' : 'st-total' }, S.extracts.length ? `Durée : ${minTotalNote()}` : ''),
       note,
       el('h3', {}, S.suggestions.length ? `Extraits proposés par l’IA (${S.suggestions.length}, du plus au moins viral)` : 'Extraits proposés par l’IA'),
@@ -433,9 +586,13 @@ async function openEditor(youtubeId) {
               el('p', { class: 'st-why' }, sg.why),
               el('p', { class: 'st-meta' }, `${mmss(sg.start_ms)} → ${mmss(sg.end_ms)} · ${secs(sg.duration_s)}`),
               el('details', {}, el('summary', {}, 'Lire l’extrait'), el('p', { class: 'st-text' }, sg.text)),
-              taken.has(sg.start_ms)
-                ? el('button', { class: 'btn secondary small', type: 'button', onclick: () => { const k = S.extracts.findIndex((e) => e.from === sg.start_ms); if (k >= 0) { S.extracts.splice(k, 1); extractsChanged(); } } }, 'Retirer de mon clip')
-                : el('button', { class: 'btn small', type: 'button', onclick: () => addExtract(sg.start_ms, sg.end_ms, sg.title, sg.start_ms, sg.description) }, 'Ajouter à mon clip'),
+              el('div', { class: 'st-card-actions' },
+                taken.has(sg.start_ms)
+                  ? el('button', { class: 'btn secondary small', type: 'button', 'data-k': `sg:${sg.start_ms}`, onclick: () => { const k = S.extracts.findIndex((e) => e.from === sg.start_ms); if (k >= 0) { S.extracts.splice(k, 1); extractsChanged(); } } }, 'Retirer de mon clip')
+                  : S.extracts.length
+                    ? [el('button', { class: 'btn small', type: 'button', 'data-k': `sg:${sg.start_ms}`, onclick: () => addExtract(sg.start_ms, sg.end_ms, sg.title, sg.start_ms, sg.description, true) }, addLabel),
+                       el('button', { class: 'btn secondary small', type: 'button', 'data-k': `sga:${sg.start_ms}`, onclick: () => addExtract(sg.start_ms, sg.end_ms, sg.title, sg.start_ms, sg.description) }, 'Ajouter à la suite')]
+                    : el('button', { class: 'btn small', type: 'button', 'data-k': `sg:${sg.start_ms}`, onclick: () => addExtract(sg.start_ms, sg.end_ms, sg.title, sg.start_ms, sg.description) }, 'Utiliser cet extrait')),
             )),
           )
         : el('p', { class: 'st-help' }, 'Pas d’extrait proposé pour cette vidéo : choisis un passage dans la transcription.'),
@@ -446,26 +603,37 @@ async function openEditor(youtubeId) {
       lineList,
     );
     renderLines();
-    if (focusKey) {
-      panelExtracts.querySelector(`[data-k="${focusKey}"]`)?.focus({ preventScroll: true });
-      focusKey = '';
+    if (justAdded) {
+      const i = S.extracts.indexOf(justAdded);
+      justAdded = null;
+      panelExtracts.querySelector(`[data-ex="${i}"]`)?.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     }
   }
 
   // ============================================================ onglet Sous-titres
   const ctl = {}; // références des contrôles, pour les resynchroniser
-  const row = (label, ...nodes) => el('div', { class: 'st-row' }, el('label', {}, label), el('div', { class: 'st-row-ctl' }, ...nodes));
+  let rowSeq = 0;
+  /** Label linked to the first form control of the row (id/for). */
+  const row = (label, ...nodes) => {
+    const target = nodes.flat().find((n) => n?.matches?.('input,select,textarea'));
+    const lab = el('label', {}, label);
+    if (target) {
+      target.id ||= `st-c${++rowSeq}`;
+      lab.htmlFor = target.id;
+    }
+    return el('div', { class: 'st-row' }, lab, el('div', { class: 'st-row-ctl' }, ...nodes));
+  };
   const slider = (key, min, max, step, fmtVal) => {
     const out = el('output', {}, '');
-    const input = el('input', { type: 'range', min, max, step, 'aria-label': key });
+    const input = el('input', { type: 'range', min, max, step });
     input.addEventListener('input', () => setStyle({ [key]: Number(input.value) }));
     ctl[key] = { input, out, fmtVal };
     return [input, out];
   };
   const colorInput = (key) => {
-    const input = el('input', { type: 'color', 'aria-label': `Couleur ${key}` });
+    const input = el('input', { type: 'color' });
     input.addEventListener('input', () => setStyle({ [key]: input.value.toUpperCase() }));
-    const sw = el('span', { class: 'st-swatches' }, SWATCHES.map((c) => el('button', { type: 'button', class: 'st-sw', style: { background: c }, title: c, 'aria-label': c, onclick: () => setStyle({ [key]: c }) })));
+    const sw = el('span', { class: 'st-swatches' }, SWATCHES.map(([c, name]) => el('button', { type: 'button', class: 'st-sw', title: name, 'aria-label': name, onclick: () => setStyle({ [key]: c }) }, el('span', { style: { background: c } }))));
     ctl[key] = { input };
     return [input, sw];
   };
@@ -478,7 +646,7 @@ async function openEditor(youtubeId) {
 
   const presetGrid = el('div', { class: 'st-presets' });
   function renderPresets() {
-    presetGrid.replaceChildren(...Object.entries(PRESETS).map(([id, p]) => {
+    put(presetGrid, ...Object.entries(PRESETS).map(([id, p]) => {
       const st = sanitizeStyle({ preset: id }, fontIds);
       const sample = el('span', { class: 'st-sample' }, st.uppercase ? 'LES MOTS' : 'Les mots');
       sample.style.fontFamily = `'ST-${st.font}', sans-serif`;
@@ -493,11 +661,23 @@ async function openEditor(youtubeId) {
     }));
   }
   const fontGrid = el('div', { class: 'st-fonts', role: 'listbox', 'aria-label': 'Police' });
+  // font files are fetched only when their sample scrolls into view (the sample takes its font on first sight)
+  const fontSeen = typeof IntersectionObserver === 'function'
+    ? new IntersectionObserver((entries) => {
+        for (const en of entries) {
+          if (!en.isIntersecting) continue;
+          en.target.style.fontFamily = `'ST-${en.target.dataset.f}', sans-serif`;
+          fontSeen.unobserve(en.target);
+        }
+      }, { root: fontGrid, rootMargin: '60px' })
+    : null;
   function renderFonts() {
     const cats = [...new Set(fonts.map((f) => f.category))];
-    fontGrid.replaceChildren(...cats.flatMap((c) => [el('p', { class: 'st-cat' }, c), el('div', { class: 'st-font-row' }, fonts.filter((f) => f.category === c).map((f) => {
-      const b = el('button', { type: 'button', class: 'st-font', role: 'option', 'data-font': f.id, onclick: () => setStyle({ font: f.id }) }, el('span', { style: { fontFamily: `'ST-${f.id}', sans-serif` } }, 'Lisnard'), el('small', {}, f.label));
-      return b;
+    put(fontGrid, ...cats.flatMap((c) => [el('p', { class: 'st-cat' }, c), el('div', { class: 'st-font-row' }, fonts.filter((f) => f.category === c).map((f) => {
+      const sample = el('span', { 'data-f': f.id }, 'Lisnard');
+      if (fontSeen) fontSeen.observe(sample);
+      else sample.style.fontFamily = `'ST-${f.id}', sans-serif`;
+      return el('button', { type: 'button', class: 'st-font', role: 'option', 'data-font': f.id, onclick: () => setStyle({ font: f.id }) }, sample, el('small', {}, f.label));
     }))]));
   }
   const panelStyle = el('div', { class: 'st-panel' });
@@ -578,7 +758,7 @@ async function openEditor(youtubeId) {
   function renderTextEditor() {
     if (!textWrap || textWrap.hidden) return;
     const rows = clipLines();
-    const summary = el('p', { class: 'st-help' });
+    const summary = el('p', { class: 'st-help', role: 'status' });
     const refreshSummary = () => {
       const n = editedInClip();
       summary.textContent = n ? `${n} ligne${n > 1 ? 's' : ''} corrigée${n > 1 ? 's' : ''}.` : 'Corrige les mots mal reconnus : chaque ligne garde son horodatage, les mots sont répartis sur la même durée.';
@@ -622,7 +802,7 @@ async function openEditor(youtubeId) {
       lastK = k;
       return head ? [head, li] : [li];
     });
-    textWrap.replaceChildren(
+    putKeep(textWrap,
       el('h3', {}, 'Texte des sous-titres'),
       summary,
       ...(S.edits.size ? [resetAll] : []),
@@ -633,6 +813,7 @@ async function openEditor(youtubeId) {
   // ============================================================ onglet Musique
   const panelMusic = el('div', { class: 'st-panel' });
   const audition = new Audio();
+  audition.preload = 'none';
   let auditionId = null;
   let musicCat = 'all'; // catégorie affichée dans la liste
   audition.addEventListener('ended', () => { auditionId = null; renderMusic(); });
@@ -640,27 +821,28 @@ async function openEditor(youtubeId) {
   function renderMusic() {
     const pick = (id) => { S.music.id = id; savePrefs(S); applyAudio(); updateSource(); renderMusic(); };
     const track = (m) => el('li', { class: m.id === S.music.id ? 'st-track on' : 'st-track' },
-      el('button', { type: 'button', class: 'st-playtrack', 'aria-label': auditionId === m.id ? `Arrêter ${m.title}` : `Écouter ${m.title}`, onclick: () => {
+      el('button', { type: 'button', class: 'st-playtrack', 'data-k': `p:${m.id}`, 'aria-label': auditionId === m.id ? `Arrêter ${m.title}` : `Écouter ${m.title}`, onclick: () => {
         if (auditionId === m.id) { audition.pause(); auditionId = null; } else { phone.pause(); audition.src = m.url; audition.volume = 0.6; audition.play().catch(() => {}); auditionId = m.id; }
         renderMusic();
       } }, auditionId === m.id ? '■' : '▶'),
-      el('button', { type: 'button', class: 'st-trackname', onclick: () => pick(m.id) }, el('strong', {}, m.title), el('small', {}, [catLabel(m.category), m.mood, m.bpm ? `${m.bpm} bpm` : '', mmss(m.duration_s * 1000)].filter(Boolean).join(' · '))),
+      el('button', { type: 'button', class: 'st-trackname', 'data-k': `t:${m.id}`, 'aria-pressed': String(m.id === S.music.id), onclick: () => pick(m.id) }, el('strong', {}, m.title), el('small', {}, [catLabel(m.category), m.mood, m.bpm ? `${m.bpm} bpm` : '', mmss(m.duration_s * 1000)].filter(Boolean).join(' · '))),
       m.id === S.music.id ? el('span', { class: 'badge ok' }, 'choisie') : null);
     const cats = (assets.music_categories ?? []).filter((c) => assets.music.some((m) => m.category === c.id));
     if (musicCat !== 'all' && !cats.some((c) => c.id === musicCat)) musicCat = 'all';
     const shown = assets.music.filter((m) => musicCat === 'all' || m.category === musicCat);
-    const chip = (id, label, n) => el('button', { type: 'button', class: musicCat === id ? 'st-chip on' : 'st-chip', 'aria-pressed': String(musicCat === id), onclick: () => { musicCat = id; renderMusic(); } }, `${label} (${n})`);
+    const chip = (id, label, n) => el('button', { type: 'button', class: musicCat === id ? 'st-chip on' : 'st-chip', 'aria-pressed': String(musicCat === id), 'data-k': `c:${id}`, onclick: () => { musicCat = id; renderMusic(); } }, `${label} (${n})`);
     const vol = (label, key, min, max, get, set) => {
       const out = el('output', {}, `${Math.round(get() * 100)} %`);
-      const input = el('input', { type: 'range', min, max, step: '1', value: String(Math.round(get() * 100)), 'aria-label': label });
-      input.addEventListener('input', () => { set(Number(input.value) / 100); out.textContent = `${input.value} %`; savePrefs(S); applyAudio(); });
-      return el('div', { class: 'st-row' }, el('label', {}, label), el('div', { class: 'st-row-ctl' }, input, out));
+      const input = el('input', { type: 'range', min, max, step: '1', value: String(Math.round(get() * 100)), id: `st-vol-${key}` });
+      input.addEventListener('input', () => { set(Number(input.value) / 100); out.textContent = `${input.value} %`; applyAudio(); });
+      input.addEventListener('change', () => savePrefs(S));
+      return el('div', { class: 'st-row' }, el('label', { for: input.id }, label), el('div', { class: 'st-row-ctl' }, input, out));
     };
-    panelMusic.replaceChildren(
+    putKeep(panelMusic,
       el('h3', {}, 'Musique de fond'),
       el('p', { class: 'st-help' }, 'Motivantes, épiques, cinématiques : le morceau est joué sous la voix (en boucle s’il est plus court que le clip). Appuie sur ▶ pour écouter.'),
       ...(cats.length > 1 ? [el('div', { class: 'st-chips', role: 'group', 'aria-label': 'Catégorie de musique' }, chip('all', 'Toutes', assets.music.length), cats.map((c) => chip(c.id, c.label, assets.music.filter((m) => m.category === c.id).length)))] : []),
-      el('ul', { class: 'st-tracks' }, el('li', { class: S.music.id ? 'st-track' : 'st-track on' }, el('button', { type: 'button', class: 'st-trackname', onclick: () => pick(null) }, el('strong', {}, 'Aucune musique'), el('small', {}, 'Seulement la voix')), S.music.id ? null : el('span', { class: 'badge ok' }, 'choisie')), shown.map(track)),
+      el('ul', { class: 'st-tracks' }, el('li', { class: S.music.id ? 'st-track' : 'st-track on' }, el('button', { type: 'button', class: 'st-trackname', 'data-k': 't:none', 'aria-pressed': String(!S.music.id), onclick: () => pick(null) }, el('strong', {}, 'Aucune musique'), el('small', {}, 'Seulement la voix')), S.music.id ? null : el('span', { class: 'badge ok' }, 'choisie')), shown.map(track)),
       el('h3', {}, 'Volumes'),
       vol('Musique', 'music', 0, 100, () => S.music.volume, (v) => { S.music.volume = v; }),
       vol('Voix', 'voice', 0, 150, () => S.voice, (v) => { S.voice = v; }),
@@ -694,8 +876,8 @@ async function openEditor(youtubeId) {
       const seen = `repéré sur ${Math.round(fr.coverage * 100)} % de la durée`;
       if (S.layout.follow.subject === 'lisnard' && fr.crowded) {
         const unsure = fr.identBest !== null
-          ? ` (ressemblance la plus forte relevée : ${String(fr.identBest).replace('.', ',')}, il en faut 0,36 : ajoute des photos de référence proches de cette interview)`
-          : fr.identified ? ' (visages trop petits ou trop flous pour être comparés aux photos)' : ' (cette interview n’a pas été comparée aux photos : relance la reconnaissance depuis l’admin)';
+          ? ` (la reconnaissance n’est pas assez sûre sur cette interview)`
+          : fr.identified ? ' (visages trop petits ou trop flous pour être reconnus)' : ' (la reconnaissance de David Lisnard n’est pas disponible pour cette interview)';
         status = fr.recognized === fr.crowded
           ? `David Lisnard est reconnu dans ${fr.crowded > 1 ? `les ${fr.crowded} plans` : 'le plan'} où plusieurs personnes apparaissent : le cadre le suit (${seen}).`
           : `David Lisnard est reconnu dans ${fr.recognized} des ${fr.crowded} plan${fr.crowded > 1 ? 's' : ''} à plusieurs personnes ; ailleurs le cadre suit le plus gros visage${unsure} (${seen}).`;
@@ -712,21 +894,21 @@ async function openEditor(youtubeId) {
       !on
         ? el('div', {},
             el('p', { class: 'st-help' }, 'Glisse la vidéo vers la gauche ou la droite sur l’aperçu pour recentrer le cadrage sur la personne. Le curseur permet de régler plus finement.'),
-            el('div', { class: 'st-row' }, el('label', {}, 'Position du cadrage'), el('div', { class: 'st-row-ctl' }, el('span', { class: 'st-end' }, 'gauche'), cropSlider, el('span', { class: 'st-end' }, 'droite'))),
+            el('div', { class: 'st-row' }, el('label', { for: 'st-crop' }, 'Position du cadrage'), el('div', { class: 'st-row-ctl' }, el('span', { class: 'st-end' }, 'gauche'), cropSlider, el('span', { class: 'st-end' }, 'droite'))),
             el('button', { type: 'button', class: 'st-mini wide', onclick: () => { S.layout.cropX = 0.5; cropSlider.value = '50'; pushFraming(); } }, 'Recentrer'))
         : el('p', { class: 'st-help' }, 'Pour régler le cadrage à la main, décoche le suivi du visage.'));
   }
 
   function renderFrame() {
     const opt = (value, title, text) => el('label', { class: S.layout.fit === value ? 'st-opt on' : 'st-opt' },
-      el('input', { type: 'radio', name: 'fit', value, checked: S.layout.fit === value, onchange: () => { S.layout.fit = value; savePrefs(S); pushFraming(); renderFrame(); schedulePreview(); renderCreateSummary(); } }),
+      el('input', { type: 'radio', name: 'fit', value, 'data-k': `fit:${value}`, checked: S.layout.fit === value, onchange: () => { S.layout.fit = value; savePrefs(S); pushFraming(); renderFrame(); schedulePreview(); renderCreateSummary(); } }),
       el('strong', {}, title), el('small', {}, text));
-    cropSlider = el('input', { type: 'range', min: '0', max: '100', step: '1', value: String(Math.round(S.layout.cropX * 100)), 'aria-label': 'Position horizontale du cadrage' });
+    cropSlider = el('input', { type: 'range', min: '0', max: '100', step: '1', value: String(Math.round(S.layout.cropX * 100)), id: 'st-crop' });
     cropSlider.addEventListener('input', () => { S.layout.cropX = Number(cropSlider.value) / 100; pushFraming(); });
     const mirror = el('input', { type: 'checkbox', checked: S.layout.mirror });
     mirror.addEventListener('change', () => { S.layout.mirror = mirror.checked; savePrefs(S); pushFraming(); renderCreateSummary(); });
-    panelFrame.replaceChildren(
-      el('h3', {}, 'Cadrage de la vidéo'),
+    putKeep(panelFrame,
+      el('h3', {}, 'Format de la vidéo'),
       el('div', { class: 'st-opts' }, opt('blur', 'Vidéo entière', 'Sur un fond flou fait avec la vidéo'), opt('crop', 'Plein écran', 'La vidéo est recadrée pour remplir l’écran')),
       S.layout.fit === 'crop' ? cropBlock() : null,
       el('h3', {}, 'Miroir'),
@@ -760,157 +942,283 @@ async function openEditor(youtubeId) {
     setTimeout(() => (copyBtn.textContent = 'Copier la description'), 2000);
   });
   const sourceBox = el('div', { class: 'st-source' }, sourceField, copyBtn);
-  const makeMsg = el('p', { class: 'st-msg' });
+  const makeMsg = el('p', { class: 'st-msg', role: 'status' });
+  const makeHint = el('p', { class: 'st-help', id: 'st-make-hint' });
+  makeBtn.setAttribute('aria-describedby', 'st-make-hint');
+  const captionHelp = el('p', { class: 'st-help' });
   const jobBox = el('div', { class: 'st-job' });
   let job = null;
-  let ready = null; // vidéo préchargée pour le partage sur téléphone : { id, file, failed }
+  let ready = null; // vidéo chargée pour le partage sur téléphone : { id, file, failed, loading, refresh }
   let polling = 0;
+  let expiryTimer = 0;
+  let netFails = 0; // consecutive tracking failures (network or 5xx): the job lives on the server, so we keep asking
+  let netIssue = false;
+  let delivered = false; // the clip was downloaded, shared or sent to TikTok
+  const jobActive = () => Boolean(job && ['queued', 'running'].includes(job.status));
+  const setJob = (next) => {
+    job = next;
+    S.jobId = next?.id && ['queued', 'running', 'done'].includes(next.status) ? next.id : null;
+    scheduleDraft();
+  };
+  const stopExpiry = () => { clearInterval(expiryTimer); expiryTimer = 0; };
 
   function renderCreateSummary() {
     const track = assets.music.find((m) => m.id === S.music.id);
-    createSummary.replaceChildren(el('ul', { class: 'st-sum' },
+    const zoomsIn = S.zoom.events.filter((e) => e.kind === 'in').length;
+    put(createSummary, el('ul', { class: 'st-sum' },
       el('li', {}, el('strong', {}, 'Durée : '), S.extracts.length ? `${secs(totalS())} (${S.extracts.length} extrait${S.extracts.length > 1 ? 's' : ''})` : 'aucun extrait choisi'),
       el('li', {}, el('strong', {}, 'Sous-titres : '), `${PRESETS[S.style.preset].label}, ${fontById.get(S.style.font).label}`),
       el('li', {}, el('strong', {}, 'Musique : '), track ? track.title : 'aucune'),
-      ...(editedInClip() ? [el('li', {}, el('strong', {}, 'Texte : '), `${editedInClip()} ligne${editedInClip() > 1 ? 's' : ''} de sous-titres corrigée${editedInClip() > 1 ? 's' : ''}`)] : []),
-      ...(S.zoom.on && S.zoom.events.some((e) => e.kind === 'in') || S.broll.length ? [el('li', {}, el('strong', {}, 'B-roll : '), [S.zoom.on && S.zoom.events.some((e) => e.kind === 'in') ? `${S.zoom.events.filter((e) => e.kind === 'in').length} zoom${S.zoom.events.filter((e) => e.kind === 'in').length > 1 ? 's' : ''}` : '', S.broll.length ? `${S.broll.length} image${S.broll.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(', '))] : []),
-      el('li', {}, el('strong', {}, 'Cadrage : '), `${S.layout.fit === 'blur' ? 'vidéo entière sur fond flou' : following() ? 'plein écran, suit le visage' : 'plein écran'}${S.layout.mirror ? ', en miroir' : ''}`)));
-    makeBtn.disabled = !S.extracts.length || !pledge.checked || Boolean(job && ['queued', 'running'].includes(job.status));
+      editedInClip() ? el('li', {}, el('strong', {}, 'Texte : '), `${editedInClip()} ligne${editedInClip() > 1 ? 's' : ''} de sous-titres corrigée${editedInClip() > 1 ? 's' : ''}`) : null,
+      (S.zoom.on && zoomsIn) || S.broll.length ? el('li', {}, el('strong', {}, 'Images & zooms : '), [S.zoom.on && zoomsIn ? `${zoomsIn} zoom${zoomsIn > 1 ? 's' : ''}` : '', S.broll.length ? `${S.broll.length} image${S.broll.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(', ')) : null,
+      el('li', {}, el('strong', {}, 'Format : '), `${S.layout.fit === 'blur' ? 'vidéo entière sur fond flou' : following() ? 'plein écran, suit le visage' : 'plein écran'}${S.layout.mirror ? ', en miroir' : ''}`)));
+    const busy = jobActive();
+    makeBtn.disabled = !S.extracts.length || !pledge.checked || busy;
+    makeHint.textContent = busy ? '' : !S.extracts.length ? 'Ajoute d’abord un extrait (onglet « Extraits »).' : !pledge.checked ? 'Coche l’engagement ci-dessus pour pouvoir créer la vidéo.' : '';
   }
   const quality = (value, title, text) => el('label', { class: S.layout.quality === value ? 'st-opt on' : 'st-opt' },
-    el('input', { type: 'radio', name: 'quality', value, checked: S.layout.quality === value, onchange: () => { S.layout.quality = value; savePrefs(S); renderCreate(); } }),
+    el('input', { type: 'radio', name: 'quality', value, 'data-k': `q:${value}`, checked: S.layout.quality === value, onchange: () => { S.layout.quality = value; savePrefs(S); renderCreate(); } }),
     el('strong', {}, title), el('small', {}, text));
   function renderCreate() {
-    panelCreate.replaceChildren(
+    putKeep(panelCreate,
       el('h3', {}, 'Ton clip'), createSummary,
       el('h3', {}, 'Description à copier-coller'),
-      el('p', { class: 'st-help' }, 'Légende TikTok prête à l’emploi (accroche et hashtags écrits par l’IA avec l’extrait), suivie de la source de l’interview, que la vidéo n’affiche pas. Tu peux la modifier.'),
+      captionHelp,
       sourceBox,
       el('h3', {}, 'Qualité'),
       el('div', { class: 'st-opts' }, quality('hd', 'HD 1080 × 1920', 'Meilleure qualité, un peu plus long à créer'), quality('fast', 'Rapide 720 × 1280', 'Création plus rapide, fichier plus léger')),
       el('label', { class: 'st-check pledge' }, pledge, 'Je m’engage à ne pas déformer le sens des propos de cette interview, y compris dans les sous-titres que j’ai corrigés.'),
-      makeBtn, makeMsg, jobBox,
+      makeBtn, makeHint, makeMsg, jobBox,
       el('p', { class: 'st-help' }, 'Ta vidéo est conservée une heure sur le serveur : télécharge-la dès qu’elle est prête.'),
     );
     renderCreateSummary();
   }
   pledge.addEventListener('change', renderCreateSummary);
 
-  function showJob() {
-    if (!job) { jobBox.replaceChildren(); return; }
-    if (job.status === 'queued' || job.status === 'running') {
-      const pct = Math.round(job.progress * 100);
-      jobBox.replaceChildren(
-        el('p', { class: 'st-job-text' }, job.status === 'queued' ? `En attente… (${job.position}${job.position > 1 ? 'e' : 'er'} dans la file)` : `Création de la vidéo… ${pct} %`),
-        el('progress', { max: '100', value: String(job.status === 'queued' ? 0 : pct) }),
-        el('button', { class: 'btn secondary small', type: 'button', onclick: async () => { try { await api('DELETE', `/render/${job.id}`); } catch { /* déjà terminé */ } } }, 'Annuler'));
-    } else if (job.status === 'done') {
-      const url = `/api/studio/render/${job.id}/file`;
-      const say = (text, kind = 'ok') => { makeMsg.className = `st-msg ${kind === 'ok' ? '' : 'err'}`; makeMsg.textContent = text; };
-      const touch = /Android|iPhone|iPad/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-      const mobile = Boolean(navigator.canShare) && touch;
-      const counted = (use) => api('POST', `/render/${job.id}/used`, { use }).catch(() => {});
-      // Sur téléphone, la vidéo est chargée AVANT le clic : le navigateur n'autorise le partage que dans la seconde qui suit un geste
-      // de l'utilisateur, et refuse si on télécharge d'abord le fichier (le partage échouait alors sans rien dire).
-      const share = el('button', { class: 'btn secondary small', type: 'button' }, 'Partager');
-      const publish = el('button', { class: 'btn tiktok', type: 'button' }, 'Publier sur TikTok');
-      const jobId = job.id;
-      if (mobile && ready?.id !== jobId) {
-        const mine = (ready = { id: jobId, file: null, failed: false, refresh: null });
-        fetch(url).then((r) => (r.ok ? r.blob() : Promise.reject(new Error('fichier')))).then((blob) => {
-          const file = new File([blob], job.filename, { type: 'video/mp4' });
-          if (navigator.canShare({ files: [file] })) mine.file = file; else mine.failed = true;
-        }, () => { mine.failed = true; }).finally(() => mine.refresh?.());
-      }
-      const fileReady = () => (ready?.id === jobId ? ready.file : null);
-      function setPublishState() {
-        const waiting = mobile && ready?.id === jobId && !ready.file && !ready.failed;
-        publish.disabled = waiting;
-        share.disabled = waiting;
-        publish.textContent = waiting ? 'Préparation de la vidéo…' : 'Publier sur TikTok';
-      }
-      const saveFile = () => {
-        const a = el('a', { href: `${url}?use=download`, download: job.filename });
-        document.body.append(a);
-        a.click();
-        a.remove();
-      };
-      /** Ouvre l'application TikTok (Android : repli sur le site si elle n'est pas installée). */
-      const openTikTok = () => {
-        if (/Android/i.test(navigator.userAgent)) location.href = 'intent://#Intent;scheme=snssdk1233;package=com.zhiliaoapp.musically;S.browser_fallback_url=https%3A%2F%2Fwww.tiktok.com%2Fupload;end';
-        else location.href = 'snssdk1233://';
-      };
-      // Partage natif : la fiche du téléphone propose TikTok ; la vidéo arrive directement dans l'éditeur de TikTok.
-      const nativeShare = (withText) => {
-        const file = fileReady();
-        if (!file) return null;
-        return navigator.share({ files: [file], title: 'Lisnard Studio', ...(withText ? { text: sourceField.value.split('\n\n')[0] } : {}) });
-      };
-      share.addEventListener('click', async () => {
-        try {
-          const p = nativeShare(false);
-          if (!p) return say('Le partage direct n’est pas disponible ici : télécharge la vidéo.', 'err');
-          await p;
-          counted('share');
-        } catch { /* partage annulé */ }
-      });
-      // « Publier sur TikTok » : la description est copiée (TikTok ne la reçoit pas d'un partage), puis le téléphone ouvre sa fiche de
-      // partage avec la vidéo (TikTok y figure) ; sinon la vidéo est enregistrée et l'appli TikTok s'ouvre. Sur ordinateur, la vidéo
-      // est téléchargée et la page d'envoi de TikTok s'ouvre. (La publication automatique demande une application validée par TikTok.)
-      publish.addEventListener('click', async () => {
-        if (!mobile) {
-          window.open('https://www.tiktok.com/upload', '_blank', 'noopener'); // ouvert tout de suite : sinon le navigateur bloque la fenêtre
-          saveFile();
-          const copied = await copyText(sourceField.value);
-          return say(`${copied ? 'Description copiée. ' : ''}La vidéo se télécharge et TikTok s’ouvre : choisis le fichier, puis colle la description.`);
-        }
-        const copying = copyText(sourceField.value); // sans attendre : le partage doit partir dans le geste du clic
-        const sharing = nativeShare(true);
-        if (sharing) {
-          try {
-            await sharing;
-            counted('share');
-            return say((await copying) ? 'Description copiée : colle-la dans la légende de TikTok.' : 'Vidéo envoyée.');
-          } catch (e) {
-            if (e?.name === 'AbortError') return say((await copying) ? 'Partage annulé. La description reste copiée.' : 'Partage annulé.');
-          }
-        }
-        // Repli : le partage n'a pas pu s'ouvrir.
-        saveFile();
-        say(`${(await copying) ? 'Description copiée. ' : ''}Vidéo enregistrée : dans TikTok, appuie sur « + », puis choisis-la dans ta galerie.`);
-        setTimeout(openTikTok, 1200);
-      });
-      if (ready?.id === jobId) ready.refresh = setPublishState;
+  // --- création en cours : les éléments sont gardés et seulement mis à jour (le bouton Annuler garde le focus, rien n'est relu en boucle)
+  const run = {
+    text: el('p', { class: 'st-job-text' }),
+    bar: el('progress', { max: '100', 'aria-label': 'Avancement de la création' }),
+    say: el('p', { class: 'st-sr', role: 'status' }),
+    net: el('p', { class: 'st-help warn' }, 'Connexion instable : on réessaie, ta vidéo continue d’être créée.'),
+    cancel: el('button', { class: 'btn secondary small', type: 'button' }, 'Annuler'),
+  };
+  run.cancel.addEventListener('click', async () => {
+    try {
+      await api('DELETE', `/render/${job.id}`);
+    } catch {
+      // déjà terminé
+    }
+  });
+  function showRunning() {
+    const pct = Math.round(job.progress * 100);
+    const queued = job.status === 'queued';
+    run.text.textContent = queued ? `En attente… (${job.position}${job.position > 1 ? 'e' : 'er'} dans la file)` : `Création de la vidéo… ${pct} %`;
+    run.bar.value = queued ? 0 : pct;
+    const spoken = queued ? 'En attente dans la file.' : `Création de la vidéo : ${Math.floor(pct / 25) * 25} %`;
+    if (run.say.textContent !== spoken) run.say.textContent = spoken;
+    run.net.hidden = !netIssue;
+    if (jobBox.dataset.mode !== 'running') {
+      jobBox.dataset.mode = 'running';
+      put(jobBox, run.text, run.bar, run.say, run.net, run.cancel);
+    }
+  }
+
+  function showExpired() {
+    stopExpiry();
+    ready = null;
+    jobBox.dataset.mode = 'expired';
+    put(jobBox,
+      el('p', { class: 'st-job-text err', role: 'status' }, 'Ta vidéo a expiré : les clips ne sont conservés qu’une heure.'),
+      el('button', { class: 'btn secondary small', type: 'button', onclick: () => { setJob(null); showJob(); } }, 'Créer à nouveau'));
+  }
+
+  function showDone() {
+    const jobId = job.id;
+    const filename = job.filename; // captured now: `job` may be replaced before the async work below ends
+    if (job.expiresAt == null && job.expires_in_s != null) job.expiresAt = Date.now() + job.expires_in_s * 1000;
+    if (job.expiresAt != null && Date.now() >= job.expiresAt) return showExpired();
+    const url = `/api/studio/render/${jobId}/file`;
+    const say = (text, kind = 'ok') => { makeMsg.className = `st-msg ${kind === 'ok' ? '' : 'err'}`; makeMsg.textContent = text; };
+    const touch = /Android|iPhone|iPad/i.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+    const mobile = Boolean(navigator.canShare) && touch;
+    const counted = (use) => api('POST', `/render/${jobId}/used`, { use }).catch(() => {});
+    const share = el('button', { class: 'btn secondary small', type: 'button' }, 'Partager');
+    const publish = el('button', { class: 'btn tiktok', type: 'button' }, 'Publier sur TikTok');
+    // Sur téléphone le fichier n'est chargé qu'après un premier appui (pas de données mobiles consommées d'office) ; le partage natif
+    // exige ensuite un nouvel appui, car il n'est autorisé que juste après un geste.
+    const prepare = () => {
+      if (ready?.id === jobId) return;
+      const mine = (ready = { id: jobId, file: null, failed: false, loading: true, refresh: null });
+      fetch(url).then((r) => (r.ok ? r.blob() : Promise.reject(new Error('fichier')))).then((blob) => {
+        const file = new File([blob], filename, { type: 'video/mp4' });
+        if (navigator.canShare({ files: [file] })) mine.file = file; else mine.failed = true;
+      }, () => { mine.failed = true; }).finally(() => { mine.loading = false; mine.refresh?.(); });
+    };
+    const fileReady = () => (ready?.id === jobId ? ready.file : null);
+    const needsPrepare = () => mobile && !fileReady() && !(ready?.id === jobId && ready.failed);
+    function setPublishState() {
+      const st = ready?.id === jobId ? ready : null;
+      publish.disabled = share.disabled = Boolean(mobile && st?.loading);
+      publish.textContent = mobile && st?.loading ? 'Préparation de la vidéo…' : mobile && st?.file ? 'Envoyer à TikTok' : 'Publier sur TikTok';
+    }
+    const afterPrepare = () => {
       setPublishState();
-      jobBox.replaceChildren(
-        el('p', { class: 'st-job-text ok' }, 'Ta vidéo est prête !'),
-        el('video', { class: 'st-result', src: url, controls: true, playsinline: '', preload: 'metadata' }),
-        el('div', { class: 'st-job-actions' }, publish, el('a', { class: 'btn secondary', href: `${url}?use=download`, download: job.filename }, 'Télécharger'), mobile ? share : null,
-          el('button', { class: 'btn secondary small', type: 'button', onclick: () => { job = null; showJob(); renderCreateSummary(); } }, 'Faire un autre clip')),
-        el('p', { class: 'st-help' }, 'Description et source prêtes à coller : « Copier la description » ci-dessus (la vidéo n’affiche pas la source).'));
-    } else if (job.status === 'cancelled') {
-      jobBox.replaceChildren(el('p', { class: 'st-job-text' }, 'Création annulée.'));
+      if (ready?.file) say('Vidéo prête : touche à nouveau le bouton pour l’envoyer.');
+      else say('Le partage direct n’est pas disponible ici : le bouton enregistrera la vidéo, puis ouvrira TikTok.', 'err');
+    };
+    const startPrepare = () => {
+      prepare();
+      ready.refresh = afterPrepare;
+      say('Préparation de la vidéo…');
+      setPublishState();
+    };
+    const saveFile = () => {
+      delivered = true;
+      const a = el('a', { href: `${url}?use=download`, download: filename });
+      document.body.append(a);
+      a.click();
+      a.remove();
+    };
+    /** Ouvre l'application TikTok (Android : repli sur le site si elle n'est pas installée). */
+    const openTikTok = () => {
+      if (/Android/i.test(navigator.userAgent)) location.href = 'intent://#Intent;scheme=snssdk1233;package=com.zhiliaoapp.musically;S.browser_fallback_url=https%3A%2F%2Fwww.tiktok.com%2Fupload;end';
+      else location.href = 'snssdk1233://';
+    };
+    // Partage natif : la fiche du téléphone propose TikTok ; la vidéo arrive directement dans l'éditeur de TikTok.
+    const nativeShare = (withText) => {
+      const file = fileReady();
+      if (!file) return null;
+      return navigator.share({ files: [file], title: 'Lisnard Studio', ...(withText ? { text: sourceField.value.split('\n\n')[0] } : {}) });
+    };
+    share.addEventListener('click', async () => {
+      if (needsPrepare()) return startPrepare();
+      try {
+        const p = nativeShare(false);
+        if (!p) return say('Le partage direct n’est pas disponible ici : télécharge la vidéo.', 'err');
+        await p;
+        delivered = true;
+        counted('share');
+      } catch { /* partage annulé */ }
+    });
+    // « Publier sur TikTok » : la description est copiée (TikTok ne la reçoit pas d'un partage), puis le téléphone ouvre sa fiche de
+    // partage avec la vidéo (TikTok y figure) ; sinon la vidéo est enregistrée et l'appli TikTok s'ouvre. Sur ordinateur, la vidéo
+    // est téléchargée et la page d'envoi de TikTok s'ouvre. (La publication automatique demande une application validée par TikTok.)
+    publish.addEventListener('click', async () => {
+      if (!mobile) {
+        window.open('https://www.tiktok.com/upload', '_blank', 'noopener'); // ouvert tout de suite : sinon le navigateur bloque la fenêtre
+        saveFile();
+        const copied = await copyText(sourceField.value);
+        return say(`${copied ? 'Description copiée. ' : ''}La vidéo se télécharge et TikTok s’ouvre : choisis le fichier, puis colle la description.`);
+      }
+      if (needsPrepare()) return startPrepare();
+      const copying = copyText(sourceField.value); // sans attendre : le partage doit partir dans le geste du clic
+      const sharing = nativeShare(true);
+      if (sharing) {
+        try {
+          await sharing;
+          delivered = true;
+          counted('share');
+          return say((await copying) ? 'Description copiée : colle-la dans la légende de TikTok.' : 'Vidéo envoyée.');
+        } catch (e) {
+          if (e?.name === 'AbortError') return say((await copying) ? 'Partage annulé. La description reste copiée.' : 'Partage annulé.');
+        }
+      }
+      // Repli : le partage n'a pas pu s'ouvrir.
+      saveFile();
+      say(`${(await copying) ? 'Description copiée. ' : ''}Vidéo enregistrée : dans TikTok, appuie sur « + », puis choisis-la dans ta galerie.`);
+      setTimeout(openTikTok, 1200);
+    });
+    if (ready?.id === jobId) ready.refresh = afterPrepare;
+    setPublishState();
+    const expiry = el('p', { class: 'st-help' });
+    const tickExpiry = () => {
+      const left = Math.round((job.expiresAt - Date.now()) / 1000);
+      if (left <= 0) return showExpired();
+      expiry.textContent = left < 60 ? 'Ta vidéo expire dans moins d’une minute : télécharge-la maintenant.' : `Ta vidéo reste disponible encore ${Math.ceil(left / 60)} min.`;
+      expiry.className = left < 300 ? 'st-help warn' : 'st-help';
+    };
+    stopExpiry();
+    if (job.expiresAt != null) {
+      tickExpiry();
+      expiryTimer = setInterval(tickExpiry, 1000);
+    }
+    jobBox.dataset.mode = 'done';
+    put(jobBox,
+      el('p', { class: 'st-job-text ok', role: 'status' }, 'Ta vidéo est prête !'),
+      job.expiresAt != null ? expiry : null,
+      el('video', { class: 'st-result', src: url, controls: true, playsinline: '', preload: 'metadata' }),
+      el('div', { class: 'st-job-actions' }, publish, el('a', { class: 'btn secondary', href: `${url}?use=download`, download: filename, onclick: () => { delivered = true; } }, 'Télécharger'), mobile ? share : null,
+        el('button', { class: 'btn secondary small', type: 'button', onclick: () => { stopExpiry(); delivered = false; setJob(null); showJob(); } }, 'Faire un autre clip')),
+      el('p', { class: 'st-help' }, 'Description et source prêtes à coller : « Copier la description » ci-dessus (la vidéo n’affiche pas la source).'));
+  }
+
+  function showJob() {
+    if (!job) {
+      stopExpiry();
+      jobBox.dataset.mode = '';
+      put(jobBox);
+    } else if (jobActive()) {
+      stopExpiry();
+      showRunning();
+    } else if (job.status === 'done') {
+      showDone();
     } else {
-      jobBox.replaceChildren(el('p', { class: 'st-job-text err' }, job.error || 'La création a échoué.'));
+      stopExpiry();
+      jobBox.dataset.mode = job.status;
+      put(jobBox, el('p', { class: job.status === 'cancelled' ? 'st-job-text' : 'st-job-text err', role: 'status' }, job.status === 'cancelled' ? 'Création annulée.' : job.error || 'La création a échoué.'));
     }
     renderCreateSummary();
   }
   async function poll() {
     clearTimeout(polling);
-    if (!job || !['queued', 'running'].includes(job.status)) return;
+    if (!jobActive()) return;
+    const id = job.id;
     try {
-      job = await api('GET', `/render/${job.id}`);
+      const next = await api('GET', `/render/${id}`);
+      if (job?.id !== id) return; // another clip replaced it meanwhile
+      netFails = 0;
+      netIssue = false;
+      setJob(next);
     } catch (e) {
-      job = { status: 'error', error: e.message };
+      if (e.gate || job?.id !== id) return;
+      if (e.status !== 404) {
+        // network error or 5xx: the server keeps rendering, keep the id and retry with a growing delay
+        netFails += 1;
+        netIssue = true;
+        showJob();
+        polling = setTimeout(poll, Math.min(900 * 2 ** netFails, 10000));
+        return;
+      }
+      setJob({ id, status: 'error', error: e.message }); // 404 only: the clip is really gone
     }
     showJob();
-    polling = setTimeout(poll, 900);
+    if (jobActive()) polling = setTimeout(poll, 900);
+  }
+  /** Reprend un clip commencé avant le rechargement de la page. */
+  async function resumeJob(id) {
+    try {
+      setJob(await api('GET', `/render/${id}`));
+    } catch (e) {
+      if (e.status === 404) {
+        S.jobId = null;
+        scheduleDraft();
+      }
+      return;
+    }
+    if (!['queued', 'running', 'done'].includes(job.status)) return setJob(null);
+    showJob();
+    openTab('creer');
+    if (jobActive()) poll();
   }
   makeBtn.addEventListener('click', async () => {
     makeMsg.textContent = '';
     makeBtn.disabled = true;
     try {
-      job = await api('POST', '/render', {
+      netFails = 0;
+      netIssue = false;
+      delivered = false;
+      setJob(await api('POST', '/render', {
         youtube_id: S.video.youtube_id,
         extracts: S.extracts.map(exMs),
         layout: S.layout,
@@ -920,22 +1228,32 @@ async function openEditor(youtubeId) {
         zoom: S.zoom.on && S.zoom.events.length ? { strength: S.zoom.strength, focus: S.zoom.focus, events: S.zoom.events } : null,
         broll: S.broll.map(({ id, start, dur }) => ({ id, start, dur })),
         edits: Object.fromEntries(clipLines().filter((r) => S.edits.has(r.line.start_ms)).map((r) => [r.line.start_ms, S.edits.get(r.line.start_ms).text])),
-      });
+      }));
       showJob();
       poll();
     } catch (e) {
-      fail(makeMsg, e);
+      if (!e.gate) fail(makeMsg, e);
       renderCreateSummary();
     }
   });
 
+  // quitter la page pendant la création, ou avant d'avoir récupéré le clip, ferait perdre le résultat
+  const beforeUnload = (e) => {
+    const waiting = job?.status === 'done' && !delivered && !(job.expiresAt != null && Date.now() >= job.expiresAt);
+    if (!jobActive() && !waiting) return;
+    e.preventDefault();
+    e.returnValue = '';
+  };
+  addEventListener('beforeunload', beforeUnload);
+
   // ============================================================ onglet B-roll (zooms et images)
   const panelFx = el('div', { class: 'st-panel' });
-  const fxNote = el('p', { class: 'st-msg' });
+  const fxNote = el('p', { class: 'st-msg', role: 'status' });
   let fxTimer = 0;
   const fxAlert = (msg) => {
     fxNote.className = 'st-msg err';
     fxNote.textContent = msg;
+    toast(msg, true);
     clearTimeout(fxTimer);
     fxTimer = setTimeout(() => (fxNote.textContent = ''), 4500);
   };
@@ -957,6 +1275,7 @@ async function openEditor(youtubeId) {
     renderEffects();
     updateSource();
     renderCreateSummary();
+    scheduleDraft();
   }
   /** Zooms automatiques sur les mots importants du clip. */
   function autoZoom() {
@@ -985,6 +1304,7 @@ async function openEditor(youtubeId) {
     if (S.zoom.events.length >= ZOOM.maxEvents) return fxAlert(`${ZOOM.maxEvents} zooms au maximum.`);
     S.zoom.on = true;
     setZoomEvents([...S.zoom.events, { t, kind }].sort((a, b) => a.t - b.t));
+    toast(`Zoom ${kind === 'in' ? 'avant' : 'arrière'} ajouté à ${secs(t)}.`);
   }
 
   // --- images libres de droits
@@ -1036,6 +1356,7 @@ async function openEditor(youtubeId) {
     S.broll.sort((a, b) => a.start - b.start);
     effectsChanged();
     phone.seek(start);
+    toast(`Image ajoutée à ${secs(start)} (voir « Images du clip » plus bas).`);
   }
   function updateBroll(b, patch) {
     const next = { ...b, ...patch };
@@ -1050,6 +1371,9 @@ async function openEditor(youtubeId) {
   }
   /** Description à copier : légende de l'extrait choisi (générée avec les extraits), puis la source de l'interview et les crédits des images. */
   function updateSource() {
+    captionHelp.textContent = S.extracts.some((e) => e.caption)
+      ? 'Légende TikTok prête à l’emploi (accroche et hashtags proposés avec l’extrait), suivie de la source de l’interview, que la vidéo n’affiche pas. Tu peux la modifier.'
+      : 'Source de l’interview à coller dans ta description, car la vidéo ne l’affiche pas. Ajoute ton accroche et tes hashtags.';
     if (captionEdited) return;
     const credits = [...new Set(S.broll.map((b) => b.photographer).filter(Boolean))];
     const caption = S.extracts.find((e) => e.caption)?.caption ?? '';
@@ -1063,7 +1387,7 @@ async function openEditor(youtubeId) {
   }
 
   const timeField = (label, ms, onSet, extra = {}) => {
-    const input = el('input', { class: 'st-time', type: 'text', inputmode: 'decimal', value: fmtT(ms), 'aria-label': label, title: 'Tu peux taper un instant : 0:12,5', ...extra });
+    const input = el('input', { class: 'st-time', type: 'text', inputmode: 'text', autocomplete: 'off', value: fmtT(ms), 'aria-label': label, title: 'Tu peux taper un instant : 0:12,5', ...extra });
     input.addEventListener('change', () => {
       const v = parseT(input.value);
       if (v == null) { input.value = fmtT(ms); return fxAlert('Instant illisible : écris par exemple 0:12,5 ou 12,5.'); }
@@ -1073,6 +1397,7 @@ async function openEditor(youtubeId) {
   };
 
   function renderEffects() {
+    if (panelFx.hidden) return; // rebuilt when the tab opens
     const total = totalS();
     const words = clipWords();
     const strengthChips = el('div', { class: 'seg st-stepchips', role: 'group', 'aria-label': 'Force du zoom' },
@@ -1106,7 +1431,7 @@ async function openEditor(youtubeId) {
         el('button', { type: 'button', class: 'st-mini', title: 'Voir cette image', 'aria-label': 'Voir cette image', onclick: () => phone.seek(Math.max(0, b.start - 0.4), true) }, '▶'),
         el('button', { type: 'button', class: 'st-mini', title: 'Retirer cette image', 'aria-label': 'Retirer cette image', onclick: () => { S.broll = S.broll.filter((o) => o !== b); effectsChanged(); } }, '×')));
 
-    panelFx.replaceChildren(...[
+    putKeep(panelFx, ...[
       el('h3', {}, 'Zooms'),
       el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: S.zoom.on, onchange: (e) => { S.zoom.on = e.target.checked; if (S.zoom.on && !S.zoom.events.length) autoZoom(); effectsChanged(); } }), 'Zooms sur les mots importants'),
       el('p', { class: 'st-help' }, 'Un zoom avant au moment d’un mot important, puis un zoom arrière. Le mouvement est lissé image par image : jamais de saccade. Les sous-titres et les images ne bougent pas.'),
@@ -1126,7 +1451,7 @@ async function openEditor(youtubeId) {
           ]
         : []),
       el('h3', {}, 'Images'),
-      el('p', { class: 'st-help' }, 'Une image plein écran par-dessus la vidéo pendant que la voix continue (b-roll), avec un très léger zoom lent. Images libres de droits.'),
+      el('p', { class: 'st-help' }, 'Une image plein écran par-dessus la vidéo pendant que la voix continue, avec un très léger zoom lent. Images libres de droits.'),
       ...(stockOn
         ? [
             el('div', { class: 'st-searchbar' }, searchInput, el('button', { type: 'button', class: 'btn small', disabled: S.stock.busy, onclick: () => searchStock() }, S.stock.busy ? 'Recherche…' : 'Chercher')),
@@ -1142,28 +1467,54 @@ async function openEditor(youtubeId) {
             brollRows.length ? el('h4', {}, `Images du clip (${brollRows.length}/${BROLL.maxItems})`) : null,
             brollRows.length ? el('ul', { class: 'st-fxlist' }, brollRows) : null,
           ]
-        : [el('p', { class: 'st-help' }, 'La recherche d’images n’est pas encore activée sur ce site (clé de la banque d’images manquante).')]),
+        : [el('p', { class: 'st-help' }, 'La recherche d’images n’est pas disponible pour le moment.')]),
       fxNote,
     ].filter(Boolean));
   }
 
   // ============================================================ mise en page
-  const tabs = [['extraits', 'Extraits', panelExtracts], ['style', 'Sous-titres', panelStyle], ['musique', 'Musique', panelMusic], ['fx', 'B-roll', panelFx], ['cadrage', 'Cadrage', panelFrame], ['creer', 'Créer', panelCreate]];
-  const tabBar = el('div', { class: 'st-tabs', role: 'tablist' });
+  const tabs = [['extraits', 'Extraits', panelExtracts], ['style', 'Sous-titres', panelStyle], ['musique', 'Musique', panelMusic], ['fx', 'Images & zooms', panelFx], ['cadrage', 'Format', panelFrame], ['creer', 'Créer', panelCreate]];
+  const tabBar = el('div', { class: 'st-tabs', role: 'tablist', 'aria-label': 'Étapes de création' });
   const stage = el('div', { class: 'st-stage card' });
-  function openTab(id) {
+  const nextBtn = el('button', { class: 'btn st-next', type: 'button' });
+  const nextBar = el('div', { class: 'st-nextbar' }, nextBtn);
+  const tabIds = tabs.map(([id]) => id);
+  function openTab(id, focus = false) {
     tabs.forEach(([tid, , panel]) => (panel.hidden = tid !== id));
-    tabBar.querySelectorAll('button').forEach((b) => {
-      b.setAttribute('aria-selected', String(b.dataset.tab === id));
-      if (b.dataset.tab === id) b.scrollIntoView({ block: 'nearest', inline: 'center' });
+    root.dataset.tab = id;
+    tabBar.querySelectorAll('[role="tab"]').forEach((b) => {
+      const on = b.dataset.tab === id;
+      b.setAttribute('aria-selected', String(on));
+      b.tabIndex = on ? 0 : -1; // roving tabindex: one tab stop, arrows move between tabs
+      if (on && focus) b.focus();
     });
+    const next = tabs[tabIds.indexOf(id) + 1];
+    nextBar.hidden = !next;
+    if (next) nextBtn.textContent = `Étape suivante : ${next[1]} →`;
     if (id !== 'musique' && auditionId) { audition.pause(); auditionId = null; renderMusic(); }
     if (id === 'creer') renderCreateSummary();
     if (id === 'fx') renderEffects();
     if (id !== 'fx' && S.zoom.picking) { S.zoom.picking = false; pushFx(); } // on ne reste pas bloqué en choix du point de zoom
   }
-  tabs.forEach(([id, label]) => tabBar.append(el('button', { type: 'button', role: 'tab', 'data-tab': id, onclick: () => openTab(id) }, label)));
-  stage.append(tabBar, ...tabs.map(([, , p]) => p));
+  tabs.forEach(([id, label, panel]) => {
+    panel.id = `st-p-${id}`;
+    panel.setAttribute('role', 'tabpanel');
+    panel.setAttribute('aria-labelledby', `st-t-${id}`);
+    tabBar.append(el('button', { type: 'button', role: 'tab', id: `st-t-${id}`, 'aria-controls': panel.id, 'data-tab': id, onclick: () => openTab(id) }, label));
+  });
+  tabBar.addEventListener('keydown', (e) => {
+    const i = tabIds.indexOf(document.activeElement?.dataset?.tab);
+    if (i < 0) return;
+    const to = { ArrowRight: (i + 1) % tabIds.length, ArrowLeft: (i + tabIds.length - 1) % tabIds.length, Home: 0, End: tabIds.length - 1 }[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    openTab(tabIds[to], true);
+  });
+  nextBtn.addEventListener('click', () => {
+    openTab(tabIds[tabIds.indexOf(root.dataset.tab) + 1], true);
+    tabBar.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  });
+  stage.append(tabBar, ...tabs.map(([, , p]) => p), nextBar);
 
   // « ← Autres interviews » et le titre vont dans l'en-tête bleu : un titre long sur deux ou trois lignes (téléphone) ne déborde plus
   // en blanc sur le fond clair
@@ -1175,12 +1526,14 @@ async function openEditor(youtubeId) {
     hero.closest('.hero').classList.add('editor');
   }
   root.classList.add('editing');
-  root.replaceChildren(
-    ...(hero ? [] : [top]),
+  put(root,
+    hero ? null : top,
     el('div', { class: 'st-grid' }, el('div', { class: 'st-left' }, phone.root), stage),
     disclaimer(),
+    toastEl,
   );
 
+  const restored = restoreDraft();
   renderPresets();
   renderFonts();
   renderExtracts();
@@ -1194,19 +1547,40 @@ async function openEditor(youtubeId) {
   pushFraming();
   openTab('extraits');
 
-  // premier extrait : le mieux noté
+  // premier extrait : le mieux noté (sauf si un brouillon est rétabli)
   const best = [...S.suggestions].sort((x, y) => y.score - x.score)[0];
-  if (best) addExtract(best.start_ms, best.end_ms, best.title, best.start_ms, best.description);
+  if (!restored && best) addExtract(best.start_ms, best.end_ms, best.title, best.start_ms, best.description);
   else extractsChanged();
+  booting = false;
+  if (S.jobId) resumeJob(S.jobId);
+
+  teardown = () => {
+    clearTimeout(polling);
+    clearTimeout(previewTimer);
+    stopExpiry();
+    phone.pause();
+    phone.setAudio({ url: null });
+    audition.pause();
+    jobBox.querySelector('video')?.pause();
+    removeEventListener('beforeunload', beforeUnload);
+    removeEventListener('pagehide', onPageHide);
+  };
 }
 
-(async () => {
+async function start() {
   try {
     if (!(await memberGate())) return;
     const id = params.get('v');
     if (id) await openEditor(id);
     else await showList();
   } catch (e) {
-    root.replaceChildren(el('section', { class: 'card st-empty' }, el('h2', {}, 'Oups'), el('p', {}, e.message), el('a', { class: 'btn small', href: '/' }, 'Retour à la liste')));
+    if (e.gate) return; // the login gate is already shown: do not replace it
+    put(root, el('section', { class: 'card st-empty' },
+      el('h2', {}, 'Oups'),
+      el('p', { role: 'alert' }, e.message),
+      el('p', { class: 'st-gate-actions' },
+        el('button', { class: 'btn small', type: 'button', onclick: () => { mePromise = fetchMe(); put(root, el('p', { class: 'hint', role: 'status' }, 'Chargement du studio…')); start(); } }, 'Réessayer'),
+        el('a', { class: 'btn small secondary', href: '/' }, 'Retour à la liste'))));
   }
-})();
+}
+start();
