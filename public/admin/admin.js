@@ -177,6 +177,9 @@ function reauth() {
 
 const SCRIPT_URL = 'https://github.com/Pawzzz78/A-t-il-dit-a/tree/main/tools';
 
+/** Message for a feature the developer must switch on: plain French first, technical name small and secondary. */
+const unavailable = (text, tech, cls = 'status err') => h('p', { class: cls }, `Fonction indisponible : ${text} `, h('small', { class: 'tech' }, `(à activer par le développeur : ${tech})`));
+
 /** Commande à copier-coller, avec un bouton « Copier ». */
 function commandBox(command) {
   const status = h('span', { class: 'status' });
@@ -274,13 +277,16 @@ async function route() {
 window.addEventListener('hashchange', route);
 
 function renderNav() {
+  const hash = location.hash;
+  const here = hash === '' || hash === '#' || hash === '#/' || hash.startsWith('#/video/') ? '#/' : hash;
+  const link = (href, label) => h('a', { href, 'aria-current': href === here ? 'page' : null }, label);
   $nav.replaceChildren(
-    h('a', { href: '#/' }, 'Vidéos'),
-    h('a', { href: '#/sync' }, 'Synchronisation'),
-    h('a', { href: '#/studio' }, 'Studio'),
-    h('a', { href: '#/musique' }, 'Musique'),
-    h('a', { href: '#/visages' }, 'Reconnaissance'),
-    h('a', { href: '#/mur' }, 'Mur'),
+    link('#/', 'Vidéos'),
+    link('#/sync', 'Synchronisation'),
+    link('#/studio', 'Stats studio'),
+    link('#/musique', 'Musique'),
+    link('#/visages', 'Reconnaissance'),
+    link('#/mur', 'Mur'),
     h('a', { href: '/' }, 'Voir le site'),
     h(
       'a',
@@ -338,16 +344,18 @@ function renderLogin() {
 // ----------------------------------------------------------------------- liste
 
 async function renderList() {
+  const gen = routeGen;
   const [videos, config] = await Promise.all([api('GET', '/videos'), api('GET', '/config')]);
+  if (gen !== routeGen) return;
 
   const tbody = h('tbody');
   for (const v of videos) {
     tbody.append(
       h(
         'tr',
-        { class: 'clickable', onclick: () => (location.hash = `#/video/${v.id}`) },
+        { class: 'clickable', 'data-q': [v.title, v.channel, v.youtube_id].filter(Boolean).join(' ').toLowerCase(), onclick: () => (location.hash = `#/video/${v.id}`) },
         h('td', {}, v.thumbnail_url ? h('img', { src: v.thumbnail_url, alt: '', loading: 'lazy' }) : null),
-        h('td', {}, h('div', { class: 't' }, v.title || v.youtube_id), h('div', { class: 'status' }, [v.channel, fmtDuration(v.duration_s)].filter(Boolean).join(' · '))),
+        h('td', {}, h('div', { class: 't' }, h('a', { href: `#/video/${v.id}` }, v.title || v.youtube_id)), h('div', { class: 'status' }, [v.channel, fmtDuration(v.duration_s)].filter(Boolean).join(' · '))),
         h('td', {}, fmtDate(v.published_at)),
         h('td', {}, String(v.segment_count)),
         h(
@@ -358,23 +366,45 @@ async function renderList() {
           v.sync_status === 'pending' ? h('span', { class: 'badge' }, 'en attente') : null,
           v.sync_status === 'failed' ? h('span', { class: 'badge warn', title: v.sync_error ?? '' }, 'échec') : null,
           v.segment_count === 0 && !v.sync_status ? h('span', { class: 'badge' }, 'vide') : null,
-          v.edited ? h('span', { class: 'badge ok' }, 'corrigée') : h('span', { class: 'badge' }, { supadata: 'auto', whisper: 'whisper' }[v.source] ?? 'manuelle'),
+          v.edited ? h('span', { class: 'badge ok' }, 'corrigée') : h('span', { class: 'badge' }, { supadata: 'auto', whisper: 'whisper' }[v.source] ?? (v.sync_status ? 'synchro' : 'manuelle')),
         ),
       ),
     );
   }
 
+  const count = h('h2', {}, `Vidéos (${videos.length})`);
+  const none = h('p', { class: 'status', role: 'status', hidden: true }, 'Aucune vidéo ne correspond.');
+  const filter = h('input', {
+    type: 'search',
+    class: 'text',
+    placeholder: 'Filtrer par titre ou chaîne…',
+    'aria-label': 'Filtrer les vidéos par titre ou chaîne',
+    oninput: () => {
+      const q = filter.value.trim().toLowerCase();
+      let shown = 0;
+      for (const tr of tbody.children) {
+        tr.hidden = Boolean(q) && !tr.dataset.q.includes(q);
+        if (!tr.hidden) shown++;
+      }
+      count.textContent = q ? `Vidéos (${shown} sur ${videos.length})` : `Vidéos (${videos.length})`;
+      none.hidden = shown > 0;
+    },
+  });
   const list = h(
     'section',
     { class: 'panel' },
-    h('h2', {}, `Vidéos (${videos.length})`),
+    count,
     videos.length
-      ? h(
-          'table',
-          { class: 'videos' },
-          h('thead', {}, h('tr', {}, ...['', 'Titre', 'Date', 'Segments', 'Transcription'].map((t) => h('th', {}, t)))),
-          tbody,
-        )
+      ? [
+          filter,
+          none,
+          h(
+            'table',
+            { class: 'videos list' },
+            h('thead', {}, h('tr', {}, ...['', 'Titre', 'Date', 'Segments', 'Transcription'].map((t) => h('th', {}, t)))),
+            tbody,
+          ),
+        ]
       : h('p', { class: 'status' }, 'Aucune vidéo pour le moment. Ajoute-en une ci-dessous.'),
   );
 
@@ -443,7 +473,7 @@ function addForm(config) {
       'div',
       { class: 'field' },
       'Transcription',
-      mode('supadata', config.supadata ? 'Récupérer automatiquement (Supadata)' : 'Récupérer automatiquement — SUPADATA_API_KEY non configurée', config.supadata, !config.supadata),
+      mode('supadata', config.supadata ? 'Récupérer automatiquement (Supadata)' : 'Récupérer automatiquement (indisponible : à activer par le développeur)', config.supadata, !config.supadata),
       mode('paste', 'Coller une transcription', !config.supadata),
       mode('empty', 'Vide (je la saisis dans l’éditeur)', false),
     ),
@@ -770,7 +800,7 @@ async function renderFaceReferences() {
       h('section', { class: 'panel' },
         h('h2', {}, 'Reconnaissance de David Lisnard'),
         h('p', { class: 'status' }, 'Donne des photos de David Lisnard : dans les interviews où plusieurs personnes apparaissent (journaliste, public), le cadrage automatique du studio suivra lui plutôt que la personne la plus visible. Seules les empreintes des visages sont conservées, pas les photos.'),
-        data.enabled ? null : h('p', { class: 'status err' }, 'Le cadrage automatique est désactivé sur ce serveur (STUDIO_FACES=off).'),
+        data.enabled ? null : unavailable('le cadrage automatique est désactivé sur ce serveur.', 'STUDIO_FACES=off'),
         h('ul', { class: 'tips' },
           h('li', {}, 'Une vingtaine de photos, variées : de face et de trois quarts, avec et sans lunettes, en intérieur et en extérieur, à différentes années.'),
           h('li', {}, `Une seule personne par photo, visage net et assez grand (au moins ${data.minFacePx} pixels de large) ; la photo est refusée sinon.`),
@@ -869,8 +899,8 @@ async function renderWallAdmin() {
       h('section', { class: 'panel' },
         h('h2', {}, 'Mur des clips'),
         h('p', { class: 'status' }, `Les TikToks publiés avec #${cfg.hashtag} sont récupérés avec Apify (acteur ${cfg.actor}), classés par vues, j’aime et commentaires (score = ${cfg.weights[0]} × vues + ${cfg.weights[1]} × j’aime + ${cfg.weights[2]} × commentaires), et les ${cfg.max} meilleurs sont affichés sur la page publique « Le mur ». `, h('a', { href: '/mur/', target: '_blank' }, 'Voir le mur')),
-        !cfg.has_token ? h('p', { class: 'status err' }, 'Jeton Apify absent : ajoute la variable APIFY_TOKEN dans Railway (Apify → Settings → API & Integrations → Personal API token), puis redéploie.') : null,
-        !cfg.enabled ? h('p', { class: 'status err' }, 'Le mur est désactivé (WALL_ENABLED=false).') : null,
+        !cfg.has_token ? unavailable('la connexion à Apify (récupération des TikToks) n’est pas configurée.', 'APIFY_TOKEN') : null,
+        !cfg.enabled ? unavailable('le mur est désactivé.', 'WALL_ENABLED=false') : null,
         h('p', { class: 'status' }, lastText),
         skipped ? h('p', { class: 'status' }, `Écartés : ${skipped}.`) : null,
         last?.status === 'ok' && last.received > 0 && last.kept === 0 ? h('p', { class: 'status err' }, `Aucune vidéo retenue sur ${last.received} reçues : le format des résultats de l’acteur a peut-être changé. Champs du premier élément : ${(last.sample_keys ?? []).join(', ') || '(aucun)'}.`) : null,
@@ -1610,7 +1640,7 @@ async function renderEditor(id) {
               },
               'Traduire en français',
             )
-          : h('p', { class: 'status err' }, 'OPENROUTER_API_KEY manquante : impossible de traduire automatiquement.')
+          : unavailable('la traduction automatique n’est pas configurée.', 'OPENROUTER_API_KEY')
         : null,
       trMsg,
     ),
@@ -1953,8 +1983,8 @@ async function renderEditor(id) {
         'details',
         { open: Boolean(f) || Boolean(sg) },
         h('summary', {}, `Clips TikTok : ${label}`),
-        st.ffmpeg ? null : h('p', { class: 'status err' }, 'ffmpeg n’est pas installé sur ce serveur : le dépôt de vidéos est impossible.'),
-        st.ffmpeg && !st.render_ready ? h('p', { class: 'status err' }, 'Le ffmpeg de ce serveur ne sait pas incruster de sous-titres ou encoder en H.264 : le studio ne pourra pas créer de clips (voir les journaux de démarrage).') : null,
+        st.ffmpeg ? null : unavailable('le dépôt de vidéos est impossible sur ce serveur.', 'ffmpeg absent'),
+        st.ffmpeg && !st.render_ready ? unavailable('le studio ne pourra pas créer de clips (le serveur ne sait pas incruster les sous-titres ni encoder la vidéo).', 'ffmpeg sans sous-titres / H.264 ; voir les journaux de démarrage') : null,
         ...fileBlock,
         clipsPreview,
         h('div', { class: 'actions' }, fileInput),
@@ -1976,7 +2006,7 @@ async function renderEditor(id) {
         facesBox,
         h('h3', { class: 'clips-sub' }, 'Extraits proposés par l’IA'),
         sg?.outdated ? h('p', { class: 'status err' }, 'La transcription a changé depuis : régénère les extraits.') : null,
-        cards.length ? h('div', { class: 'clip-list' }, cards) : h('p', { class: 'status' }, st.llm ? 'Pas encore d’extraits.' : 'OPENROUTER_API_KEY manquante : impossible de proposer des extraits.'),
+        cards.length ? h('div', { class: 'clip-list' }, cards) : st.llm ? h('p', { class: 'status' }, 'Pas encore d’extraits.') : unavailable('la proposition d’extraits par l’IA n’est pas configurée.', 'OPENROUTER_API_KEY'),
         h('div', { class: 'actions' }, suggestBtn),
         clipMsg,
       ),
