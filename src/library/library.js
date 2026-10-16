@@ -179,17 +179,17 @@ export async function listPublic({ sort = 'recent', youtube = null, limit = 24, 
 }
 
 export async function listMine(owner) {
-  const { rows } = await pool.query(
-    `SELECT c.*, o.id AS o_id FROM library_clips c LEFT JOIN library_clips o ON c.kind = 'repost' AND o.id = c.remix_of
-     WHERE c.owner_key = $1 ORDER BY c.created_at DESC LIMIT 200`,
-    [owner],
-  );
-  const originals = rows.filter((r) => r.kind === 'repost' && r.o_id).map((r) => r.o_id);
+  const { rows } = await pool.query('SELECT * FROM library_clips WHERE owner_key = $1 ORDER BY created_at DESC LIMIT 200', [owner]);
+  const originals = rows.filter((r) => r.kind === 'repost').map((r) => r.remix_of);
   const { rows: orig } = originals.length
-    ? await pool.query(`SELECT c.*, r.stars AS my_rating FROM library_clips c LEFT JOIN library_ratings r ON r.clip_id = c.id AND r.owner_key = $2 WHERE c.id = ANY($1)`, [originals, owner])
+    ? await pool.query(
+      `SELECT c.*, r.stars AS my_rating, v.published_at AS video_published_at FROM library_clips c JOIN videos v ON v.id = c.video_id
+       LEFT JOIN library_ratings r ON r.clip_id = c.id AND r.owner_key = $2 WHERE c.id = ANY($1) AND ${VISIBLE}`,
+      [originals, owner],
+    )
     : { rows: [] };
   const byId = new Map(orig.map((o) => [o.id, o]));
-  const clips = rows.map((r) => ({ ...present(r, owner), original: r.kind === 'repost' && byId.get(r.o_id) ? present(byId.get(r.o_id), owner) : null }));
+  const clips = rows.map((r) => ({ ...present(r, owner), original: r.kind === 'repost' && byId.get(r.remix_of) ? present(byId.get(r.remix_of), owner) : null }));
   return { clips, active: await ownerFileCount(owner), limit: libraryConfig().maxPerOwner };
 }
 
@@ -207,9 +207,14 @@ export async function getClip(id, owner = null) {
 export async function mediaClip(id, owner = null) {
   const r = await getClip(id, owner);
   if (r.kind !== 'repost') return r;
-  const { rows } = await pool.query('SELECT * FROM library_clips WHERE id = $1', [r.remix_of]);
-  if (!rows[0] || rows[0].hidden) throw new HttpError(404, "L'original de ce clip a été retiré.");
-  return rows[0];
+  return originalOf(r, owner);
+}
+
+// A repost follows its original: gone once the original is private, hidden or withdrawn
+async function originalOf(r, owner) {
+  const o = await getClip(r.remix_of, owner).catch(() => null);
+  if (!o) throw new HttpError(404, "L'original de ce clip a été retiré.");
+  return o;
 }
 export const clipFile = (row) => (row.file_state === 'active' ? fileOf(row.id) : null);
 export const clipPoster = (row) => (row.has_poster ? posterOf(row.id) : null);
@@ -271,14 +276,14 @@ const refreshRating = (id) =>
     [id],
   );
 
-export async function rate(id, owner, stars) {
+export async function rate(id, owner, stars, ip) {
   const r = await publicClip(id);
   if (r.owner_key === owner) throw new HttpError(403, 'Tu ne peux pas noter ton propre clip.');
   if (stars === null) await pool.query('DELETE FROM library_ratings WHERE clip_id = $1 AND owner_key = $2', [r.id, owner]);
   else {
     const n = Number(stars);
     if (!Number.isInteger(n) || n < 1 || n > 5) throw new HttpError(400, 'La note va de 1 à 5 étoiles.');
-    if (!limiter.take(`rate:${owner}`, 120)) throw new HttpError(429, 'Trop de notes pour le moment : réessaie plus tard.');
+    if (!limiter.take(`rate:${owner}`, 120) || !limiter.take(`rate-ip:${ipKey(ip)}`, 60)) throw new HttpError(429, 'Trop de notes pour le moment : réessaie plus tard.');
     await pool.query(
       'INSERT INTO library_ratings (clip_id, owner_key, stars) VALUES ($1, $2, $3) ON CONFLICT (clip_id, owner_key) DO UPDATE SET stars = EXCLUDED.stars, created_at = now()',
       [r.id, owner, n],
@@ -288,23 +293,28 @@ export async function rate(id, owner, stars) {
   return present({ ...rows[0], my_rating: stars === null ? null : Number(stars) }, owner);
 }
 
-export async function report(id, owner, reason = '') {
+// One report per person and per connection: fresh cookies alone cannot reach the auto-hide threshold
+export async function report(id, owner, reason = '', ip = '') {
   const r = await publicClip(id).catch(() => null);
   if (!r || r.owner_key === owner) return;
-  if (!limiter.take(`report:${owner}`, 30)) return;
+  if (!limiter.take(`report:${owner}`, 30) || !limiter.take(`report-ip:${ipKey(ip)}`, 20)) return;
   const text = String(reason ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, 300);
-  const { rowCount } = await pool.query('INSERT INTO library_reports (clip_id, owner_key, reason) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [r.id, owner, text]);
+  const { rowCount } = await pool.query(
+    `INSERT INTO library_reports (clip_id, owner_key, reason, visitor) SELECT $1, $2, $3, $4
+     WHERE NOT EXISTS (SELECT 1 FROM library_reports WHERE clip_id = $1 AND visitor = $4) ON CONFLICT DO NOTHING`,
+    [r.id, owner, text, visitorHash(ipKey(ip))],
+  );
   if (!rowCount) return;
   const auto = libraryConfig().autohideReports;
   await pool.query('UPDATE library_clips SET reports = reports + 1, hidden = hidden OR ($2::int > 0 AND reports + 1 >= $2::int) WHERE id = $1', [r.id, auto]);
 }
 
-export async function repost(id, owner) {
+export async function repost(id, owner, ip) {
   const r = await publicClip(id);
   if (r.owner_key === owner) throw new HttpError(400, 'Ce clip est déjà le tien.');
   const { rows: found } = await pool.query("SELECT * FROM library_clips WHERE owner_key = $1 AND kind = 'repost' AND remix_of = $2", [owner, r.id]);
   if (found[0]) return present(found[0], owner);
-  if (!limiter.take(`repost:${owner}`, 60)) throw new HttpError(429, 'Trop de republications pour le moment : réessaie plus tard.');
+  if (!limiter.take(`repost:${owner}`, 60) || !limiter.take(`repost-ip:${ipKey(ip)}`, 120)) throw new HttpError(429, 'Trop de republications pour le moment : réessaie plus tard.');
   const { rows } = await pool.query(
     `INSERT INTO library_clips (id, owner_key, kind, remix_of, video_id, youtube_id, video_title, visibility, duration_s, quality, file_state, has_poster)
      VALUES ($1, $2, 'repost', $3, $4, $5, $6, 'private', $7, $8, 'archived', FALSE) RETURNING *`,
@@ -315,8 +325,8 @@ export async function repost(id, owner) {
 
 export async function clipRequest(id, owner) {
   const r = await getClip(id, owner);
-  const src = r.kind === 'repost' ? (await pool.query('SELECT * FROM library_clips WHERE id = $1', [r.remix_of])).rows[0] : r;
-  if (!src?.req) throw new HttpError(404, "Les réglages de ce clip ne sont plus disponibles.");
+  const src = r.kind === 'repost' ? await originalOf(r, owner) : r;
+  if (!src.req) throw new HttpError(404, "Les réglages de ce clip ne sont plus disponibles.");
   return { id: src.id, youtube_id: src.youtube_id, req: src.req };
 }
 
@@ -334,7 +344,7 @@ export async function recreate(id, owner, ip) {
   if (stampOf(video) !== r.file_stamp) {
     throw new HttpError(409, "L'interview a été remplacée depuis : ouvre ce clip dans l'éditeur pour le refaire.", { edit: true });
   }
-  await checkDisk(0);
+  await checkDisk(Number(r.size_bytes) || 0);
   await ensureMusic();
   const request = normalizeRequest(r.req, video);
   request.framing = await framingForRequest(video, request);
@@ -367,7 +377,7 @@ async function adoptRender(id, job) {
 
 export async function libraryMaintenance(now = Date.now()) {
   const { rows: expired } = await pool.query(
-    "UPDATE library_clips SET file_state = 'archived', size_bytes = 0, updated_at = now() WHERE file_state = 'active' AND file_expires_at < to_timestamp($1 / 1000.0) RETURNING id",
+    "UPDATE library_clips SET file_state = 'archived', updated_at = now() WHERE file_state = 'active' AND file_expires_at < to_timestamp($1 / 1000.0) RETURNING id",
     [now],
   );
   for (const r of expired) await fs.rm(fileOf(r.id), { force: true });
@@ -441,7 +451,7 @@ export async function adminSetOwnerHidden(owner, hidden) {
 }
 
 export async function adminArchive(id) {
-  const { rows } = await pool.query("UPDATE library_clips SET file_state = 'archived', size_bytes = 0, updated_at = now() WHERE id = $1 AND kind = 'clip' RETURNING id", [validId(id)]);
+  const { rows } = await pool.query("UPDATE library_clips SET file_state = 'archived', updated_at = now() WHERE id = $1 AND kind = 'clip' RETURNING id", [validId(id)]);
   if (!rows[0]) throw new HttpError(404, 'Clip introuvable.');
   await fs.rm(fileOf(rows[0].id), { force: true });
 }

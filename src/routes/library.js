@@ -60,7 +60,7 @@ libraryRouter.get(
   ah(async (req, res) => {
     const r = await getClip(req.params.id, req.owner?.key);
     const clip = present(r, req.owner?.key);
-    if (r.kind === 'repost') clip.original = present(await mediaClip(r.id, req.owner?.key), req.owner?.key);
+    if (r.kind === 'repost') clip.original = await mediaClip(r.id, req.owner?.key).then((o) => present(o, req.owner?.key), () => null);
     res.set('Cache-Control', 'no-store');
     res.json(clip);
   }),
@@ -140,7 +140,7 @@ libraryRouter.post(
   '/clips/:id/repost',
   requireOwner,
   ah(async (req, res) => {
-    res.status(201).json(await repost(req.params.id, req.owner.key));
+    res.status(201).json(await repost(req.params.id, req.owner.key, req.ip));
   }),
 );
 
@@ -148,7 +148,7 @@ libraryRouter.put(
   '/clips/:id/rating',
   requireOwner,
   ah(async (req, res) => {
-    res.json(await rate(req.params.id, req.owner.key, req.body?.stars ?? 0));
+    res.json(await rate(req.params.id, req.owner.key, req.body?.stars ?? 0, req.ip));
   }),
 );
 
@@ -156,7 +156,7 @@ libraryRouter.delete(
   '/clips/:id/rating',
   requireOwner,
   ah(async (req, res) => {
-    res.json(await rate(req.params.id, req.owner.key, null));
+    res.json(await rate(req.params.id, req.owner.key, null, req.ip));
   }),
 );
 
@@ -165,7 +165,7 @@ libraryRouter.post(
   '/clips/:id/report',
   requireOwner,
   ah(async (req, res) => {
-    await report(req.params.id, req.owner.key, req.body?.reason);
+    await report(req.params.id, req.owner.key, req.body?.reason, req.ip);
     res.status(204).end();
   }),
 );

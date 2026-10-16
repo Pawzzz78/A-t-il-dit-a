@@ -236,4 +236,5 @@ CREATE TABLE IF NOT EXISTS library_reports (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (clip_id, owner_key)
 );
+ALTER TABLE library_reports ADD COLUMN IF NOT EXISTS visitor TEXT;
 CREATE TABLE IF NOT EXISTS library_hidden_owners (owner_key TEXT PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT now());

@@ -41,7 +41,7 @@ function card(c) {
   const m = media(c);
   const chips = [];
   if (state.tab === 'mine') {
-    if (c.kind === 'repost') chips.push('Republié');
+    if (c.kind === 'repost') chips.push(c.original ? 'Republié' : 'Original retiré');
     else chips.push(c.visibility === 'public' ? 'Public' : 'Privé');
     if (c.hidden) chips.push('Masqué');
   }
@@ -244,6 +244,14 @@ function renderDialog() {
       }) }, 'Recréer la vidéo') : null);
   if (m.file_state === 'pending') pollPending(c.id);
   const mine = c.mine && c.kind === 'clip';
+  if (c.kind === 'repost' && !c.original) {
+    $('dialog-body').replaceChildren(
+      el('h2', { id: 'dialog-title' }, c.video_title || 'Clip'),
+      el('p', { class: 'dialog-text' }, 'L’original de ce clip a été retiré ou rendu privé par son auteur.'),
+      el('button', { class: 'btn secondary small', type: 'button', onclick: () => act(msg, async () => { await api('DELETE', `/clips/${c.id}`); dialog.close(); load(); }) }, 'Retirer de mes clips'),
+      msg);
+    return;
+  }
   $('dialog-body').replaceChildren(...[
     el('h2', { id: 'dialog-title' }, m.video_title || 'Clip'),
     el('p', { class: 'dialog-text' }, src),

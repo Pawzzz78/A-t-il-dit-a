@@ -18,9 +18,9 @@ const keyOf = (seed) => hmac(`owner|${seed}`).slice(0, 32);
 
 function readToken(req) {
   const [token, mac] = String(parseCookies(req.headers.cookie)[OWNER_COOKIE] ?? '').split('.');
-  if (!token || !mac || !/^[A-Za-z0-9_-]{22,64}$/.test(token)) return null;
+  if (!token || !/^[0-9a-f]{32}$/.test(mac ?? '') || !/^[A-Za-z0-9_-]{22,64}$/.test(token)) return null;
   const expected = hmac(`cookie|${token}`).slice(0, 32);
-  return mac.length === expected.length && crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected)) ? token : null;
+  return crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected)) ? token : null;
 }
 
 export function ownerOf(req) {

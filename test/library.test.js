@@ -26,13 +26,13 @@ let studio;
 let lib;
 let routes;
 
-const browser = () => {
+const browser = (ip = null) => {
   const jar = new Map();
   const call = async (method, p, body, headers = {}) => {
     const cookie = [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
     const res = await fetch(base + p, {
       method,
-      headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}), ...headers },
+      headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}), ...(ip ? { 'X-Forwarded-For': ip } : {}), ...headers },
       body: body ? JSON.stringify(body) : undefined,
     });
     for (const c of res.headers.getSetCookie()) {
@@ -130,6 +130,9 @@ test('propriétaire : aucun cookie à la lecture, cookie posé au rendu, publica
   const forged = browser();
   forged.jar.set('own', 'a'.repeat(24) + '.' + 'b'.repeat(32));
   assert.equal((await forged.call('POST', '/api/library/clips', { job_id: job })).status, 403);
+  const odd = browser();
+  odd.jar.set('own', `${'a'.repeat(24)}.${'%C3%A9'.repeat(32)}`);
+  assert.equal((await odd.call('GET', '/api/library/mine')).status, 200, 'cookie illisible : ignoré, pas d’erreur 500');
   const pub = await alice.call('POST', '/api/library/clips', { job_id: job });
   assert.equal(pub.status, 201);
   assert.equal(pub.body.mine, true);
@@ -208,7 +211,10 @@ test('signalements : toujours 204, masquage automatique au-delà du seuil', { sk
   assert.equal((await one.call('POST', `/api/library/clips/${clip.id}/report`, { reason: 'test' })).status, 204);
   assert.equal((await one.call('POST', `/api/library/clips/${clip.id}/report`, { reason: 'encore' })).status, 204);
   assert.equal((await browser().call('GET', '/api/library')).body.total, 1, 'un même visiteur ne compte qu’une fois');
-  const two = browser();
+  const sameNet = browser();
+  await sameNet.call('POST', `/api/library/clips/${clip.id}/report`, {});
+  assert.equal((await browser().call('GET', '/api/library')).body.total, 1, 'un nouveau cookie sur la même connexion ne compte pas');
+  const two = browser('10.0.0.2');
   assert.equal((await two.call('POST', `/api/library/clips/${'f'.repeat(24)}/report`, {})).status, 204);
   await two.call('POST', `/api/library/clips/${clip.id}/report`, {});
   assert.equal((await browser().call('GET', '/api/library')).body.total, 0);
@@ -230,6 +236,13 @@ test('republication : dans « Mes clips » seulement, fichier de l’original, r
   const req = await bob.call('GET', `/api/library/clips/${rp.body.id}/request`);
   assert.equal(req.body.id, clip.id);
   assert.equal(req.body.req.edits['1000'], 'Texte corrigé');
+  await alice.call('PATCH', `/api/library/clips/${clip.id}`, { visibility: 'private' });
+  assert.equal((await bob.call('GET', `/api/library/clips/${rp.body.id}/file`)).status, 404, 'original privé : plus servi');
+  assert.equal((await bob.call('GET', `/api/library/clips/${rp.body.id}/request`)).status, 404);
+  const gone = await bob.call('GET', `/api/library/clips/${rp.body.id}`);
+  assert.deepEqual([gone.status, gone.body.original], [200, null], 'la republication reste ouvrable pour être retirée');
+  assert.equal((await bob.call('GET', '/api/library/mine')).body.clips[0].original, null);
+  await alice.call('PATCH', `/api/library/clips/${clip.id}`, { visibility: 'public' });
   assert.equal((await alice.call('DELETE', `/api/library/clips/${clip.id}`)).status, 204);
   assert.equal((await bob.call('GET', '/api/library/mine')).body.clips.length, 0);
   await assert.rejects(fs.stat(path.join(process.env.STORAGE_DIR, 'library', `${clip.id}.mp4`)));
