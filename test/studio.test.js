@@ -744,6 +744,8 @@ test('statistiques : API de l\'admin protégée, chiffres par période, courbe e
   const s = await res.json();
   assert.deepEqual([s.periods.today.created, s.periods.today.downloaded, s.periods.today.shared], [3, 2, 1]);
   assert.equal(s.periods.today.people_downloaded, 2); // v0 et v1 (v0 a téléchargé et partagé : une personne)
+  assert.equal(s.periods.today.retrieved, 3); // clips distincts téléchargés ou partagés
+  assert.ok(s.periods.today.retrieved <= s.periods.today.created);
   assert.equal(s.periods.d7.created, 3);
   assert.equal(s.periods.d30.created, 4); // le clip de il y a 20 jours entre dans les 30 jours
   assert.equal(s.periods.d30.people_downloaded, 3);

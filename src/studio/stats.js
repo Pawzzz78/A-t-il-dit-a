@@ -57,6 +57,7 @@ export async function studioStats() {
         `SELECT count(*) FILTER (WHERE kind = 'render')::int AS created,
                 count(*) FILTER (WHERE kind = 'download')::int AS downloaded,
                 count(*) FILTER (WHERE kind = 'share')::int AS shared,
+                count(DISTINCT job_id) FILTER (WHERE kind IN ('download', 'share'))::int AS retrieved,
                 count(DISTINCT visitor) FILTER (WHERE kind IN ('download', 'share'))::int AS people_downloaded,
                 count(DISTINCT visitor) FILTER (WHERE kind = 'render')::int AS people_created
          FROM studio_events WHERE ${where}`,
@@ -68,7 +69,8 @@ export async function studioStats() {
     `SELECT to_char(d::date, 'YYYY-MM-DD') AS day,
             count(e.*) FILTER (WHERE e.kind = 'render')::int AS created,
             count(e.*) FILTER (WHERE e.kind = 'download')::int AS downloaded,
-            count(e.*) FILTER (WHERE e.kind = 'share')::int AS shared
+            count(e.*) FILTER (WHERE e.kind = 'share')::int AS shared,
+            count(DISTINCT e.job_id) FILTER (WHERE e.kind IN ('download', 'share'))::int AS retrieved
      FROM generate_series((now() AT TIME ZONE 'Europe/Paris')::date - 13, (now() AT TIME ZONE 'Europe/Paris')::date, interval '1 day') d
      LEFT JOIN studio_events e ON (e.created_at AT TIME ZONE 'Europe/Paris')::date = d::date
      GROUP BY d ORDER BY d`,
@@ -76,7 +78,8 @@ export async function studioStats() {
   const { rows: videos } = await pool.query(
     `SELECT e.youtube_id, max(v.title) AS title,
             count(*) FILTER (WHERE e.kind = 'render')::int AS created,
-            count(*) FILTER (WHERE e.kind IN ('download', 'share'))::int AS downloaded
+            count(*) FILTER (WHERE e.kind IN ('download', 'share'))::int AS downloaded,
+            count(DISTINCT e.job_id) FILTER (WHERE e.kind IN ('download', 'share'))::int AS retrieved
      FROM studio_events e LEFT JOIN videos v ON v.youtube_id = e.youtube_id
      WHERE e.youtube_id IS NOT NULL GROUP BY e.youtube_id ORDER BY downloaded DESC, created DESC LIMIT 10`,
   );
