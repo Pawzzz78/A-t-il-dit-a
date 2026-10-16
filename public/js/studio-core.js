@@ -657,3 +657,24 @@ export function wordNear(words, t) {
   for (const w of words) if (!best || Math.abs(w.start - t) < Math.abs(best.start - t)) best = w;
   return best && Math.abs(best.start - t) < 1.5 ? best.text.replace(/[^\p{L}\p{N}'’-]+$/gu, '') : '';
 }
+
+// Library clip settings -> editor draft (localStorage v:1 format), for « Modifier »
+export function draftFromClip(req, remixOf = null) {
+  const r = req && typeof req === 'object' ? req : {};
+  const l = r.layout ?? {};
+  const zoom = r.zoom && Array.isArray(r.zoom.events) && r.zoom.events.length ? r.zoom : null;
+  return {
+    v: 1,
+    extracts: (Array.isArray(r.extracts) ? r.extracts : []).map((e) => ({ start_ms: e.start_ms, end_ms: e.end_ms, title: null, from: null, caption: null })),
+    style: r.style ?? null,
+    music: r.music ? { id: r.music.id, volume: r.music.volume } : { id: null },
+    voice: r.voice,
+    layout: { fit: l.fit, cropX: l.cropX, quality: l.quality, mirror: l.mirror === true, follow: { on: l.follow?.on === true, subject: l.follow?.subject } },
+    zoom: zoom ? { on: true, auto: false, strength: zoom.strength, focus: zoom.focus, events: zoom.events } : { on: false },
+    broll: (Array.isArray(r.broll) ? r.broll : []).map((b) => ({ id: String(b.id), start: b.start, dur: b.dur, thumb: `/api/studio/stock/image/${encodeURIComponent(b.id)}` })),
+    edits: r.edits && typeof r.edits === 'object' && !Array.isArray(r.edits) ? r.edits : {},
+    jobId: null,
+    delivered: false,
+    remixOf,
+  };
+}

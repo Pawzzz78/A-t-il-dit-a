@@ -26,6 +26,7 @@ import {
   zoomWindows,
   sourceText,
   fitDescription,
+  draftFromClip,
   DESCRIPTION_MAX,
   buildAss,
   fitScale,
@@ -446,4 +447,29 @@ test('mots creux : écartés du palmarès, mots de fond conservés', () => {
   for (const w of ['politique', 'energie', 'liberte', 'ecole', 'impots', 'milliards', 'securite', 'immigration', 'maire', 'france', 'francais', 'droite', 'gauche', 'entreprises', 'depense']) {
     assert.ok(!isStopWord(w), `${w} doit rester`);
   }
+});
+
+test('draftFromClip : réglages d’un clip de la bibliothèque -> brouillon de l’éditeur', () => {
+  const req = {
+    extracts: [{ start_ms: 1000, end_ms: 5000 }],
+    layout: { fit: 'crop', cropX: 0.3, quality: 'fast', mirror: true, follow: { on: true, subject: 'lisnard' } },
+    style: { preset: 'hormozi' },
+    music: { id: 'lofi-doux', volume: 0.3 },
+    voice: 1.2,
+    zoom: { strength: 1.2, focus: { x: 0.5, y: 0.4 }, events: [{ t: 1, kind: 'in' }] },
+    broll: [{ id: '123', start: 0.5, dur: 2 }],
+    edits: { 1000: 'Corrigé' },
+  };
+  const d = draftFromClip(req, 'a'.repeat(24));
+  assert.equal(d.v, 1);
+  assert.deepEqual(d.extracts, [{ start_ms: 1000, end_ms: 5000, title: null, from: null, caption: null }]);
+  assert.deepEqual(d.layout, req.layout);
+  assert.deepEqual(d.music, { id: 'lofi-doux', volume: 0.3 });
+  assert.equal(d.zoom.on, true);
+  assert.equal(d.broll[0].thumb, '/api/studio/stock/image/123');
+  assert.deepEqual(d.edits, { 1000: 'Corrigé' });
+  assert.equal(d.remixOf, 'a'.repeat(24));
+  assert.deepEqual([d.jobId, d.delivered], [null, false]);
+  const empty = draftFromClip(null);
+  assert.deepEqual([empty.extracts, empty.music, empty.zoom.on, empty.edits], [[], { id: null }, false, {}]);
 });
