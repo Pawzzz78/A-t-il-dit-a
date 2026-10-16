@@ -32,8 +32,13 @@ let net; // détecteur partagé par les tests de bout en bout
 
 const call = async (method, p, body) => {
   const res = await fetch(base + p, { method, headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}) }, body: body ? JSON.stringify(body) : undefined });
-  const set = res.headers.get('set-cookie');
-  if (set) cookie = set.split(';')[0];
+  // Keep every cookie by name: the studio also sets the library owner cookie
+  for (const c of res.headers.getSetCookie()) {
+    const [kv] = c.split(';');
+    const jar = new Map(cookie ? cookie.split('; ').map((x) => [x.split('=')[0], x]) : []);
+    jar.set(kv.split('=')[0], kv);
+    cookie = [...jar.values()].join('; ');
+  }
   return { status: res.status, body: await res.json().catch(() => null) };
 };
 const waitFor = async (fn, ms = 90_000) => {

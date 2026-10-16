@@ -11,7 +11,7 @@ import { existsSync } from 'node:fs';
 import { Worker } from 'node:worker_threads';
 import { pool } from '../db.js';
 import { HttpError } from '../http-error.js';
-import { videoFilePath } from '../media.js';
+import { stampOf, videoFilePath } from '../media.js';
 import { FRAMING, framingForClip } from '../../public/js/framing.js';
 import { IDENT_ALGO } from './identity.js';
 import { referenceSet } from './references.js';
@@ -28,7 +28,6 @@ const MODEL = new URL('./models/face_detection_yunet_2023mar.onnx', import.meta.
 /** Le cadrage automatique est disponible (STUDIO_FACES=off pour le couper). */
 export const facesEnabled = () => process.env.STUDIO_FACES !== 'off' && existsSync(MODEL);
 
-const stampOf = (video) => `${video.file_name}|${video.file_size}|${video.file_uploaded_at instanceof Date ? video.file_uploaded_at.toISOString() : video.file_uploaded_at}`;
 
 const live = new Map(); // videoId → { status: 'queued' | 'running', progress, phase, kind }
 const queue = [];

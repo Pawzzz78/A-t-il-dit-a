@@ -18,8 +18,8 @@ import { cropXExpr } from '../../public/js/framing.js';
 import { findTrack } from './music.js';
 import { purgeVisitors } from './stats.js';
 import { HttpError } from '../http-error.js';
-import { ipKey, trimMap } from '../ip.js';
-import { storageDir, videoFilePath } from '../media.js';
+import { createLimiter, ipKey } from '../ip.js';
+import { stampOf, storageDir, videoFilePath } from '../media.js';
 
 const read = (name) => JSON.parse(readFileSync(new URL(`./${name}`, import.meta.url), 'utf8'));
 export const FONTS = read('fonts.json');
@@ -321,21 +321,8 @@ function runFfmpeg(args, total, { onProgress, timeoutMs }) {
 
 // --- limites par visiteur ---------------------------------------------------------------------------
 
-const recent = new Map(); // `${kind}:${ipKey}` -> horodatages
-function take(kind, ip, max) {
-  const key = `${kind}:${ipKey(ip)}`;
-  const now = Date.now();
-  const list = (recent.get(key) ?? []).filter((t) => now - t < 3600_000);
-  recent.delete(key);
-  if (list.length >= max) {
-    recent.set(key, list);
-    return false;
-  }
-  list.push(now);
-  recent.set(key, list);
-  trimMap(recent, 5000, (l) => !l.length || now - l[l.length - 1] >= 3600_000);
-  return true;
-}
+const limiter = createLimiter();
+const take = (kind, ip, max) => limiter.take(`${kind}:${ipKey(ip)}`, max);
 
 // Auto-framing is called on every extract change, hence a generous limit
 export const framingAllowed = (ip) => take('framing', ip, config().framingPerHour);
@@ -434,7 +421,7 @@ export function publicJob(job) {
 export const getJob = (id) => (/^[0-9a-f]{24}$/.test(id) ? jobs.get(id) : undefined);
 
 /** Met un rendu en file. `video` : ligne de la base ; `lines` : lignes de la transcription ; renvoie le job. */
-export async function enqueueRender({ video, req, lines, ip: rawIp = 'local' }) {
+export async function enqueueRender({ video, req, lines, ip: rawIp = 'local', owner = null, onDone = null }) {
   const cfg = config();
   const ip = ipKey(rawIp);
   const mine = [...jobs.values()].filter((j) => j.ip === ip && (j.status === 'queued' || j.status === 'running')).length;
@@ -446,7 +433,10 @@ export async function enqueueRender({ video, req, lines, ip: rawIp = 'local' }) 
   const job = {
     id,
     ip,
+    owner,
+    onDone,
     youtube_id: video.youtube_id,
+    video: { id: video.id, title: video.title, stamp: stampOf(video), text_hash: video.text_hash ?? null },
     status: 'queued',
     progress: 0,
     total: req.total,
@@ -507,6 +497,7 @@ async function runJob(job) {
     await fs.rm(job.assPath, { force: true });
     delete job.lines;
   }
+  if (job.onDone) await job.onDone(job).catch((e) => console.error(`Rendu ${job.id} (suite) : ${e.message}`));
 }
 
 /** Annule un rendu en file ou en cours, ou supprime un rendu terminé. */
@@ -558,5 +549,5 @@ export function startStudioCleanup() {
 export function resetStudioState() {
   jobs.clear();
   queue.length = 0;
-  recent.clear();
+  limiter.clear();
 }
