@@ -231,7 +231,17 @@ export const wallBusy = () => (running ? { trigger: running.trigger, started_at:
 /** Attend la fin de l'actualisation en cours (tests). */
 export const wallIdle = () => running?.promise.catch(() => {}) ?? Promise.resolve();
 
-export const lastRun = () => getSetting('wall_last_run', null);
+const STALE_RUNNING_MS = 30 * 60_000;
+/** Dernière exécution ; un « running » de plus de 30 min sans actualisation active est une exécution interrompue. */
+export async function lastRun() {
+  const last = await getSetting('wall_last_run', null);
+  if (last?.status === 'running' && !running && Date.now() - Date.parse(last.started_at) > STALE_RUNNING_MS) {
+    return { ...last, status: 'failed', finished_at: last.started_at, error: 'Actualisation interrompue.' };
+  }
+  return last;
+}
+/** Date de la dernière actualisation réussie (jamais celle d'un échec). */
+export const lastOkAt = () => getSetting('wall_last_ok', null);
 
 /**
  * Lance une actualisation en arrière-plan. Renvoie { started: true } ou { started: false, reason } (déjà en cours, pas de jeton, trop tôt).
@@ -290,6 +300,7 @@ async function doRefresh(cfg, { trigger, startedAt, fetchImpl }) {
     const sample = items.find((x) => x && typeof x === 'object');
     const done = { ...record, status: 'ok', finished_at: new Date().toISOString(), received: items.length, kept: clips.length, added, skipped, covers, sample_keys: sample ? Object.keys(sample).slice(0, 40) : [], cost_usd: Number.isFinite(apifyRun.usageTotalUsd) ? apifyRun.usageTotalUsd : null };
     await setSetting('wall_last_run', done);
+    await setSetting('wall_last_ok', done.finished_at);
     return done;
   } catch (e) {
     console.error(`mur : ${e.message}`);
@@ -300,9 +311,9 @@ async function doRefresh(cfg, { trigger, startedAt, fetchImpl }) {
 
 /** L'actualisation planifiée est-elle due ? (jamais faite, ou la dernière réussie date de plus de `hours` heures, ou la dernière a échoué il y a plus d'une heure) */
 export function refreshDue(last, hours, now = Date.now()) {
-  if (!hours) return false;
+  if (!hours) return false; // 0 : seulement à la demande
   if (!last) return true;
-  if (last.status === 'running') return now - Date.parse(last.started_at) > 30 * 60_000; // exécution restée « en cours » après un redémarrage du serveur
+  if (last.status === 'running') return now - Date.parse(last.started_at) > STALE_RUNNING_MS; // restée « en cours » après un redémarrage
   const at = Date.parse(last.finished_at ?? last.started_at);
   return now - at >= (last.status === 'ok' ? hours * 3_600_000 : 3_600_000);
 }

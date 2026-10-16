@@ -1,7 +1,7 @@
 /** Mur des clips (public) : classement des TikToks du hashtag suivi, lu dans la base ; vignettes copiées sur le serveur. */
 import { Router } from 'express';
 import { HttpError, ah, jsonErrors } from '../http-error.js';
-import { PERIODS, SORTS, coverPath, lastRun, listWall, wallConfig } from '../wall/wall.js';
+import { PERIODS, SORTS, coverPath, lastOkAt, lastRun, listWall, wallConfig } from '../wall/wall.js';
 
 export const wallRouter = Router();
 
@@ -14,7 +14,7 @@ wallRouter.get(
     const period = String(req.query.period ?? 'all');
     if (!Object.hasOwn(SORTS, sort)) throw new HttpError(400, 'Classement inconnu.');
     if (!Object.hasOwn(PERIODS, period)) throw new HttpError(400, 'Période inconnue.');
-    const [list, last] = await Promise.all([listWall({ sort, period, limit: req.query.limit, offset: req.query.offset }), lastRun()]);
+    const [list, last, okAt] = await Promise.all([listWall({ sort, period, limit: req.query.limit, offset: req.query.offset }), lastRun(), lastOkAt()]);
     res.set('Cache-Control', 'public, max-age=60');
     res.json({
       ...list,
@@ -23,7 +23,8 @@ wallRouter.get(
       hashtag: cfg.hashtag,
       max: cfg.max,
       weights: { views: cfg.weights[0], likes: cfg.weights[1], comments: cfg.weights[2] },
-      updated_at: last?.status === 'ok' ? last.finished_at : (last?.finished_at ?? null),
+      updated_at: last?.status === 'ok' ? last.finished_at : (okAt ?? null),
+      last_status: last?.status ?? null,
       enabled: cfg.enabled,
     });
   }),
