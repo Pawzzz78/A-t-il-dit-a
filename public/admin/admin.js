@@ -18,7 +18,11 @@ function h(tag, props = {}, ...children) {
   return el;
 }
 
-class AuthError extends Error {}
+class AuthError extends Error {
+  constructor(message = 'Session expirée : reconnecte-toi.') {
+    super(message);
+  }
+}
 
 async function api(method, path, body) {
   const res = await fetch(`/api/admin${path}`, {
@@ -60,6 +64,13 @@ const fmtDuration = (sec) => {
   return h ? `${h} h ${String(m).padStart(2, '0')}` : `${m} min`;
 };
 
+/** Duration in plain French: 150 -> "2 min 30", 600 -> "10 min". */
+const fmtSpan = (sec) => {
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return m ? `${m} min${s ? ` ${String(s).padStart(2, '0')}` : ''}` : `${s} s`;
+};
+
 const fmtDate = (d) => {
   if (!d) return '—';
   const [y, m, day] = d.slice(0, 10).split('-').map(Number);
@@ -69,6 +80,98 @@ const fmtDate = (d) => {
 function status(el, msg, kind = '') {
   el.textContent = msg;
   el.className = `status ${kind}`;
+}
+
+/** Shows an error next to a control; an expired session goes to the login screen instead. */
+function fail(e, el) {
+  if (e instanceof AuthError) return renderLogin();
+  status(el, e.message, 'err');
+}
+
+// Safety net: an expired session in any event handler leads to the login screen, never a silent failure
+window.addEventListener('unhandledrejection', (ev) => {
+  if (ev.reason instanceof AuthError) {
+    ev.preventDefault();
+    renderLogin();
+  }
+});
+
+/** Disables the control and shows a waiting label while fn runs, so an action cannot be fired twice. */
+async function busy(btn, fn) {
+  if (btn.disabled) return undefined;
+  const isInput = btn.tagName === 'INPUT';
+  const label = btn.textContent;
+  btn.disabled = true;
+  if (!isInput) btn.textContent = '… en cours';
+  try {
+    return await fn();
+  } finally {
+    if (btn.isConnected) {
+      btn.disabled = false;
+      if (!isInput) btn.textContent = label;
+    }
+  }
+}
+
+let toastEl = null;
+let toastTimer = 0;
+/** Floating message (role=status) that survives page redraws; an optional action button (undo). */
+function toast(text, kind = 'ok', actionLabel, onAction) {
+  toastEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status' }));
+  clearTimeout(toastTimer);
+  toastEl.className = `toast ${kind}`;
+  toastEl.replaceChildren(
+    text,
+    actionLabel
+      ? h('button', { type: 'button', class: 'btn secondary small', onclick: () => { toastEl.hidden = true; onAction(); } }, actionLabel)
+      : null,
+  );
+  toastEl.hidden = false;
+  toastTimer = setTimeout(() => (toastEl.hidden = true), actionLabel ? 10000 : 6000);
+}
+
+/** Login dialog shown over the editor when the session expires: resolves true once signed in again. */
+function reauth() {
+  return new Promise((resolve) => {
+    const msg = h('p', { class: 'status', role: 'status' });
+    const pw = h('input', { type: 'password', autocomplete: 'current-password', required: true });
+    const ok = h('button', { class: 'btn', type: 'submit' }, 'Se reconnecter');
+    const cancel = h('button', { class: 'btn secondary', type: 'button' }, 'Annuler');
+    const dlg = h(
+      'dialog',
+      { class: 'panel reauth', 'aria-labelledby': 'reauth-title' },
+      h(
+        'form',
+        {
+          onsubmit: (ev) => {
+            ev.preventDefault();
+            busy(ok, async () => {
+              try {
+                await api('POST', '/login', { password: pw.value });
+                dlg.close('ok');
+              } catch (err) {
+                status(msg, err.message, 'err');
+                pw.select();
+              }
+            });
+          },
+        },
+        h('h2', { id: 'reauth-title' }, 'Session expirée'),
+        h('p', { class: 'status' }, 'Reconnecte-toi pour enregistrer : tes modifications sont conservées.'),
+        h('label', { class: 'field' }, 'Mot de passe', pw),
+        h('div', { class: 'actions' }, ok, cancel),
+        msg,
+      ),
+    );
+    cancel.addEventListener('click', () => dlg.close('cancel'));
+    dlg.addEventListener('close', () => {
+      dlg.remove();
+      resolve(dlg.returnValue === 'ok');
+    });
+    document.body.append(dlg);
+    dlg.showModal();
+    pw.focus();
+  });
 }
 
 
@@ -121,22 +224,33 @@ function loadYT() {
 
 // --------------------------------------------------------------------- routeur
 
-async function route() {
+function confirmLeave() {
   const ask = dirtyGuard();
-  if (ask && !confirm(typeof ask === 'string' ? ask : 'Des modifications ne sont pas enregistrées. Quitter quand même ?')) {
+  return !ask || confirm(typeof ask === 'string' ? ask : 'Des modifications ne sont pas enregistrées. Quitter quand même ?');
+}
+
+function resetPage() {
+  routeGen++;
+  cleanup();
+  cleanup = () => {};
+  dirtyGuard = () => false;
+}
+
+async function route() {
+  if (!confirmLeave()) {
     // Restore the previous address without firing hashchange (history.back() would ask again)
     history.replaceState(null, '', `${location.pathname}${location.search}${lastHash}`);
     return;
   }
   lastHash = location.hash;
-  routeGen++;
-  cleanup();
-  cleanup = () => {};
-  dirtyGuard = () => false;
+  resetPage();
+  const gen = routeGen;
   try {
     const me = await api('GET', '/me');
+    if (gen !== routeGen) return;
     if (!me.authenticated) return renderLogin();
     renderNav();
+    $app.replaceChildren(h('p', { class: 'status', role: 'status' }, 'Chargement…'));
     const m = location.hash.match(/^#\/video\/(\d+)/);
     if (m) await renderEditor(Number(m[1]));
     else if (location.hash === '#/sync') await renderSync();
@@ -145,9 +259,16 @@ async function route() {
     else if (location.hash === '#/visages') await renderFaceReferences();
     else if (location.hash === '#/mur') await renderWallAdmin();
     else await renderList();
+    if (gen !== routeGen) return;
+    const title = $app.querySelector('h2, h1');
+    if (title) {
+      title.tabIndex = -1;
+      title.focus({ preventScroll: true });
+    }
   } catch (e) {
+    if (gen !== routeGen) return;
     if (e instanceof AuthError) return renderLogin();
-    $app.replaceChildren(h('p', { class: 'status err' }, e.message));
+    $app.replaceChildren(h('p', { class: 'status err', role: 'alert' }, e.message));
   }
 }
 window.addEventListener('hashchange', route);
@@ -167,11 +288,11 @@ function renderNav() {
         href: '#',
         onclick: async (e) => {
           e.preventDefault();
+          if (!confirmLeave()) return;
           try {
             await api('POST', '/logout', {});
           } catch (err) {
-            alert(err.message);
-            return;
+            if (!(err instanceof AuthError)) return alert(err.message);
           }
           renderLogin();
         },
@@ -184,26 +305,30 @@ function renderNav() {
 // ----------------------------------------------------------------------- login
 
 function renderLogin() {
+  resetPage();
   $nav.replaceChildren();
-  const msg = h('p', { class: 'status' });
+  const msg = h('p', { class: 'status', role: 'status' });
   const pw = h('input', { type: 'password', autocomplete: 'current-password', required: true, autofocus: true });
+  const submit = h('button', { class: 'btn', type: 'submit' }, 'Se connecter');
   const form = h(
     'form',
     {
       class: 'panel login',
-      onsubmit: async (e) => {
+      onsubmit: (e) => {
         e.preventDefault();
-        try {
-          await api('POST', '/login', { password: pw.value });
-          route();
-        } catch (err) {
-          status(msg, err.message, 'err');
-        }
+        busy(submit, async () => {
+          try {
+            await api('POST', '/login', { password: pw.value });
+            route();
+          } catch (err) {
+            status(msg, err.message, 'err');
+          }
+        });
       },
     },
     h('h2', {}, 'Connexion'),
     h('label', { class: 'field' }, 'Mot de passe', pw),
-    h('button', { class: 'btn', type: 'submit' }, 'Se connecter'),
+    submit,
     msg,
   );
   $app.replaceChildren(form);
@@ -257,7 +382,7 @@ async function renderList() {
 }
 
 function addForm(config) {
-  const msg = h('p', { class: 'status' });
+  const msg = h('p', { class: 'status', role: 'status' });
   const url = h('input', { type: 'text', placeholder: 'https://www.youtube.com/watch?v=…', required: true });
   const lang = h('input', { type: 'text', value: 'fr', maxlength: '5' });
   const title = h('input', { type: 'text', placeholder: 'Rempli automatiquement si vide' });
@@ -287,10 +412,10 @@ function addForm(config) {
     'form',
     {
       class: 'panel',
-      onsubmit: async (e) => {
+      onsubmit: (e) => {
         e.preventDefault();
+        busy(submit, async () => {
         const chosen = form.querySelector('input[name=mode]:checked').value;
-        submit.disabled = true;
         status(msg, chosen === 'supadata' ? 'Récupération de la transcription…' : 'Ajout…');
         try {
           const { id } = await api('POST', '/videos', {
@@ -307,10 +432,9 @@ function addForm(config) {
           if (err.status === 409 && err.data?.id) {
             status(msg, 'Déjà ajoutée — ouverture…', 'ok');
             location.hash = `#/video/${err.data.id}`;
-          } else status(msg, err.message, 'err');
-        } finally {
-          submit.disabled = false;
+          } else fail(err, msg);
         }
+        });
       },
     },
     h('h2', {}, 'Ajouter une vidéo'),
@@ -346,7 +470,9 @@ let syncFlash = null; // message affiché après le rechargement de la page
 // --------------------------------------------------------------- statistiques du studio
 
 async function renderStudioStats() {
+  const gen = routeGen;
   const st = await api('GET', '/studio/stats');
+  if (gen !== routeGen) return;
   const periods = [['today', 'Aujourd’hui'], ['d7', '7 jours'], ['d30', '30 jours'], ['all', 'Depuis le début']];
   let current = 'd7';
   const plural = (n, one, many) => (n > 1 ? many : one);
@@ -355,27 +481,29 @@ async function renderStudioStats() {
   const switcher = h('div', { class: 'pills', role: 'group', 'aria-label': 'Période' });
   const draw = () => {
     const p = st.periods[current];
-    const got = p.downloaded + p.shared;
+    const got = p.retrieved ?? p.downloaded + p.shared; // distinct clips when the server provides it
+    const rate = p.created ? Math.min(100, Math.round((got / p.created) * 100)) : null;
+    const capped = p.created > 0 && got > p.created;
     switcher.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.p === current)));
     grid.replaceChildren(
       stat(p.created, plural(p.created, 'clip créé', 'clips créés'), 'Clips dont la création a été lancée'),
       stat(p.downloaded, plural(p.downloaded, 'clip téléchargé', 'clips téléchargés'), 'Clics sur « Télécharger » (un clip compte une fois)'),
       stat(p.shared, plural(p.shared, 'clip partagé', 'clips partagés'), 'Partages depuis le téléphone'),
       stat(p.people_downloaded, plural(p.people_downloaded, 'personne a récupéré son clip', 'personnes ont récupéré leur clip'), 'Personnes distinctes (approximation par connexion) ayant téléchargé ou partagé'),
-      stat(p.created ? `${Math.round((got / p.created) * 100)} %` : '–', 'clips récupérés', 'Part des clips créés qui ont été téléchargés ou partagés'),
+      stat(rate == null ? '–' : `${rate} %`, capped ? 'clips récupérés (plafonné à 100 %)' : 'clips récupérés', 'Part des clips créés qui ont été téléchargés ou partagés (100 % au maximum)'),
     );
   };
   for (const [key, label] of periods) switcher.append(h('button', { type: 'button', 'data-p': key, onclick: () => { current = key; draw(); } }, label));
   draw();
 
-  const max = Math.max(1, ...st.daily.map((d) => Math.max(d.created, d.downloaded + d.shared)));
+  const max = Math.max(1, ...st.daily.map((d) => Math.max(d.created, d.retrieved ?? d.downloaded + d.shared)));
   const dayRows = [...st.daily].reverse().map((d) =>
     h('tr', {},
       h('td', {}, fmtDate(d.day)),
       h('td', {}, String(d.created)),
-      h('td', {}, String(d.downloaded + d.shared)),
-      h('td', { class: 'bars' }, h('span', { class: 'bar a', style: `width:${(d.created / max) * 100}%` }), h('span', { class: 'bar b', style: `width:${((d.downloaded + d.shared) / max) * 100}%` }))));
-  const videoRows = st.videos.map((v) => h('tr', {}, h('td', {}, v.title || v.youtube_id), h('td', {}, String(v.created)), h('td', {}, String(v.downloaded))));
+      h('td', {}, String(d.retrieved ?? d.downloaded + d.shared)),
+      h('td', { class: 'bars' }, h('span', { class: 'bar a', style: `width:${(d.created / max) * 100}%` }), h('span', { class: 'bar b', style: `width:${((d.retrieved ?? d.downloaded + d.shared) / max) * 100}%` }))));
+  const videoRows = st.videos.map((v) => h('tr', {}, h('td', {}, v.title || v.youtube_id), h('td', {}, String(v.created)), h('td', {}, String(v.retrieved ?? v.downloaded))));
 
   $app.replaceChildren(
     h('section', { class: 'panel' },
@@ -396,24 +524,46 @@ async function renderStudioStats() {
 }
 
 async function renderMusicLibrary() {
+  const gen = routeGen;
   let data = await api('GET', '/studio/music');
+  if (gen !== routeGen) return;
   const fmtSize = (b) => (b >= 1048576 ? `${(b / 1048576).toFixed(1).replace('.', ',')} Mo` : `${Math.max(1, Math.round(b / 1024))} Ko`);
   const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
   const catSelect = (value, onchange) =>
-    h('select', { onchange }, data.categories.map((c) => h('option', { value: c.id, selected: c.id === value }, c.label)));
+    h('select', { onchange, 'aria-label': 'Catégorie' }, data.categories.map((c) => h('option', { value: c.id, selected: c.id === value }, c.label)));
   const root = h('div');
   const note = h('p', { class: 'status', role: 'status' });
+  let libTitle = null; // refs to the library section, updated in place so other rows keep their edits and audio
+  let libBody = null;
+  let libUl = null;
+  let upXhr = null; // running upload request
 
-  async function mutate(method, path, body, okMsg) {
-    try {
-      data = await api(method, `/studio/music${path}`, body);
-      draw();
-      status(note, okMsg ?? 'Enregistré.', 'ok');
-    } catch (e) {
-      if (e instanceof AuthError) throw e;
-      status(note, e.message, 'err');
-    }
+  // Runs one change through busy(); apply() patches only the affected row. Returns true on success.
+  async function mutate(ctrl, method, path, body, okMsg, apply) {
+    return (
+      (await busy(ctrl, async () => {
+        try {
+          data = await api(method, `/studio/music${path}`, body);
+          apply?.();
+          status(note, okMsg ?? 'Enregistré.', 'ok');
+          return true;
+        } catch (e) {
+          fail(e, note);
+          return false;
+        }
+      })) ?? false
+    );
   }
+
+  const upGuard = (ev) => {
+    ev.preventDefault();
+    ev.returnValue = '';
+  };
+  dirtyGuard = () => (upXhr ? 'Un envoi de musique est en cours : quitter l’interrompra. Quitter quand même ?' : false);
+  cleanup = () => {
+    upXhr?.abort();
+    window.removeEventListener('beforeunload', upGuard);
+  };
 
   // --- ajout
   const file = h('input', { type: 'file', accept: 'audio/*,.mp3,.m4a,.wav,.ogg,.flac,.aac', id: 'mfile' });
@@ -422,12 +572,21 @@ async function renderMusicLibrary() {
   const credit = h('input', { class: 'text', type: 'text', maxlength: '200', placeholder: 'Ex. : Auteur, site (facultatif)', id: 'mcredit' });
   const rights = h('input', { type: 'checkbox', id: 'mrights' });
   const send = h('button', { class: 'btn', type: 'button' }, 'Ajouter à la bibliothèque');
+  const cancelUp = h('button', { class: 'btn secondary small', type: 'button', hidden: true }, 'Annuler l’envoi');
   const upStatus = h('span', { class: 'status', role: 'status' });
+  const endUpload = () => {
+    upXhr = null;
+    send.disabled = false;
+    cancelUp.hidden = true;
+    window.removeEventListener('beforeunload', upGuard);
+  };
+  cancelUp.addEventListener('click', () => upXhr?.abort());
   file.addEventListener('change', () => {
     const f = file.files[0];
     if (f && !title.value) title.value = f.name.replace(/\.[A-Za-z0-9]{2,5}$/, '').replace(/[_-]+/g, ' ').trim().slice(0, 80);
   });
   send.addEventListener('click', () => {
+    if (upXhr) return;
     const f = file.files[0];
     if (!f) return status(upStatus, 'Choisis d’abord un fichier audio.', 'err');
     if (!rights.checked) return status(upStatus, 'Coche la case : tu confirmes avoir le droit d’utiliser ce morceau.', 'err');
@@ -437,58 +596,93 @@ async function renderMusicLibrary() {
     xhr.open('POST', `/api/admin/studio/music?${q}`);
     xhr.withCredentials = true;
     xhr.setRequestHeader('Content-Type', f.type || 'application/octet-stream');
+    upXhr = xhr;
     send.disabled = true;
-    xhr.upload.onprogress = (e) => e.lengthComputable && status(upStatus, e.loaded < e.total ? `Envoi… ${Math.round((e.loaded / e.total) * 100)} %` : 'Conversion et normalisation du volume…');
+    cancelUp.hidden = false;
+    window.addEventListener('beforeunload', upGuard);
+    xhr.upload.onprogress = (ev) => ev.lengthComputable && status(upStatus, ev.loaded < ev.total ? `Envoi… ${Math.round((ev.loaded / ev.total) * 100)} %` : 'Conversion et normalisation du volume…');
     xhr.onload = () => {
-      send.disabled = false;
+      endUpload();
       let body = {};
       try { body = JSON.parse(xhr.responseText); } catch { /* corps vide */ }
-      if (xhr.status === 401) return route();
+      if (xhr.status === 401) return renderLogin();
       if (xhr.status >= 400) return status(upStatus, body.error || `Erreur ${xhr.status}`, 'err');
       data = body;
       file.value = ''; title.value = ''; credit.value = ''; rights.checked = false;
-      draw();
+      const fresh = libUl && data.library.find((t) => !libUl.querySelector(`[data-id="${t.id}"]`));
+      if (fresh) {
+        libUl.append(row(fresh, true));
+        libTitle.textContent = `Ma bibliothèque (${data.library.length})`;
+      } else draw();
+      status(upStatus, '');
       status(note, 'Morceau ajouté : il est disponible dans le studio.', 'ok');
     };
-    xhr.onerror = () => { send.disabled = false; status(upStatus, 'Envoi interrompu. Réessaie.', 'err'); };
+    xhr.onerror = () => { endUpload(); status(upStatus, 'Envoi interrompu. Réessaie.', 'err'); };
+    xhr.onabort = () => { endUpload(); status(upStatus, 'Envoi annulé.'); };
     status(upStatus, 'Envoi…');
     xhr.send(f);
   });
+
+  const emptyLib = () => h('p', { class: 'status' }, 'Aucun morceau ajouté pour le moment. Pour des musiques motivantes, épiques ou cinématiques libres de droits, regarde la bibliothèque audio de YouTube Studio, Pixabay Music, Uppbeat ou Mixkit, puis ajoute ici les fichiers que tu télécharges.');
 
   const row = (t, own) => {
     const src = own ? `/api/admin/studio/music/${t.id}/file` : t.url;
     const meta = [mmss(t.duration_s), t.size_bytes ? fmtSize(t.size_bytes) : '', t.bpm ? `${t.bpm} bpm` : '', t.mood].filter(Boolean).join(' · ');
     const titleInput = h('input', { class: 'text', type: 'text', value: t.title, maxlength: '80', 'aria-label': 'Titre' });
     const creditInput = h('input', { class: 'text', type: 'text', value: t.credit ?? '', maxlength: '200', placeholder: 'Crédit (facultatif)', 'aria-label': 'Crédit' });
-    return h('li', { class: `mrow${t.enabled ? '' : ' off'}`, 'data-id': t.id },
+    const li = h('li', { class: `mrow${t.enabled ? '' : ' off'}`, 'data-id': t.id });
+    const offBadge = h('span', { class: 'badge off-badge', hidden: t.enabled }, 'Masqué');
+    // Patches this row only: other rows keep their unsaved edits and playing audio
+    const patch = (ctrl, body, okMsg) =>
+      mutate(ctrl, 'PATCH', `/${t.id}`, body, okMsg, () => {
+        const nt = [...data.library, ...data.builtin].find((x) => x.id === t.id);
+        if (nt) Object.assign(t, nt);
+        li.classList.toggle('off', !t.enabled);
+        offBadge.hidden = t.enabled;
+      });
+    li.append(
       own ? h('div', { class: 'mfields' }, titleInput, creditInput) : h('div', { class: 'mfields' }, h('strong', {}, t.title)),
-      h('small', { class: 'mmeta' }, meta),
+      h('small', { class: 'mmeta' }, meta, ' ', offBadge),
       h('audio', { controls: true, preload: 'none', src }),
       h('div', { class: 'actions' },
-        own ? catSelect(t.category, (e) => mutate('PATCH', `/${t.id}`, { category: e.target.value })) : h('span', { class: 'badge' }, data.categories.find((c) => c.id === t.category)?.label ?? ''),
-        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: t.enabled, onchange: (e) => mutate('PATCH', `/${t.id}`, { enabled: e.target.checked }, e.target.checked ? 'Morceau visible dans le studio.' : 'Morceau masqué du studio.') }), ' Visible'),
-        own && h('button', { class: 'btn secondary small', type: 'button', onclick: () => { if (titleInput.value !== t.title || creditInput.value !== (t.credit ?? '')) mutate('PATCH', `/${t.id}`, { title: titleInput.value, credit: creditInput.value }); else status(note, 'Aucun changement.'); } }, 'Enregistrer'),
-        own && h('button', { class: 'btn danger small', type: 'button', onclick: () => { if (confirm(`Supprimer « ${t.title} » définitivement ?`)) mutate('DELETE', `/${t.id}`, undefined, 'Morceau supprimé.'); } }, 'Supprimer')));
+        own ? catSelect(t.category, (ev) => patch(ev.target, { category: ev.target.value })) : h('span', { class: 'badge' }, data.categories.find((c) => c.id === t.category)?.label ?? ''),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: t.enabled, onchange: async (ev) => {
+          const box = ev.target;
+          const want = box.checked;
+          if (!(await patch(box, { enabled: want }, want ? 'Morceau visible dans le studio.' : 'Morceau masqué du studio.'))) box.checked = t.enabled;
+        } }), ' Visible'),
+        own && h('button', { class: 'btn secondary small', type: 'button', onclick: (ev) => { if (titleInput.value !== t.title || creditInput.value !== (t.credit ?? '')) patch(ev.currentTarget, { title: titleInput.value, credit: creditInput.value }); else status(note, 'Aucun changement.'); } }, 'Enregistrer'),
+        own && h('button', { class: 'btn danger small', type: 'button', onclick: (ev) => {
+          if (!confirm(`Supprimer « ${t.title} » définitivement ?`)) return;
+          mutate(ev.currentTarget, 'DELETE', `/${t.id}`, undefined, 'Morceau supprimé.', () => {
+            li.remove();
+            libTitle.textContent = `Ma bibliothèque (${data.library.length})`;
+            if (!data.library.length) {
+              libUl = null;
+              libBody.replaceChildren(emptyLib());
+            }
+          });
+        } }, 'Supprimer')));
+    return li;
   };
 
   function draw() {
+    libTitle = h('h2', {}, `Ma bibliothèque (${data.library.length})`);
+    libUl = data.library.length ? h('ul', { class: 'mlist' }, data.library.map((t) => row(t, true))) : null;
+    libBody = h('div', {}, libUl ?? emptyLib());
     root.replaceChildren(
       h('section', { class: 'panel' },
         h('h2', {}, 'Ajouter un morceau'),
-        h('p', { class: 'status' }, `MP3, M4A, WAV, OGG ou FLAC, de ${data.limits.minS} s à ${data.limits.maxS / 60} min, ${Math.round(data.limits.maxBytes / 1048576)} Mo au maximum. Le morceau est converti en MP3 et son volume est égalisé pour que tous sonnent pareil sous la voix (les ${data.limits.keepS / 60} premières minutes sont conservées).`),
+        h('p', { class: 'status' }, `MP3, M4A, WAV, OGG ou FLAC, de ${data.limits.minS} s à ${fmtSpan(data.limits.maxS)}, ${Math.round(data.limits.maxBytes / 1048576)} Mo au maximum. Le morceau est converti en MP3 et son volume est égalisé pour que tous sonnent pareil sous la voix (les ${fmtSpan(data.limits.keepS)} premières minutes sont conservées).`),
         h('div', { class: 'field' }, h('label', { for: 'mfile' }, 'Fichier audio'), file),
         h('div', { class: 'field' }, h('label', { for: 'mtitle' }, 'Titre'), title),
         h('div', { class: 'field' }, h('label', { for: 'mcat' }, 'Catégorie'), category),
         h('div', { class: 'field' }, h('label', { for: 'mcredit' }, 'Crédit à afficher dans la description'), credit,
           h('small', {}, 'Certaines licences (CC BY, bibliothèque audio YouTube…) demandent de citer l’auteur : le crédit est alors ajouté à la description TikTok.')),
         h('label', { class: 'check' }, rights, ' Je confirme avoir le droit d’utiliser ce morceau (licence libre de droits, achetée ou créée par moi).'),
-        h('div', { class: 'actions' }, send, upStatus)),
+        h('div', { class: 'actions' }, send, cancelUp, upStatus)),
       note,
-      h('section', { class: 'panel' },
-        h('h2', {}, `Ma bibliothèque (${data.library.length})`),
-        data.library.length
-          ? h('ul', { class: 'mlist' }, data.library.map((t) => row(t, true)))
-          : h('p', { class: 'status' }, 'Aucun morceau ajouté pour le moment. Pour des musiques motivantes, épiques ou cinématiques libres de droits, regarde la bibliothèque audio de YouTube Studio, Pixabay Music, Uppbeat ou Mixkit, puis ajoute ici les fichiers que tu télécharges.')),
+      h('section', { class: 'panel' }, libTitle, libBody),
       h('section', { class: 'panel' },
         h('h2', {}, `Morceaux d’origine (${data.builtin.length})`),
         h('p', { class: 'status' }, 'Créés pour le site, libres de droits. Décoche « Visible » pour retirer un morceau du studio.'),
@@ -500,7 +694,9 @@ async function renderMusicLibrary() {
 }
 
 async function renderFaceReferences() {
+  const gen = routeGen;
   let data = await api('GET', '/faces/references');
+  if (gen !== routeGen) return;
   const root = h('div');
   const note = h('p', { class: 'status', role: 'status' });
   const results = h('ul', { class: 'upload-results' });
@@ -525,10 +721,10 @@ async function renderFaceReferences() {
     }
   }
 
-  sendBtn.addEventListener('click', async () => {
+  sendBtn.addEventListener('click', () => {
     const files = [...(input.files ?? [])];
     if (!files.length) return status(note, 'Choisis d’abord une ou plusieurs photos.', 'err');
-    sendBtn.disabled = true;
+    busy(sendBtn, async () => {
     results.replaceChildren();
     try {
       for (const [i, f] of files.entries()) {
@@ -540,36 +736,35 @@ async function renderFaceReferences() {
       const ok = results.querySelectorAll('li.ok').length;
       status(note, `${ok} photo${ok > 1 ? 's' : ''} ajoutée${ok > 1 ? 's' : ''} sur ${files.length}. Pense à mettre à jour les vidéos déjà analysées.`, ok ? 'ok' : 'err');
     } catch (e) {
-      if (e instanceof AuthError) return route();
-      status(note, e.message, 'err');
-    } finally {
-      sendBtn.disabled = false;
+      fail(e, note);
     }
+    });
   });
 
-  async function remove(r) {
+  async function remove(r, btn) {
     if (!confirm('Retirer cette photo de la liste ?')) return;
-    try {
-      data = await api('DELETE', `/faces/references/${r.id}`);
-      draw();
-      status(note, 'Photo retirée. Pense à mettre à jour les vidéos déjà analysées.', 'ok');
-    } catch (e) {
-      status(note, e.message, 'err');
-    }
+    await busy(btn, async () => {
+      try {
+        data = await api('DELETE', `/faces/references/${r.id}`);
+        draw();
+        status(note, 'Photo retirée. Pense à mettre à jour les vidéos déjà analysées.', 'ok');
+      } catch (e) {
+        fail(e, note);
+      }
+    });
   }
 
   const updateBtn = h('button', { class: 'btn secondary', type: 'button' }, 'Mettre à jour les vidéos déjà analysées');
-  updateBtn.addEventListener('click', async () => {
-    updateBtn.disabled = true;
-    try {
-      const r = await api('POST', '/faces/identify-all', {});
-      status(note, r.queued ? `Reconnaissance relancée pour ${r.queued} vidéo${r.queued > 1 ? 's' : ''} (en arrière-plan, quelques minutes chacune).` : 'Toutes les vidéos analysées sont déjà à jour.', 'ok');
-    } catch (e) {
-      status(note, e.message, 'err');
-    } finally {
-      updateBtn.disabled = false;
-    }
-  });
+  updateBtn.addEventListener('click', () =>
+    busy(updateBtn, async () => {
+      try {
+        const r = await api('POST', '/faces/identify-all', {});
+        status(note, r.queued ? `Reconnaissance relancée pour ${r.queued} vidéo${r.queued > 1 ? 's' : ''} (en arrière-plan, quelques minutes chacune).` : 'Toutes les vidéos analysées sont déjà à jour.', 'ok');
+      } catch (e) {
+        fail(e, note);
+      }
+    }),
+  );
 
   function draw() {
     const n = data.count;
@@ -594,7 +789,7 @@ async function renderFaceReferences() {
           h('figure', { class: `ref${r.suspicious ? ' suspicious' : ''}` },
             h('img', { src: `/api/admin/faces/references/${r.id}/thumb`, alt: r.name || `Photo ${r.id}`, width: 112, height: 112, loading: 'lazy' }),
             h('figcaption', {}, h('span', { class: 'ref-name', title: r.name }, r.name || `Photo ${r.id}`), r.suspicious ? h('span', { class: 'badge warn' }, 'à vérifier') : null,
-              h('button', { class: 'btn danger small', type: 'button', onclick: () => remove(r) }, 'Retirer'))))),
+              h('button', { class: 'btn danger small', type: 'button', onclick: (ev) => remove(r, ev.currentTarget) }, 'Retirer'))))),
         h('div', { class: 'actions' }, updateBtn),
         h('p', { class: 'status' }, 'Les vidéos analysées plus tard utilisent automatiquement les photos actuelles. Pour celles déjà analysées, ce bouton relance seulement la reconnaissance (pas la détection des visages).')),
     );
@@ -606,6 +801,7 @@ async function renderFaceReferences() {
 async function renderWallAdmin() {
   const gen = routeGen;
   let data = await api('GET', '/wall');
+  if (gen !== routeGen) return;
   const root = h('div');
   const note = h('p', { class: 'status', role: 'status' });
   let timer = 0;
@@ -621,49 +817,55 @@ async function renderWallAdmin() {
     try {
       data = await api('GET', '/wall');
     } catch (e) {
-      if (e instanceof AuthError) return route();
+      if (e instanceof AuthError) return renderLogin();
     }
     if (gen !== routeGen) return; // left the page meanwhile: no redraw, no new timer
     draw();
   }
-  const act = async (fn, okMsg) => {
-    try {
-      await fn();
-      status(note, okMsg, 'ok');
-    } catch (e) {
-      if (e instanceof AuthError) throw e;
-      status(note, e.message, 'err');
-    }
-    await reload();
-  };
+  const act = (btn, fn, okMsg) =>
+    busy(btn, async () => {
+      try {
+        await fn();
+        status(note, okMsg, 'ok');
+      } catch (e) {
+        if (e instanceof AuthError) return renderLogin();
+        status(note, e.message, 'err');
+      }
+      await reload();
+    });
+  const go = (fn, okMsg) => (ev) => act(ev.currentTarget, fn, okMsg);
 
   function draw() {
     clearTimeout(timer);
-    const { config: cfg, last_run: last, counts, busy } = data;
-    const running = Boolean(busy) || last?.status === 'running';
+    const { config: cfg, last_run: last, counts, busy: wallBusy } = data;
+    // The in-memory flag is the truth; a 'running' row older than 30 min is a leftover of a restart
+    const stale = last?.status === 'running' && Date.now() - new Date(last.started_at).getTime() > 30 * 60 * 1000;
+    const running = Boolean(wallBusy) || (last?.status === 'running' && !stale);
     const refreshBtn = h('button', { class: 'btn', type: 'button', disabled: running || !cfg.has_token || !cfg.enabled }, running ? 'Actualisation en cours…' : 'Actualiser maintenant');
-    refreshBtn.addEventListener('click', () => act(() => api('POST', '/wall/refresh', {}), 'Actualisation lancée : elle prend quelques minutes (Apify visite TikTok).'));
+    refreshBtn.addEventListener('click', go(() => api('POST', '/wall/refresh', {}), 'Actualisation lancée : elle prend quelques minutes (Apify visite TikTok).'));
     const perRun = cfg.results * 0.0017;
     const lastText = !last
       ? 'Jamais actualisé.'
       : last.status === 'running'
-        ? `Actualisation en cours depuis ${when(last.started_at)}…`
+        ? stale
+          ? `Une actualisation commencée le ${when(last.started_at)} semble interrompue (redémarrage du serveur ?). Tu peux en lancer une nouvelle.`
+          : `Actualisation en cours depuis ${when(last.started_at)}…`
         : last.status === 'ok'
           ? `Dernière actualisation réussie : ${when(last.finished_at)} (${last.trigger === 'schedule' ? 'automatique' : 'à la demande'}) : ${fmtNum(last.received ?? 0)} vidéos reçues, ${fmtNum(last.kept ?? 0)} retenues, ${fmtNum(last.added ?? 0)} nouvelle${last.added > 1 ? 's' : ''}, ${fmtNum(last.covers ?? 0)} vignette${last.covers > 1 ? 's' : ''} copiée${last.covers > 1 ? 's' : ''}${last.cost_usd != null ? `, coût Apify ${last.cost_usd.toFixed(2).replace('.', ',')} $` : ''}.`
-          : `Dernière tentative en échec (${when(last.finished_at)}) : ${last.error ?? 'erreur inconnue'}`;
+          : `Dernière tentative en échec ou interrompue (${when(last.finished_at ?? last.started_at)}) : ${last.error ?? 'erreur inconnue'}`;
     const skipped = last?.status === 'ok' && last.skipped ? Object.entries(last.skipped).map(([k, v]) => `${v} ${{ ad: 'publicité(s)', hashtag: 'sans le hashtag', error: 'erreur(s) de l’acteur', invalid: 'illisible(s)' }[k] ?? k}`).join(', ') : '';
 
     const clipRow = (c) =>
       h('tr', { class: c.hidden || c.author_hidden ? 'wall-hidden' : '' },
         h('td', {}, c.cover ? h('img', { src: c.cover, alt: '', width: 36, height: 64, loading: 'lazy', class: 'wall-thumb' }) : h('span', { class: 'wall-thumb none' }, '·')),
-        h('td', {}, h('a', { href: c.url, target: '_blank', rel: 'noopener noreferrer' }, `@${c.author}`), h('div', { class: 'status wall-text' }, c.text)),
+        h('td', {}, h('a', { href: c.url, target: '_blank', rel: 'noopener noreferrer' }, `@${c.author}`), c.hidden || c.author_hidden ? h('span', { class: 'badge' }, 'Masqué') : null, h('div', { class: 'status wall-text' }, c.text)),
         h('td', { class: 'num' }, fmtNum(c.views)),
         h('td', { class: 'num' }, fmtNum(c.likes)),
         h('td', { class: 'num' }, fmtNum(c.comments)),
         h('td', { class: 'num' }, h('strong', {}, fmtNum(c.score))),
-        h('td', { class: 'actions' },
-          h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/wall/clips/${c.id}`, { hidden: !c.hidden }), c.hidden ? 'Clip rétabli.' : 'Clip masqué.') }, c.hidden ? 'Rétablir' : 'Masquer'),
-          h('button', { class: 'btn secondary small', type: 'button', title: 'Masque tous les clips de cet auteur', onclick: () => act(() => api('PUT', `/wall/authors/${encodeURIComponent(c.author)}`, { hidden: !c.author_hidden }), c.author_hidden ? 'Auteur rétabli.' : 'Auteur masqué.') }, c.author_hidden ? 'Rétablir l’auteur' : 'Masquer l’auteur')));
+        h('td', {}, h('div', { class: 'actions' },
+          h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('PATCH', `/wall/clips/${c.id}`, { hidden: !c.hidden }), c.hidden ? 'Clip rétabli.' : 'Clip masqué.') }, c.hidden ? 'Rétablir' : 'Masquer'),
+          h('button', { class: 'btn secondary small', type: 'button', title: 'Masque tous les clips de cet auteur', onclick: go(() => api('PUT', `/wall/authors/${encodeURIComponent(c.author)}`, { hidden: !c.author_hidden }), c.author_hidden ? 'Auteur rétabli.' : 'Auteur masqué.') }, c.author_hidden ? 'Rétablir l’auteur' : 'Masquer l’auteur'))));
 
     root.replaceChildren(
       h('section', { class: 'panel' },
@@ -680,7 +882,7 @@ async function renderWallAdmin() {
       note,
       h('section', { class: 'panel' },
         h('h3', {}, `Clips (${fmtNum(counts.total)}, dont ${fmtNum(counts.hidden)} masqué${counts.hidden > 1 ? 's' : ''}, ${fmtNum(counts.covers)} avec vignette)`),
-        data.hidden_authors.length ? h('p', { class: 'status' }, 'Auteurs masqués : ', data.hidden_authors.map((a) => h('button', { class: 'btn secondary small', type: 'button', title: 'Rétablir', onclick: () => act(() => api('PUT', `/wall/authors/${encodeURIComponent(a)}`, { hidden: false }), 'Auteur rétabli.') }, `@${a} ×`))) : null,
+        data.hidden_authors.length ? h('p', { class: 'status' }, 'Auteurs masqués : ', data.hidden_authors.map((a) => h('button', { class: 'btn secondary small', type: 'button', title: 'Rétablir', onclick: go(() => api('PUT', `/wall/authors/${encodeURIComponent(a)}`, { hidden: false }), 'Auteur rétabli.') }, `@${a} ×`))) : null,
         data.clips.length
           ? h('div', { class: 'wall-table-wrap' }, h('table', { class: 'videos wall-table' },
             h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Clip'), h('th', {}, 'Vues'), h('th', {}, 'J’aime'), h('th', {}, 'Comm.'), h('th', {}, 'Score'), h('th', {}, ''))),
