@@ -266,6 +266,7 @@ async function route() {
     else if (location.hash === '#/musique') await renderMusicLibrary();
     else if (location.hash === '#/visages') await renderFaceReferences();
     else if (location.hash === '#/mur') await renderWallAdmin();
+    else if (location.hash === '#/bibliotheque') await renderLibraryAdmin();
     else await renderList();
     if (gen !== routeGen) return;
     const title = $app.querySelector('h2, h1');
@@ -292,6 +293,7 @@ function renderNav() {
     link('#/musique', 'Musique'),
     link('#/visages', 'Reconnaissance'),
     link('#/mur', 'Mur'),
+    link('#/bibliotheque', 'Bibliothèque'),
     h('a', { href: '/' }, 'Voir le site'),
     h(
       'a',
@@ -922,6 +924,84 @@ async function renderWallAdmin() {
         data.clips.length >= 300 ? h('p', { class: 'status' }, 'Les 300 clips les mieux classés sont listés.') : null),
     );
     if (running) timer = setTimeout(reload, 3000);
+  }
+  draw();
+  $app.replaceChildren(root);
+}
+
+async function renderLibraryAdmin() {
+  const gen = routeGen;
+  let filter = 'recent';
+  let data = await api('GET', `/library?filter=${filter}`);
+  if (gen !== routeGen) return;
+  const root = h('div');
+  const note = h('p', { class: 'status', role: 'status' });
+  const fmtNum = (n) => Number(n).toLocaleString('fr-FR');
+  const mb = (n) => `${(n / 1024 / 1024).toFixed(0)} Mo`;
+  const when = (iso) => (iso ? new Date(iso).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
+
+  async function reload() {
+    try {
+      data = await api('GET', `/library?filter=${filter}`);
+    } catch (e) {
+      if (e instanceof AuthError) return renderLogin();
+      return status(note, e.message, 'err');
+    }
+    if (gen !== routeGen) return;
+    draw();
+  }
+  const go = (fn, okMsg, ask) => (ev) => {
+    if (ask && !confirm(ask)) return undefined;
+    return busy(ev.currentTarget, async () => {
+      try {
+        await fn();
+        toast(okMsg, 'ok');
+      } catch (e) {
+        if (e instanceof AuthError) return renderLogin();
+        toast(e.message, 'err');
+      }
+      await reload();
+    });
+  };
+
+  function draw() {
+    const { counts, disk, clips, config: cfg } = data;
+    const row = (c) =>
+      h('tr', { class: c.hidden || c.owner_hidden ? 'wall-hidden' : '' },
+        h('td', {}, c.has_poster ? h('img', { src: `/api/admin/library/clips/${c.id}/poster`, alt: '', width: 36, height: 64, loading: 'lazy', class: 'wall-thumb' }) : h('span', { class: 'wall-thumb none' }, '·')),
+        h('td', {},
+          h('a', { href: `/bibliotheque/?clip=${c.id}`, target: '_blank' }, c.video_title || c.youtube_id),
+          c.visibility === 'private' ? h('span', { class: 'badge' }, 'Privé') : null,
+          c.hidden ? h('span', { class: 'badge' }, 'Masqué') : null,
+          c.owner_hidden ? h('span', { class: 'badge' }, 'Auteur masqué') : null,
+          c.file_state !== 'active' ? h('span', { class: 'badge' }, c.file_state === 'pending' ? 'En création' : 'Archivé') : null,
+          h('div', { class: 'status' }, `${when(c.created_at)} · auteur ${c.owner_short} · ${Math.round(c.duration_s)} s`),
+          c.report_list.length ? h('div', { class: 'status err' }, c.report_list.map((r) => `« ${r.reason || 'sans motif'} »`).join(' · ')) : null),
+        h('td', { class: 'num' }, fmtNum(c.downloads)),
+        h('td', { class: 'num' }, c.rating ? `${String(c.rating).replace('.', ',')} (${c.rating_count})` : '—'),
+        h('td', { class: 'num' }, fmtNum(c.reports)),
+        h('td', {}, h('div', { class: 'actions' },
+          h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('PATCH', `/library/clips/${c.id}`, { hidden: !c.hidden }), c.hidden ? 'Clip rétabli.' : 'Clip masqué.') }, c.hidden ? 'Rétablir' : 'Masquer'),
+          h('button', { class: 'btn secondary small', type: 'button', title: 'Masque tous les clips de cet auteur', onclick: go(() => api('PUT', `/library/owners/${c.owner}`, { hidden: !c.owner_hidden }), c.owner_hidden ? 'Auteur rétabli.' : 'Auteur masqué.') }, c.owner_hidden ? 'Rétablir l’auteur' : 'Masquer l’auteur'),
+          c.reports ? h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('DELETE', `/library/clips/${c.id}/reports`), 'Signalements effacés.') }, 'Effacer les signalements') : null,
+          c.file_state === 'active' ? h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('DELETE', `/library/clips/${c.id}/file`), 'Vidéo archivée.', 'Supprimer la vidéo de ce clip (les réglages restent) ?') }, 'Archiver la vidéo') : null,
+          h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('DELETE', `/library/clips/${c.id}`), 'Clip supprimé.', 'Supprimer définitivement ce clip ?') }, 'Supprimer'))));
+    const filters = [['recent', 'Récents'], ['reported', `Signalés (${counts.reported})`], ['hidden', 'Masqués'], ['archived', 'Archivés']];
+    root.replaceChildren(
+      h('section', { class: 'panel' },
+        h('h2', {}, 'Bibliothèque de clips'),
+        h('p', { class: 'status' }, 'Les clips publiés depuis le studio, publics ou privés. Publication directe : masque un clip ou un auteur pour le retirer de la page publique. ', h('a', { href: '/bibliotheque/', target: '_blank' }, 'Voir la bibliothèque')),
+        h('p', { class: 'status' }, `${fmtNum(counts.clips)} clips (${fmtNum(counts.public)} publics, ${fmtNum(counts.active)} avec vidéo) · ${fmtNum(counts.owners)} auteurs · ${fmtNum(counts.downloads)} téléchargements`),
+        h('p', { class: 'status' }, `Espace utilisé : ${mb(disk.used)} sur ${mb(disk.max)}${disk.free != null ? ` · ${mb(disk.free)} libres sur le volume` : ''} · vidéos gardées ${cfg.retentionDays} jours · ${cfg.maxPerOwner} clips par auteur${cfg.autohideReports ? ` · masquage automatique à ${cfg.autohideReports} signalements` : ''}.`)),
+      note,
+      h('section', { class: 'panel' },
+        h('div', { class: 'actions' }, filters.map(([key, label]) => h('button', { class: key === filter ? 'btn small' : 'btn secondary small', type: 'button', 'aria-pressed': String(key === filter), onclick: () => { filter = key; reload(); } }, label))),
+        clips.length
+          ? h('div', { class: 'wall-table-wrap' }, h('table', { class: 'videos wall-table' },
+            h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Clip'), h('th', {}, 'Téléch.'), h('th', {}, 'Note'), h('th', {}, 'Sign.'), h('th', {}, ''))),
+            h('tbody', {}, clips.map(row))))
+          : h('p', { class: 'status' }, 'Aucun clip ici.')),
+    );
   }
   draw();
   $app.replaceChildren(root);
