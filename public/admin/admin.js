@@ -465,8 +465,6 @@ function addForm(config) {
 
 // ------------------------------------------------------------- synchronisation
 
-let syncFlash = null; // message affiché après le rechargement de la page
-
 // --------------------------------------------------------------- statistiques du studio
 
 async function renderStudioStats() {
@@ -900,22 +898,25 @@ async function renderSync() {
   const gen = routeGen;
   const o = await api('GET', '/sync/overview');
   if (gen !== routeGen) return; // left the page meanwhile: never repaint over another page
-  const msg = h('p', { class: 'status' });
-  if (syncFlash) {
-    status(msg, syncFlash.text, syncFlash.kind);
-    syncFlash = null;
-  }
-  // fn peut renvoyer un texte à afficher une fois la page rechargée
-  const act = async (fn, okMsg) => {
-    try {
-      const result = await fn();
-      const text = typeof result === 'string' ? result : okMsg;
-      if (text) syncFlash = { text, kind: 'ok' };
-      await renderSync();
-    } catch (e) {
-      status(msg, e.message, 'err');
-    }
-  };
+  let inFlight = 0; // requests started from this page: the periodic refresh must not redraw under them
+  const counters = {}; // number elements, updated in place by the periodic refresh
+  // fn may return a text to show once the page is reloaded; the result goes to a floating status toast
+  const act = (btn, fn, okMsg) =>
+    busy(btn, async () => {
+      inFlight++;
+      try {
+        const result = await fn();
+        const text = typeof result === 'string' ? result : okMsg;
+        await renderSync();
+        if (text) toast(text, 'ok');
+      } catch (e) {
+        if (e instanceof AuthError) renderLogin();
+        else toast(e.message, 'err');
+      } finally {
+        inFlight--;
+      }
+    });
+  const go = (fn, okMsg) => (ev) => act(ev.currentTarget, fn, okMsg);
 
   const plural = (n, one, many) => (n > 1 ? many : one);
   /** Aperçu puis, après confirmation, suppression des Shorts déjà importés d'une chaîne. */
@@ -942,10 +943,14 @@ async function renderSync() {
     return `${r.removed} Short${plural(r.removed, '', 's')} supprimé${plural(r.removed, '', 's')}. Ils ne seront plus importés.`;
   };
   const when = (d) => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '—');
-  const keyLine = (ok, name, help) =>
-    h('li', {}, ok ? '✅ ' : '❌ ', h('strong', {}, name), ok ? ' configurée' : ` manquante — ${help}`);
+  const keyLine = (ok, label, envName, help) =>
+    h('li', {}, ok ? '✅ ' : '❌ ', h('strong', {}, label), ok ? ' : disponible' : ` : fonction indisponible, à activer par le développeur (${help}). `, ok ? null : h('small', { class: 'tech' }, `variable ${envName}`));
 
-  const stat = (n, label) => h('div', { class: 'stat' }, h('div', { class: 'n' }, String(n)), h('div', { class: 'l' }, label));
+  const stat = (n, label, key) => {
+    const num = h('div', { class: 'n' }, String(n));
+    counters[key] = num;
+    return h('div', { class: 'stat' }, num, h('div', { class: 'l' }, label));
+  };
 
   const state = h(
     'section',
@@ -954,10 +959,10 @@ async function renderSync() {
     h(
       'ul',
       { class: 'checks' },
-      keyLine(o.keys.youtube, 'YOUTUBE_API_KEY', 'nécessaire pour lister les vidéos d’une chaîne (clé « YouTube Data API v3 », gratuite)'),
-      keyLine(o.keys.supadata, 'SUPADATA_API_KEY', 'nécessaire pour récupérer les transcriptions'),
+      keyLine(o.keys.youtube, 'Liste des vidéos d’une chaîne YouTube', 'YOUTUBE_API_KEY', 'nécessaire pour lister les vidéos d’une chaîne'),
+      keyLine(o.keys.supadata, 'Récupération des transcriptions', 'SUPADATA_API_KEY', 'nécessaire pour récupérer les transcriptions'),
     ),
-    h('div', { class: 'stats' }, stat(o.counts.pending, 'en attente'), stat(o.counts.done, 'transcrites auto.'), stat(o.counts.failed, 'en échec'), stat(o.counts.manual, 'ajoutées à la main')),
+    h('div', { class: 'stats' }, stat(o.counts.pending, 'en attente', 'pending'), stat(o.counts.done, 'transcrites auto.', 'done'), stat(o.counts.failed, 'en échec', 'failed'), stat(o.counts.manual, 'ajoutées à la main', 'manual')),
     h(
       'p',
       { class: 'status' },
@@ -984,10 +989,9 @@ async function renderSync() {
       'div',
       { class: 'actions' },
       o.paused
-        ? h('button', { class: 'btn', type: 'button', disabled: !o.keys.supadata, onclick: () => act(() => api('POST', '/sync/resume', {}), 'Traitement démarré.') }, 'Démarrer le traitement')
-        : h('button', { class: 'btn secondary', type: 'button', onclick: () => act(() => api('POST', '/sync/pause', {}), 'Mis en pause.') }, 'Mettre en pause'),
-      !o.paused ? h('button', { class: 'btn secondary', type: 'button', onclick: () => act(() => api('POST', '/sync/run', {}), 'Passe lancée.') }, 'Lancer une passe maintenant') : null,
-      msg,
+        ? h('button', { class: 'btn', type: 'button', disabled: !o.keys.supadata, onclick: go(() => api('POST', '/sync/resume', {}), 'Traitement démarré.') }, 'Démarrer le traitement')
+        : h('button', { class: 'btn secondary', type: 'button', onclick: go(() => api('POST', '/sync/pause', {}), 'Mis en pause.') }, 'Mettre en pause'),
+      !o.paused ? h('button', { class: 'btn secondary', type: 'button', onclick: go(() => api('POST', '/sync/run', {}), 'Passe lancée.') }, 'Lancer une passe maintenant') : null,
     ),
   );
 
@@ -998,8 +1002,8 @@ async function renderSync() {
     'section',
     { class: 'panel' },
     h('h2', {}, 'Résumés automatiques'),
-    h('ul', { class: 'checks' }, keyLine(sm.configured, 'OPENROUTER_API_KEY', 'nécessaire pour rédiger les résumés')),
-    h('div', { class: 'stats' }, stat(sm.ready, 'résumés prêts'), stat(sm.waiting, 'en attente'), stat(sm.failed, 'en échec')),
+    h('ul', { class: 'checks' }, keyLine(sm.configured, 'Rédaction des résumés par l’IA', 'OPENROUTER_API_KEY', 'nécessaire pour rédiger les résumés')),
+    h('div', { class: 'stats' }, stat(sm.ready, 'résumés prêts', 'sReady'), stat(sm.waiting, 'en attente', 'sWaiting'), stat(sm.failed, 'en échec', 'sFailed')),
     h(
       'p',
       { class: 'status' },
@@ -1015,9 +1019,9 @@ async function renderSync() {
       'div',
       { class: 'actions' },
       sm.paused
-        ? h('button', { class: 'btn', type: 'button', disabled: !sm.configured, onclick: () => act(() => api('POST', '/sync/summaries/resume', {}), 'Génération des résumés relancée.') }, 'Relancer les résumés')
-        : h('button', { class: 'btn secondary', type: 'button', onclick: () => act(() => api('POST', '/sync/summaries/pause', {}), 'Génération des résumés mise en pause.') }, 'Mettre en pause'),
-      !sm.paused && sm.configured ? h('button', { class: 'btn secondary', type: 'button', onclick: () => act(() => api('POST', '/sync/summaries/run', {}), 'Passe lancée : les résumés en attente sont rédigés (une minute environ chacun).') }, 'Lancer maintenant') : null,
+        ? h('button', { class: 'btn', type: 'button', disabled: !sm.configured, onclick: go(() => api('POST', '/sync/summaries/resume', {}), 'Génération des résumés relancée.') }, 'Relancer les résumés')
+        : h('button', { class: 'btn secondary', type: 'button', onclick: go(() => api('POST', '/sync/summaries/pause', {}), 'Génération des résumés mise en pause.') }, 'Mettre en pause'),
+      !sm.paused && sm.configured ? h('button', { class: 'btn secondary', type: 'button', onclick: go(() => api('POST', '/sync/summaries/run', {}), 'Passe lancée : les résumés en attente sont rédigés (une minute environ chacun).') }, 'Lancer maintenant') : null,
     ),
     sm.failed_list.length
       ? h(
@@ -1033,7 +1037,7 @@ async function renderSync() {
               h(
                 'div',
                 { class: 'actions' },
-                h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('POST', `/sync/summaries/${v.id}/retry`, {}), 'Nouvelle tentative lancée.') }, 'Réessayer'),
+                h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('POST', `/sync/summaries/${v.id}/retry`, {}), 'Nouvelle tentative lancée.') }, 'Réessayer'),
                 h('a', { class: 'btn small', href: `#/video/${v.id}` }, 'Ouvrir'),
               ),
             ),
@@ -1046,27 +1050,29 @@ async function renderSync() {
   const input = h('input', { type: 'text', placeholder: 'https://www.youtube.com/@nomdelachaine', required: true });
   const minD = h('input', { type: 'number', min: '0', value: '0' });
   const noShorts = h('input', { type: 'checkbox', checked: true });
-  const addMsg = h('p', { class: 'status' });
+  const addMsg = h('p', { class: 'status', role: 'status' });
   const addBtn = h('button', { class: 'btn', type: 'submit', disabled: !o.keys.youtube }, 'Ajouter et lister les vidéos');
   const addForm = h(
     'form',
     {
-      onsubmit: async (e) => {
+      onsubmit: (e) => {
         e.preventDefault();
-        addBtn.disabled = true;
-        status(addMsg, 'Recherche de la chaîne et liste des vidéos… (peut prendre quelques secondes)');
-        try {
-          const r = await api('POST', '/sync/channels', { input: input.value, min_duration_s: Number(minD.value) || 0, exclude_shorts: noShorts.checked });
-          if (r.error) status(addMsg, `Chaîne ajoutée, mais la liste a échoué : ${r.error}`, 'err');
-          else {
-            await renderSync();
-            const syncMsg = document.querySelector('#sync-msg');
-            if (syncMsg) status(syncMsg, `${r.added} vidéo${r.added > 1 ? 's' : ''} trouvée${r.added > 1 ? 's' : ''} et mise${r.added > 1 ? 's' : ''} en file d’attente.`, 'ok');
+        busy(addBtn, async () => {
+          inFlight++;
+          status(addMsg, 'Recherche de la chaîne et liste des vidéos… (peut prendre quelques secondes)');
+          try {
+            const r = await api('POST', '/sync/channels', { input: input.value, min_duration_s: Number(minD.value) || 0, exclude_shorts: noShorts.checked });
+            if (r.error) status(addMsg, `Chaîne ajoutée, mais la liste a échoué : ${r.error}`, 'err');
+            else {
+              await renderSync();
+              toast(`${r.added} vidéo${r.added > 1 ? 's' : ''} trouvée${r.added > 1 ? 's' : ''} et mise${r.added > 1 ? 's' : ''} en file d’attente.`, 'ok');
+            }
+          } catch (err) {
+            fail(err, addMsg);
+          } finally {
+            inFlight--;
           }
-        } catch (err) {
-          status(addMsg, err.message, 'err');
-          addBtn.disabled = !o.keys.youtube;
-        }
+        });
       },
     },
     h('div', { class: 'row' }, h('label', { class: 'field' }, 'Chaîne YouTube (URL, @nom ou identifiant UC…)', input), h('label', { class: 'field' }, 'Durée minimale (secondes, 0 = aucune)', minD)),
@@ -1074,8 +1080,9 @@ async function renderSync() {
     h('div', { class: 'actions' }, addBtn, addMsg),
   );
 
-  const rows = o.channels.map((c) =>
-    h(
+  const rows = o.channels.map((c) => {
+    const minInput = h('input', { type: 'number', min: '0', step: '1', class: 'inline-num', value: String(c.min_duration_s || 0), 'aria-label': 'Durée minimale en secondes' });
+    return h(
       'article',
       { class: 'chan' },
       h('div', { class: 't' }, c.title || c.youtube_channel_id, c.handle ? h('span', { class: 'status' }, ` ${c.handle}`) : null),
@@ -1091,36 +1098,37 @@ async function renderSync() {
       h(
         'div',
         { class: 'actions' },
-        h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(async () => { const r = await api('POST', `/sync/channels/${c.id}/discover`, {}); return `${r.added} nouvelle${r.added > 1 ? 's' : ''} vidéo${r.added > 1 ? 's' : ''}.`; }) }, 'Chercher maintenant'),
-        h('button', { class: 'btn small', type: 'button', title: 'Supprime les Shorts déjà importés (aperçu et confirmation avant)', onclick: () => act(() => purgeShortsFlow(c)) }, 'Retirer les Shorts…'),
+        h('button', { class: 'btn secondary small', type: 'button', onclick: go(async () => { const r = await api('POST', `/sync/channels/${c.id}/discover`, {}); return `${r.added} nouvelle${r.added > 1 ? 's' : ''} vidéo${r.added > 1 ? 's' : ''}.`; }) }, 'Chercher maintenant'),
+        h('button', { class: 'btn small', type: 'button', title: 'Supprime les Shorts déjà importés (aperçu et confirmation avant)', onclick: go(() => purgeShortsFlow(c)) }, 'Retirer les Shorts…'),
         h(
-          'button',
-          {
-            class: 'btn secondary small',
-            type: 'button',
-            title: 'Les vidéos plus courtes ne sont pas importées, et « Retirer les Shorts… » supprime celles déjà importées',
-            onclick: () => act(async () => {
-              const v = prompt('Durée minimale des vidéos, en secondes (0 = aucune).\n\nAstuce : 181 écarte tous les Shorts, même ceux de 1 à 3 minutes (les vidéos de moins de 3 minutes ne sont alors plus importées).\n\nPuis clique sur « Retirer les Shorts… » pour supprimer celles déjà importées.', String(c.min_duration_s || 0));
-              if (v === null) return null;
-              const n = Number(v);
-              if (!Number.isFinite(n) || n < 0) throw new Error('Durée invalide.');
-              await api('PATCH', `/sync/channels/${c.id}`, { min_duration_s: Math.round(n) });
-              return n ? `Durée minimale : ${Math.round(n)} s. Clique sur « Retirer les Shorts… » pour supprimer celles déjà importées.` : 'Plus de durée minimale.';
-            }),
-          },
-          'Durée minimale…',
+          'span',
+          { class: 'min-dur', title: 'Les vidéos plus courtes ne sont pas importées. Astuce : 181 écarte tous les Shorts, même ceux de 1 à 3 minutes. Clique ensuite sur « Retirer les Shorts… » pour supprimer ceux déjà importés.' },
+          h('label', {}, 'Durée min. (s) ', minInput),
+          h(
+            'button',
+            {
+              class: 'btn secondary small',
+              type: 'button',
+              onclick: go(async () => {
+                const n = Number(minInput.value);
+                if (!Number.isFinite(n) || n < 0) throw new Error('Durée invalide.');
+                await api('PATCH', `/sync/channels/${c.id}`, { min_duration_s: Math.round(n) });
+                return n ? `Durée minimale : ${Math.round(n)} s. Clique sur « Retirer les Shorts… » pour supprimer celles déjà importées.` : 'Plus de durée minimale.';
+              }),
+            },
+            'Appliquer',
+          ),
         ),
-        c.exclude_shorts ? null : h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/sync/channels/${c.id}`, { exclude_shorts: true }), 'Les Shorts sont désormais exclus.') }, 'Exclure les Shorts'),
-        h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('PATCH', `/sync/channels/${c.id}`, { enabled: !c.enabled })) }, c.enabled ? 'Suspendre' : 'Reprendre'),
-        h('button', { class: 'btn danger small', type: 'button', onclick: () => confirm('Ne plus suivre cette chaîne ? Les vidéos déjà importées sont conservées.') && act(() => api('DELETE', `/sync/channels/${c.id}`)) }, 'Retirer la chaîne'),
+        c.exclude_shorts ? null : h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('PATCH', `/sync/channels/${c.id}`, { exclude_shorts: true }), 'Les Shorts sont désormais exclus.') }, 'Exclure les Shorts'),
+        h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('PATCH', `/sync/channels/${c.id}`, { enabled: !c.enabled })) }, c.enabled ? 'Suspendre' : 'Reprendre'),
+        h('button', { class: 'btn danger small', type: 'button', onclick: (ev) => confirm('Ne plus suivre cette chaîne ? Les vidéos déjà importées sont conservées.') && act(ev.currentTarget, () => api('DELETE', `/sync/channels/${c.id}`)) }, 'Retirer la chaîne'),
       ),
-    ),
-  );
+    );
+  });
   const channels = h(
     'section',
     { class: 'panel' },
     h('h2', {}, 'Chaînes suivies'),
-    h('p', { id: 'sync-msg', class: 'status' }),
     rows.length ? h('div', { class: 'chan-list' }, rows) : h('p', { class: 'status' }, 'Aucune chaîne suivie.'),
     h('h3', { style: 'margin-top:1.2rem' }, 'Ajouter une chaîne'),
     addForm,
@@ -1147,7 +1155,7 @@ async function renderSync() {
               h(
                 'div',
                 { class: 'actions' },
-                h('button', { class: 'btn secondary small', type: 'button', onclick: () => act(() => api('POST', `/sync/videos/${v.id}/retry`, {}), 'Remise en file d’attente.') }, 'Réessayer'),
+                h('button', { class: 'btn secondary small', type: 'button', onclick: go(() => api('POST', `/sync/videos/${v.id}/retry`, {}), 'Remise en file d’attente.') }, 'Réessayer'),
                 h('a', { class: 'btn small', href: `#/video/${v.id}` }, 'Ouvrir'),
               ),
             ),
@@ -1158,7 +1166,40 @@ async function renderSync() {
 
   $app.replaceChildren(...[state, summariesPanel, channels, failed].filter(Boolean));
   cleanup(); // a re-render (timer, action) replaces the previous timer instead of adding one
-  const timer = setInterval(() => document.hidden || renderSync().catch(() => {}), 20000);
+
+  const sigOf = (x) =>
+    JSON.stringify([
+      x.paused, x.cooldown_until, x.last_error, x.llm_error, x.keys,
+      x.summaries.paused, x.summaries.configured, x.summaries.cooldown_until, x.summaries.failed_list.map((v) => v.id),
+      x.channels.map((c) => [c.id, c.title, c.enabled, c.exclude_shorts, c.min_duration_s, c.last_discovery_error]),
+      x.failed.map((v) => v.id),
+    ]);
+  const sig = sigOf(o);
+  // A full redraw would wipe typed text and focus: only allowed when the page is idle
+  const idle = () => {
+    const ae = document.activeElement;
+    const typing = ae && $app.contains(ae) && ['INPUT', 'TEXTAREA', 'SELECT'].includes(ae.tagName);
+    return !typing && !input.value && !addBtn.disabled && !inFlight;
+  };
+  const tick = async () => {
+    if (document.hidden || inFlight) return;
+    try {
+      const fresh = await api('GET', '/sync/overview');
+      if (gen !== routeGen || inFlight) return;
+      const set = (k, v) => counters[k] && (counters[k].textContent = String(v));
+      set('pending', fresh.counts.pending);
+      set('done', fresh.counts.done);
+      set('failed', fresh.counts.failed);
+      set('manual', fresh.counts.manual);
+      set('sReady', fresh.summaries.ready);
+      set('sWaiting', fresh.summaries.waiting);
+      set('sFailed', fresh.summaries.failed);
+      if (sigOf(fresh) !== sig && idle()) await renderSync();
+    } catch (err) {
+      if (err instanceof AuthError) renderLogin(); // other errors: keep the page, retry on the next tick
+    }
+  };
+  const timer = setInterval(tick, 20000);
   cleanup = () => clearInterval(timer);
 }
 
