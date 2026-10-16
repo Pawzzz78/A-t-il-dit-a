@@ -83,8 +83,8 @@ function showGate(failure, configured = true) {
     el('section', { class: 'card st-gate' },
       el('p', { class: 'eyebrow' }, 'Réservé aux adhérents'),
       el('h2', {}, 'Connecte-toi avec ton compte adhérent'),
-      el('p', {}, 'L’accès au studio est réservé aux adhérents, grâce à la connexion de leur parti (Nouvelle Énergie). Tu saisis ton adresse e-mail d’adhérent, tu reçois un code à 6 chiffres, et c’est tout : pas de mot de passe.'),
-      el('p', { class: 'hint' }, 'Le site lui-même est tenu de façon indépendante : il sert seulement à vérifier ton adhésion.'),
+      el('p', {}, 'L’accès au studio est réservé aux adhérents de Nouvelle Énergie. Tu te connectes avec ton espace adhérent : ton adresse e-mail, puis un code à 6 chiffres, sans mot de passe.'),
+      el('p', { class: 'hint' }, 'Ce site est indépendant de Nouvelle Énergie : la connexion sert seulement à vérifier ton adhésion.'),
       text ? el('p', { class: 'st-gate-msg', role: 'alert' }, text) : null,
       configured
         ? el('p', { class: 'st-gate-actions' }, el('a', { class: 'btn', href: loginHref() }, 'Me connecter'), canJoin ? el('a', { class: 'btn small secondary', href: JOIN_URL, rel: 'noopener' }, 'Adhérer') : null)

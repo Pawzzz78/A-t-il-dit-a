@@ -133,6 +133,15 @@ function toast(text, kind = 'ok', actionLabel, onAction) {
 /** Login dialog shown over the editor when the session expires: resolves true once signed in again. */
 function reauth() {
   return new Promise((resolve) => {
+    let settled = false;
+    // Settle explicitly: the dialog's async 'close' event is not a reliable signal on its own
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      if (dlg.open) dlg.close();
+      dlg.remove();
+      resolve(ok);
+    };
     const msg = h('p', { class: 'status', role: 'status' });
     const pw = h('input', { type: 'password', autocomplete: 'current-password', required: true });
     const ok = h('button', { class: 'btn', type: 'submit' }, 'Se reconnecter');
@@ -148,7 +157,7 @@ function reauth() {
             busy(ok, async () => {
               try {
                 await api('POST', '/login', { password: pw.value });
-                dlg.close('ok');
+                finish(true);
               } catch (err) {
                 status(msg, err.message, 'err');
                 pw.select();
@@ -163,11 +172,9 @@ function reauth() {
         msg,
       ),
     );
-    cancel.addEventListener('click', () => dlg.close('cancel'));
-    dlg.addEventListener('close', () => {
-      dlg.remove();
-      resolve(dlg.returnValue === 'ok');
-    });
+    cancel.addEventListener('click', () => finish(false));
+    dlg.addEventListener('cancel', () => finish(false)); // Escape key
+    dlg.addEventListener('close', () => finish(false));
     document.body.append(dlg);
     dlg.showModal();
     pw.focus();
