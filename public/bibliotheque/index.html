@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>La bibliothèque des clips – Lisnard Studio</title>
+  <meta name="description" content="Les clips créés dans le studio par la communauté : à télécharger, noter et réutiliser.">
+  <meta name="theme-color" content="#1d257a">
+  <link rel="icon" href="/brand/favicon.svg" type="image/svg+xml">
+  <link rel="preload" href="/fonts/montserrat-variable-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/fraunces-normal-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/fraunces-italic-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/css/theme.css">
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/wall.css">
+  <link rel="stylesheet" href="/css/library.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <a class="brand" href="/" aria-label="Lisnard Studio, accueil"><span class="wordmark" aria-hidden="true"><span class="wm-a">Lisnard</span><span class="wm-b">Studio</span></span></a>
+      <nav aria-label="Sections du site"><a href="/">Studio</a><a href="/bibliotheque/" aria-current="page">Bibliothèque</a><a href="/mur/">Le mur</a></nav>
+    </div>
+  </header>
+
+  <section class="hero compact wall-hero">
+    <div class="wrap">
+      <p class="eyebrow">La bibliothèque</p>
+      <h1>Les clips de la <em>communauté</em></h1>
+      <p>Les clips créés dans le studio : télécharge-les tels quels, note-les, ou ouvre-les dans l’éditeur pour faire ta propre version.</p>
+    </div>
+    <div class="torn-edge" aria-hidden="true"></div>
+  </section>
+
+  <main class="wrap wall lib" id="lib">
+    <div class="lib-tabs" role="tablist" aria-label="Clips">
+      <button type="button" role="tab" id="tab-all" aria-controls="panel" aria-selected="true">Tous les clips</button>
+      <button type="button" role="tab" id="tab-mine" aria-controls="panel" aria-selected="false" tabindex="-1">Mes clips</button>
+    </div>
+    <div id="panel" role="tabpanel" aria-labelledby="tab-all">
+      <div class="wall-bar" id="bar">
+        <div class="pills" id="sorts" role="group" aria-label="Trier par"></div>
+        <label class="wall-period">Interview
+          <select id="interview"><option value="">Toutes</option></select>
+        </label>
+      </div>
+      <p class="wall-updated" id="summary" aria-live="polite"></p>
+      <ol class="clip-grid lib-grid" id="grid"></ol>
+      <p class="wall-empty" id="state" role="status">Chargement de la bibliothèque…</p>
+      <p class="lib-more"><button class="btn secondary small" type="button" id="more" hidden>Voir plus de clips</button></p>
+    </div>
+    <p class="wall-note">Les clips restent téléchargeables 30 jours ; ensuite seuls leurs réglages sont gardés, et n’importe qui peut les recréer. Chaque clip cite son interview d’origine : garde cette source quand tu le publies. <a href="/mentions-legales/">Données et signalement</a></p>
+  </main>
+
+  <dialog class="clip-dialog lib-dialog" id="dialog" aria-labelledby="dialog-title">
+    <span class="tape" aria-hidden="true"></span>
+    <form method="dialog" class="dialog-close"><button aria-label="Fermer" class="close">×</button></form>
+    <div class="dialog-scroll" id="dialog-body"></div>
+  </dialog>
+
+  <footer class="site-footer">
+    <div class="wrap">
+      <span class="footer-brand" role="img" aria-label="Lisnard Studio"><span class="wordmark" aria-hidden="true"><span class="wm-a">Lisnard</span><span class="wm-b">Studio</span></span></span>
+      <p>Initiative indépendante de soutiens. Ce site ne dépend ni de Nouvelle Énergie ni de David Lisnard. · <a href="/mentions-legales/">Mentions légales</a></p>
+    </div>
+  </footer>
+  <script src="/js/library.js" type="module"></script>
+</body>
+</html>
