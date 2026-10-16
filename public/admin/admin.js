@@ -1165,44 +1165,78 @@ async function renderSync() {
 // ---------------------------------------------------------------------- éditeur
 
 async function renderEditor(id) {
-  const { video, segments, summary } = await api('GET', `/videos/${id}`);
-  const config = await api('GET', '/config');
-  let clipState = await api('GET', `/videos/${id}/clips`).catch(() => null);
+  const gen = routeGen;
+  const [{ video, segments, summary }, config, firstClipState] = await Promise.all([
+    api('GET', `/videos/${id}`),
+    api('GET', '/config'),
+    api('GET', `/videos/${id}/clips`).catch((err) => {
+      if (err instanceof AuthError) throw err;
+      return null;
+    }),
+  ]);
+  if (gen !== routeGen) return;
+  let clipState = firstClipState;
   let segs = segments.map((s) => ({ ...s, orig: s.text, origStart: s.start_ms }));
   let dirty = false;
+  let rev = 0; // bumped on every edit: tells save() whether something changed while the request was in flight
+  let saving = false;
   let player = null;
   let activeIdx = -1;
   let pageLeft = false; // set by cleanup: late async callbacks must not act on a page that is gone
   let uploading = null; // AbortController of a running video upload
 
-  const markDirty = (v = true) => {
+  const setDirty = (v) => {
     dirty = v;
-    saveBtn.disabled = !dirty;
+    saveBtn.disabled = !dirty || saving;
     saveMsg.textContent = dirty ? 'Modifications non enregistrées' : 'À jour';
     saveMsg.className = `status${dirty ? '' : ' ok'}`;
   };
-  dirtyGuard = () => (uploading ? 'Un envoi de vidéo est en cours : quitter l’interrompra. Quitter quand même ?' : dirty);
-  const beforeUnload = (e) => dirty && e.preventDefault();
+  const markDirty = () => {
+    rev++;
+    setDirty(true);
+  };
+  const savedInfo = { title: video.title ?? '', channel: video.channel ?? '', date: video.published_at?.slice(0, 10) ?? '', lang: video.lang ?? '' };
+  // Any unsaved work: transcript segments, summary text or the video fields
+  const isDirty = () => dirty || sumArea.value !== summary.content || Object.keys(savedInfo).some((k) => f[k].value !== savedInfo[k]);
+  dirtyGuard = () => (uploading ? 'Un envoi de vidéo est en cours : quitter l’interrompra. Quitter quand même ?' : isDirty());
+  const beforeUnload = (e) => isDirty() && e.preventDefault();
   window.addEventListener('beforeunload', beforeUnload);
   const onKey = (e) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault();
-      save();
+      const focus = document.activeElement;
+      if (sumArea.contains(focus)) saveSum.click();
+      else if (info.contains(focus)) saveInfoBtn.click();
+      else save();
     }
   };
   window.addEventListener('keydown', onKey);
 
   // --- infos de la vidéo
-  const infoMsg = h('span', { class: 'status' });
+  const infoMsg = h('span', { class: 'status', role: 'status' });
   const f = {
     title: h('input', { type: 'text', value: video.title }),
     channel: h('input', { type: 'text', value: video.channel }),
     date: h('input', { type: 'date', value: video.published_at?.slice(0, 10) ?? '' }),
     lang: h('input', { type: 'text', value: video.lang ?? '', maxlength: '5' }),
   };
+  const saveInfoBtn = h('button', { class: 'btn secondary small', type: 'button' }, 'Enregistrer les infos');
+  saveInfoBtn.addEventListener('click', () =>
+    busy(saveInfoBtn, async () => {
+      try {
+        const sent = { title: f.title.value, channel: f.channel.value, date: f.date.value, lang: f.lang.value };
+        await api('PATCH', `/videos/${id}`, { title: sent.title, channel: sent.channel, published_at: sent.date || null, lang: sent.lang });
+        Object.assign(savedInfo, sent);
+        status(infoMsg, 'Infos enregistrées', 'ok');
+      } catch (err) {
+        fail(err, infoMsg);
+      }
+    }),
+  );
   const info = h(
     'section',
     { class: 'panel' },
+    h('h2', {}, video.title || video.youtube_id),
     h(
       'div',
       { class: 'row' },
@@ -1214,27 +1248,7 @@ async function renderEditor(id) {
     h(
       'div',
       { class: 'actions' },
-      h(
-        'button',
-        {
-          class: 'btn secondary small',
-          type: 'button',
-          onclick: async () => {
-            try {
-              await api('PATCH', `/videos/${id}`, {
-                title: f.title.value,
-                channel: f.channel.value,
-                published_at: f.date.value || null,
-                lang: f.lang.value,
-              });
-              status(infoMsg, 'Infos enregistrées', 'ok');
-            } catch (e) {
-              status(infoMsg, e.message, 'err');
-            }
-          },
-        },
-        'Enregistrer les infos',
-      ),
+      saveInfoBtn,
       infoMsg,
       config.youtube
         ? h(
@@ -1243,17 +1257,20 @@ async function renderEditor(id) {
               class: 'btn secondary small',
               type: 'button',
               title: 'Remplace titre, chaîne, date de publication et miniature par ceux de YouTube',
-              onclick: async () => {
+              onclick: (ev) => {
                 if (!confirm('Remplacer titre, chaîne et date de publication par ceux de YouTube ?')) return;
-                try {
-                  const v = await api('POST', `/videos/${id}/refresh-meta`, {});
-                  f.title.value = v.title;
-                  f.channel.value = v.channel;
-                  f.date.value = v.published_at?.slice(0, 10) ?? '';
-                  status(infoMsg, 'Mis à jour depuis YouTube', 'ok');
-                } catch (e) {
-                  status(infoMsg, e.message, 'err');
-                }
+                busy(ev.currentTarget, async () => {
+                  try {
+                    const v = await api('POST', `/videos/${id}/refresh-meta`, {});
+                    f.title.value = v.title;
+                    f.channel.value = v.channel;
+                    f.date.value = v.published_at?.slice(0, 10) ?? '';
+                    Object.assign(savedInfo, { title: f.title.value, channel: f.channel.value, date: f.date.value });
+                    status(infoMsg, 'Mis à jour depuis YouTube', 'ok');
+                  } catch (err) {
+                    fail(err, infoMsg);
+                  }
+                });
               },
             },
             'Mettre à jour depuis YouTube',
@@ -1294,7 +1311,8 @@ async function renderEditor(id) {
         },
       });
       const ta = h('textarea', {
-        class: 'seg',
+        class: 'tseg-text',
+        'aria-label': `Texte du segment à ${fmtTs(s.start_ms)}`,
         rows: '1',
         value: s.text,
         spellcheck: 'true',
@@ -1309,7 +1327,7 @@ async function renderEditor(id) {
       const btn = (label, title, fn) => h('button', { type: 'button', title, 'aria-label': title, onclick: fn }, label);
       const row = h(
         'div',
-        { class: `seg${s.text !== s.orig || s.start_ms !== s.origStart ? ' dirty' : ''}` },
+        { class: `tseg${s.text !== s.orig || s.start_ms !== s.origStart ? ' dirty' : ''}` },
         h(
           'div',
           { class: 'tcell' },
@@ -1324,7 +1342,7 @@ async function renderEditor(id) {
             const at = ta.selectionStart;
             const left = s.text.slice(0, at).trim();
             const right = s.text.slice(at).trim();
-            if (!left || !right) return;
+            if (!left || !right) return toast('Place d’abord le curseur dans le texte, à l’endroit où couper, puis clique sur ✂.', 'err');
             const next = segs[i + 1];
             const span = s.duration_ms ?? (next ? next.start_ms - s.start_ms : 0);
             const newStart = s.start_ms + Math.round(Math.max(span, 0) * (left.length / s.text.length));
@@ -1350,16 +1368,23 @@ async function renderEditor(id) {
             rowEls[i + 1]?.querySelector('textarea').focus();
           }),
           btn('✕', 'Supprimer', () => {
-            segs.splice(i, 1);
+            const [removed] = segs.splice(i, 1);
             markDirty();
             renderSegs();
+            rowEls[Math.min(i, rowEls.length - 1)]?.querySelector('textarea')?.focus();
+            toast('Segment supprimé.', 'ok', 'Annuler', () => {
+              segs.splice(i, 0, removed);
+              markDirty();
+              renderSegs();
+              rowEls[i]?.querySelector('textarea')?.focus();
+            });
           }),
         ),
       );
       rowEls.push(row);
       list.append(row);
     });
-    requestAnimationFrame(() => list.querySelectorAll('textarea.seg').forEach(autosize));
+    requestAnimationFrame(() => list.querySelectorAll('textarea.tseg-text').forEach(autosize));
     activeIdx = -1;
   }
 
@@ -1390,13 +1415,14 @@ async function renderEditor(id) {
     activeIdx = idx;
     const el = rowEls[idx];
     el?.classList.add('active');
-    if (follow.checked) el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    // No auto-scroll while the user is typing in a segment
+    if (follow.checked && !document.activeElement?.classList.contains('tseg-text')) el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, 400);
 
   // --- chercher / remplacer
   const findIn = h('input', { class: 'text', type: 'text', placeholder: 'Chercher…' });
   const replIn = h('input', { class: 'text', type: 'text', placeholder: 'Remplacer par…' });
-  const findMsg = h('span', { class: 'status' });
+  const findMsg = h('span', { class: 'status', role: 'status' });
   const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const countMatches = () => {
     if (!findIn.value) return status(findMsg, '');
@@ -1443,7 +1469,7 @@ async function renderEditor(id) {
   );
 
   // --- source de la transcription
-  const srcMsg = h('p', { class: 'status' });
+  const srcMsg = h('p', { class: 'status', role: 'status' });
   const pasteArea = h('textarea', { class: 'text', rows: '6', placeholder: 'SRT, VTT, « [00:12] texte »…' });
   const source = h(
     'section',
@@ -1459,16 +1485,18 @@ async function renderEditor(id) {
             {
               class: 'btn secondary small',
               type: 'button',
-              onclick: async () => {
+              onclick: (ev) => {
                 if (!confirm(video.edited ? 'Tes corrections manuelles seront perdues. Continuer ?' : 'Récupérer à nouveau la transcription ?')) return;
-                status(srcMsg, 'Récupération…');
-                try {
-                  await api('POST', `/videos/${id}/refetch`, { lang: f.lang.value || undefined });
-                  dirty = false;
-                  route();
-                } catch (e) {
-                  status(srcMsg, e.message, 'err');
-                }
+                busy(ev.currentTarget, async () => {
+                  status(srcMsg, 'Récupération…');
+                  try {
+                    await api('POST', `/videos/${id}/refetch`, { lang: f.lang.value || undefined });
+                    dirty = false;
+                    route();
+                  } catch (err) {
+                    fail(err, srcMsg);
+                  }
+                });
               },
             },
             'Récupérer via Supadata',
@@ -1482,15 +1510,17 @@ async function renderEditor(id) {
           class: 'btn secondary small',
           type: 'button',
           style: 'margin-top:.5rem',
-          onclick: async () => {
+          onclick: (ev) => {
             if (!pasteArea.value.trim() || !confirm('Remplacer toute la transcription par ce texte ?')) return;
-            try {
-              await api('POST', `/videos/${id}/import`, { transcript: pasteArea.value });
-              dirty = false;
-              route();
-            } catch (e) {
-              status(srcMsg, e.message, 'err');
-            }
+            busy(ev.currentTarget, async () => {
+              try {
+                await api('POST', `/videos/${id}/import`, { transcript: pasteArea.value });
+                dirty = false;
+                route();
+              } catch (err) {
+                fail(err, srcMsg);
+              }
+            });
           },
         },
         'Importer le texte collé',
@@ -1501,7 +1531,7 @@ async function renderEditor(id) {
 
 
   // --- traduction
-  const trMsg = h('p', { class: 'status' });
+  const trMsg = h('p', { class: 'status', role: 'status' });
   const translatable = Boolean(video.lang) && video.lang !== 'fr';
   const translatePanel = h(
     'section',
@@ -1523,16 +1553,18 @@ async function renderEditor(id) {
               {
                 class: 'btn secondary small',
                 type: 'button',
-                onclick: async () => {
+                onclick: (ev) => {
                   if (dirty) return status(trMsg, 'Enregistre d’abord tes modifications.', 'err');
                   if (!confirm('Le texte affiché sera remplacé par une traduction automatique en français (le texte d’origine est conservé). Continuer ?')) return;
-                  status(trMsg, 'Traduction en cours… (une à deux minutes pour une longue vidéo)');
-                  try {
-                    await api('POST', `/videos/${id}/translate`, { lang: 'fr' });
-                    route();
-                  } catch (e) {
-                    status(trMsg, e.message, 'err');
-                  }
+                  busy(ev.currentTarget, async () => {
+                    status(trMsg, 'Traduction en cours… (une à deux minutes pour une longue vidéo)');
+                    try {
+                      await api('POST', `/videos/${id}/translate`, { lang: 'fr' });
+                      route();
+                    } catch (err) {
+                      fail(err, trMsg);
+                    }
+                  });
                 },
               },
               'Traduire en français',
@@ -1546,7 +1578,7 @@ async function renderEditor(id) {
 
 
   // --- résumé IA (modifiable à la main)
-  const sumMsg = h('p', { class: 'status' });
+  const sumMsg = h('p', { class: 'status', role: 'status' });
   const sumDate = (d) => (d ? new Date(d).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '');
   const sumText = {
     edited: `Corrigé à la main le ${sumDate(summary.edited_at)} : il n’est jamais régénéré automatiquement.${summary.outdated ? ' La transcription a été modifiée depuis : relis ce résumé.' : ''}`,
@@ -1563,16 +1595,20 @@ async function renderEditor(id) {
     status(sumMsg, '');
   });
   saveSum.addEventListener('click', async () => {
-    saveSum.disabled = true;
-    try {
-      const r = await api('PUT', `/videos/${id}/summary`, { markdown: sumArea.value });
-      sumArea.value = r.markdown;
-      summary.content = r.markdown;
-      status(sumMsg, 'Résumé enregistré : il est affiché tel quel sur le site.', 'ok');
-    } catch (e) {
-      saveSum.disabled = false;
-      status(sumMsg, e.message, 'err');
-    }
+    if (saveSum.disabled) return;
+    let ok = false;
+    await busy(saveSum, async () => {
+      try {
+        const r = await api('PUT', `/videos/${id}/summary`, { markdown: sumArea.value });
+        sumArea.value = r.markdown;
+        summary.content = r.markdown;
+        ok = true;
+        status(sumMsg, 'Résumé enregistré : il est affiché tel quel sur le site.', 'ok');
+      } catch (e) {
+        fail(e, sumMsg);
+      }
+    });
+    saveSum.disabled = ok; // saved: nothing left to save until the next edit
   });
   const summaryPanel = h(
     'section',
@@ -1600,16 +1636,18 @@ async function renderEditor(id) {
                 {
                   class: 'btn secondary small',
                   type: 'button',
-                  onclick: async () => {
+                  onclick: (ev) => {
                     if (dirty) return status(sumMsg, 'Enregistre d’abord tes modifications de la transcription.', 'err');
                     if (summary.content && !confirm('Régénérer remplacera le résumé actuel (y compris tes corrections) par un nouveau résumé IA. Continuer ?')) return;
-                    status(sumMsg, 'Rédaction du résumé… (environ une minute)');
-                    try {
-                      await api('POST', `/videos/${id}/summary`, {});
-                      route();
-                    } catch (e) {
-                      status(sumMsg, e.message, 'err');
-                    }
+                    busy(ev.currentTarget, async () => {
+                      status(sumMsg, 'Rédaction du résumé… (environ une minute)');
+                      try {
+                        await api('POST', `/videos/${id}/summary`, {});
+                        route();
+                      } catch (err) {
+                        fail(err, sumMsg);
+                      }
+                    });
                   },
                 },
                 'Régénérer avec l’IA',
@@ -1654,24 +1692,26 @@ async function renderEditor(id) {
       ready: `Reconnaissance de David Lisnard : à jour (${id2.matches ?? 0} visage${id2.matches > 1 ? 's' : ''} reconnu${id2.matches > 1 ? 's' : ''} sur ${id2.samples ?? 0} comparé${id2.samples > 1 ? 's' : ''}, dans les plans à plusieurs personnes).`,
     }[id2.state];
     const identBtn = fc.status === 'ready' && (id2.state === 'none' || id2.state === 'stale')
-      ? h('button', { class: 'btn secondary small', type: 'button', onclick: async (e) => {
-        e.target.disabled = true;
-        try {
-          clipState = await api('POST', `/videos/${id}/faces/identify`, {});
-        } catch (err) {
-          status(clipMsg, err.message, 'err');
-        }
+      ? h('button', { class: 'btn secondary small', type: 'button', onclick: async (ev) => {
+        await busy(ev.currentTarget, async () => {
+          try {
+            clipState = await api('POST', `/videos/${id}/faces/identify`, {});
+          } catch (err) {
+            fail(err, clipMsg);
+          }
+        });
         drawFaces();
       } }, 'Lancer la reconnaissance')
       : null;
     const btn = h('button', { class: 'btn secondary small', type: 'button', disabled: busy }, fc.status === 'ready' || fc.status === 'failed' || fc.status === 'stale' ? 'Relancer l’analyse' : 'Analyser les visages');
     btn.addEventListener('click', async () => {
-      btn.disabled = true;
-      try {
-        clipState = await api('POST', `/videos/${id}/faces`, {});
-      } catch (e) {
-        status(clipMsg, e.message, 'err');
-      }
+      await busy(btn, async () => {
+        try {
+          clipState = await api('POST', `/videos/${id}/faces`, {});
+        } catch (err) {
+          fail(err, clipMsg);
+        }
+      });
       drawFaces();
     });
     facesBox.replaceChildren(
@@ -1749,7 +1789,7 @@ async function renderEditor(id) {
     return api('POST', `/videos/${id}/file/finish`, { size: total });
   }
 
-  const clipMsg = h('p', { class: 'status' });
+  const clipMsg = h('p', { class: 'status', role: 'status' });
   function renderClips() {
     const st = clipState;
     if (!st) {
@@ -1801,7 +1841,7 @@ async function renderEditor(id) {
         progress.hidden = true;
         cancelBtn.hidden = true;
         progressText.textContent = '';
-        status(clipMsg, e.message, 'err');
+        fail(e, clipMsg);
       }
     });
 
@@ -1829,24 +1869,24 @@ async function renderEditor(id) {
       } catch (e) {
         toggle.checked = !toggle.checked;
         toggle.disabled = false;
-        status(clipMsg, e.message, 'err');
+        fail(e, clipMsg);
       }
     });
 
     const sg = st.suggestions;
     const suggestBtn = h('button', { class: 'btn secondary small', type: 'button', disabled: !st.llm || !st.has_text }, sg ? 'Régénérer les extraits' : 'Proposer des extraits');
-    suggestBtn.addEventListener('click', async () => {
-      suggestBtn.disabled = true;
-      status(clipMsg, 'Recherche des meilleurs extraits… (une minute environ)');
-      try {
-        clipState = await api('POST', `/videos/${id}/clips/suggest`, {});
-        renderClips();
-        status(clipMsg, 'Extraits proposés.', 'ok');
-      } catch (e) {
-        suggestBtn.disabled = false;
-        status(clipMsg, e.message, 'err');
-      }
-    });
+    suggestBtn.addEventListener('click', () =>
+      busy(suggestBtn, async () => {
+        status(clipMsg, 'Recherche des meilleurs extraits… (une minute environ)');
+        try {
+          clipState = await api('POST', `/videos/${id}/clips/suggest`, {});
+          renderClips();
+          status(clipMsg, 'Extraits proposés.', 'ok');
+        } catch (e) {
+          fail(e, clipMsg);
+        }
+      }),
+    );
 
     const cards = (sg?.clips ?? []).map((c) => {
       const seek = h('button', { class: 'btn secondary small', type: 'button' }, 'Voir');
@@ -1877,14 +1917,16 @@ async function renderEditor(id) {
         ...fileBlock,
         clipsPreview,
         h('div', { class: 'actions' }, fileInput),
-        h('div', { class: 'actions' }, sendBtn, cancelBtn, f ? h('button', { class: 'btn secondary small', type: 'button', onclick: async () => {
+        h('div', { class: 'actions' }, sendBtn, cancelBtn, f ? h('button', { class: 'btn secondary small', type: 'button', onclick: (ev) => {
           if (!confirm('Supprimer le fichier vidéo ? Les clips ne seront plus proposés au public pour cette vidéo.')) return;
-          try {
-            clipState = await api('DELETE', `/videos/${id}/file`);
-            renderClips();
-          } catch (e) {
-            status(clipMsg, e.message, 'err');
-          }
+          busy(ev.currentTarget, async () => {
+            try {
+              clipState = await api('DELETE', `/videos/${id}/file`);
+              renderClips();
+            } catch (e) {
+              fail(e, clipMsg);
+            }
+          });
         } }, 'Supprimer le fichier') : null),
         progress,
         progressText,
@@ -1942,17 +1984,21 @@ async function renderEditor(id) {
       {
         class: 'btn danger small',
         type: 'button',
-        onclick: async () => {
+        onclick: (ev) => {
           if (!confirm('Supprimer cette vidéo et sa transcription ?')) return;
-          try {
-            await api('DELETE', `/videos/${id}`);
-          } catch (e) {
-            if (e instanceof AuthError) return route();
-            alert(e.message);
-            return;
-          }
-          dirty = false;
-          location.hash = '#/';
+          busy(ev.currentTarget, async () => {
+            try {
+              await api('DELETE', `/videos/${id}`);
+            } catch (e) {
+              if (e instanceof AuthError) return renderLogin();
+              alert(e.message);
+              return;
+            }
+            dirty = false;
+            sumArea.value = summary.content;
+            Object.keys(savedInfo).forEach((k) => (savedInfo[k] = f[k].value));
+            location.hash = '#/';
+          });
         },
       },
       'Supprimer la vidéo',
@@ -1960,23 +2006,41 @@ async function renderEditor(id) {
   );
 
   // --- enregistrement
-  const saveMsg = h('span', { class: 'status ok' }, 'À jour');
+  const saveMsg = h('span', { class: 'status ok', role: 'status' }, 'À jour');
   const saveBtn = h('button', { class: 'btn', type: 'button', disabled: true, onclick: () => save() }, 'Enregistrer (Ctrl+S)');
+  const putSegments = (list) => api('PUT', `/videos/${id}/segments`, { segments: list });
   async function save() {
-    if (!dirty) return;
+    if (!dirty || saving) return;
+    saving = true;
     saveBtn.disabled = true;
     status(saveMsg, 'Enregistrement…');
+    // Send a snapshot: edits made during the request stay dirty, and local rows are never dropped
+    const sentRev = rev;
+    const snapshot = segs.map((s) => ({ seg: s, text: s.text, start: s.start_ms }));
+    const payload = segs
+      .filter((s) => s.text.trim())
+      .map(({ start_ms, duration_ms, text, text_original }) => ({ start_ms, duration_ms, text, text_original }));
     try {
-      segs = segs.filter((s) => s.text.trim());
-      await api('PUT', `/videos/${id}/segments`, {
-        segments: segs.map(({ start_ms, duration_ms, text, text_original }) => ({ start_ms, duration_ms, text, text_original })),
-      });
-      segs.forEach((s) => ((s.orig = s.text), (s.origStart = s.start_ms)));
-      renderSegs();
-      markDirty(false);
-    } catch (e) {
-      status(saveMsg, e.message, 'err');
-      saveBtn.disabled = false;
+      try {
+        await putSegments(payload);
+      } catch (err) {
+        if (!(err instanceof AuthError) || !(await reauth())) throw err;
+        await putSegments(payload); // signed in again without leaving the page: nothing typed is lost
+      }
+      for (const { seg, text, start } of snapshot) {
+        if (seg.text === text && seg.start_ms === start) {
+          seg.orig = text;
+          seg.origStart = start;
+        }
+      }
+      segs.forEach((s, i) => rowEls[i]?.classList.toggle('dirty', s.text !== s.orig || s.start_ms !== s.origStart));
+      saving = false;
+      if (rev === sentRev) setDirty(false);
+      else setDirty(true);
+    } catch (err) {
+      saving = false;
+      setDirty(true);
+      status(saveMsg, err instanceof AuthError ? 'Session expirée : reconnecte-toi pour enregistrer.' : err.message, 'err');
     }
   }
 
