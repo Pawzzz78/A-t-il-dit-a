@@ -1,6 +1,6 @@
 // Studio de clips : choix d'une interview, extraits (proposés par l'IA ou libres), sous-titres TikTok (style, police, couleurs,
 // contour, position, taille), musique, cadrage, puis création du MP4 sur le serveur. Aucun innerHTML : tout est posé en nœuds.
-import { BROLL, DESCRIPTION_MAX, LIMITS, PRESETS, SIMILARITY_WARNING, ZOOM, fitDescription, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
+import { BROLL, DESCRIPTION_MAX, LIMITS, PRESETS, SIMILARITY_WARNING, ZOOM, draftFromClip, fitDescription, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
 import { createPhone, el, outlineShadow, rgba } from './studio-preview.js';
 import { fmtDate } from './ui.js';
 
@@ -47,6 +47,16 @@ const api = async (method, path, body) => {
     throw Object.assign(new Error(data.error), { status: 401, gate: true });
   }
   if (!res.ok) throw Object.assign(new Error(data.error || `Erreur ${res.status}`), { status: res.status });
+  return data;
+};
+
+// Resolves to null when the library is disabled (503)
+const libApi = async (method, path, body) => {
+  const res = await fetch(`/api/library${path}`, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined }).catch(() => null);
+  if (!res) throw new Error('Connexion impossible : vérifie ton réseau.');
+  if (res.status === 503) return null;
+  const data = res.status === 204 ? {} : await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(data.error || `Erreur ${res.status}`), { status: res.status, data });
   return data;
 };
 
@@ -249,7 +259,7 @@ async function openEditor(youtubeId) {
       if (!S.extracts.length && !S.jobId) localStorage.removeItem(draftKey);
       else {
         localStorage.setItem(draftKey, JSON.stringify({
-          v: 1, extracts: S.extracts, style: S.style, music: S.music, voice: S.voice, jobId: S.jobId ?? null, delivered: S.delivered === true,
+          v: 1, extracts: S.extracts, style: S.style, music: S.music, voice: S.voice, jobId: S.jobId ?? null, delivered: S.delivered === true, remixOf: S.remixOf ?? null,
           layout: { fit: S.layout.fit, cropX: S.layout.cropX, quality: S.layout.quality, mirror: S.layout.mirror, follow: { on: S.layout.follow.on, subject: S.layout.follow.subject } },
           zoom: { on: S.zoom.on, auto: S.zoom.auto, strength: S.zoom.strength, focus: S.zoom.focus, events: S.zoom.events },
           broll: S.broll,
@@ -266,14 +276,16 @@ async function openEditor(youtubeId) {
   S.onSaved = scheduleDraft;
   const onPageHide = () => { if (draftTimer) saveDraftNow(); };
   addEventListener('pagehide', onPageHide);
-  function restoreDraft() {
-    let d = null;
+  const storedDraft = () => {
     try {
-      d = JSON.parse(localStorage.getItem(draftKey) ?? 'null');
+      return JSON.parse(localStorage.getItem(draftKey) ?? 'null');
     } catch {
-      return false;
+      return null;
     }
+  };
+  function restoreDraft(d = storedDraft()) {
     if (!d || d.v !== 1) return false;
+    S.extracts = [];
     const endMs = videoEndMs();
     let total = 0;
     for (const e of Array.isArray(d.extracts) ? d.extracts : []) {
@@ -303,7 +315,29 @@ async function openEditor(youtubeId) {
       .map((b) => ({ id: b.id, start: b.start, dur: b.dur, thumb: b.thumb, photographer: b.photographer, page: b.page, alt: b.alt }));
     S.jobId = typeof d.jobId === 'string' ? d.jobId : null;
     S.delivered = d.delivered === true;
+    S.remixOf = typeof d.remixOf === 'string' && /^[0-9a-f]{24}$/.test(d.remixOf) ? d.remixOf : null;
+    if (d.edits && typeof d.edits === 'object') {
+      S.edits.clear();
+      for (const [start, text] of Object.entries(d.edits)) {
+        const line = S.lines.find((x) => x.start_ms === Number(start));
+        if (line && typeof text === 'string' && text !== line.text) S.edits.set(line.start_ms, { orig: line.text, text });
+      }
+      saveEdits();
+    }
     return true;
+  }
+
+  async function draftFromLibrary() {
+    const clipId = params.get('clip');
+    if (!clipId) return null;
+    params.delete('clip');
+    const q = params.toString();
+    history.replaceState(null, '', `${location.pathname}${q ? `?${q}` : ''}`);
+    const found = await libApi('GET', `/clips/${encodeURIComponent(clipId)}/request`).catch(() => null);
+    if (!found || found.youtube_id !== S.video.youtube_id) return null;
+    const current = storedDraft();
+    if (current?.extracts?.length && !confirm('Remplacer ton brouillon en cours par les réglages de ce clip ?')) return null;
+    return draftFromClip(found.req, found.id);
   }
 
   // @font-face de toutes les polices (le navigateur ne télécharge que celles qui servent)
@@ -1140,11 +1174,68 @@ async function openEditor(youtubeId) {
     jobBox.dataset.mode = 'done';
     put(jobBox,
       el('p', { class: 'st-job-text ok', role: 'status' }, 'Ta vidéo est prête !'),
+      libraryBox(jobId),
       job.expiresAt != null ? expiry : null,
       el('video', { class: 'st-result', src: url, controls: true, playsinline: '', preload: 'metadata' }),
       el('div', { class: 'st-job-actions' }, publish, el('a', { class: 'btn secondary', href: `${url}?use=download`, download: filename, onclick: () => { markDelivered(); } }, 'Télécharger'), mobile ? share : null,
         el('button', { class: 'btn secondary small', type: 'button', onclick: () => { stopExpiry(); S.delivered = false; setJob(null); showJob(); } }, 'Faire un autre clip')),
       el('p', { class: 'st-help' }, 'Description et source prêtes à coller : « Copier la description » ci-dessus (la vidéo n’affiche pas la source).'));
+  }
+
+  const lib = { jobId: null, clip: null, busy: false, off: false, error: '' };
+  const libPref = () => loadPrefs().library !== false;
+  const setLibPref = (on) => {
+    try {
+      localStorage.setItem(PREF_KEY, JSON.stringify({ ...loadPrefs(), library: on }));
+    } catch {
+      // Storage unavailable: harmless
+    }
+  };
+  const libNode = el('div', { class: 'st-lib' });
+  async function libDo(fn) {
+    lib.busy = true;
+    lib.error = '';
+    renderLib();
+    try {
+      await fn();
+    } catch (e) {
+      lib.error = e.status === 401 ? 'Connecte-toi avec ton compte adhérent pour publier.' : e.message;
+    }
+    lib.busy = false;
+    renderLib();
+  }
+  const libPublish = () => libDo(async () => {
+    const clip = await libApi('POST', '/clips', { job_id: lib.jobId, visibility: 'public', remix_of: S.remixOf ?? null });
+    if (clip === null) lib.off = true;
+    else lib.clip = clip;
+  });
+  function renderLib() {
+    if (lib.off) return put(libNode);
+    const check = el('input', { type: 'checkbox', disabled: lib.busy });
+    check.checked = Boolean(lib.clip);
+    check.addEventListener('change', () => {
+      setLibPref(check.checked);
+      if (check.checked) libPublish();
+      else if (lib.clip) libDo(async () => { await libApi('DELETE', `/clips/${lib.clip.id}`); lib.clip = null; });
+    });
+    const c = lib.clip;
+    put(libNode,
+      el('label', { class: 'st-check' }, check, 'Publier dans la bibliothèque (visible par tous pendant 30 jours)'),
+      c ? el('p', { class: 'st-help' },
+        c.visibility === 'public' ? 'Publié : les autres peuvent le télécharger, le noter et le réutiliser. ' : 'Gardé en privé dans « Mes clips ». ',
+        el('a', { href: `/bibliotheque/?clip=${c.id}` }, 'Voir dans la bibliothèque'), ' · ',
+        el('button', { class: 'st-link', type: 'button', disabled: lib.busy, onclick: () => libDo(async () => { lib.clip = await libApi('PATCH', `/clips/${c.id}`, { visibility: c.visibility === 'public' ? 'private' : 'public' }); }) },
+          c.visibility === 'public' ? 'Passer en privé' : 'Rendre public')) : null,
+      lib.busy ? el('p', { class: 'st-help', role: 'status' }, 'Bibliothèque…') : null,
+      lib.error ? el('p', { class: 'st-help warn', role: 'alert' }, lib.error) : null);
+  }
+  function libraryBox(jobId) {
+    if (lib.jobId !== jobId) {
+      Object.assign(lib, { jobId, clip: null, busy: false, error: '' });
+      if (libPref()) libPublish();
+    }
+    renderLib();
+    return libNode;
   }
 
   function showJob() {
@@ -1527,7 +1618,9 @@ async function openEditor(youtubeId) {
     toastEl,
   );
 
-  const restored = restoreDraft();
+  const fromClip = await draftFromLibrary();
+  const restored = fromClip ? restoreDraft(fromClip) : restoreDraft();
+  if (fromClip && restored) saveDraftNow();
   renderPresets();
   renderFonts();
   renderExtracts();

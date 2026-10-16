@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createBudget } from '../src/budget.js';
-import { ipKey } from '../src/ip.js';
+import { createLimiter, ipKey } from '../src/ip.js';
 
 test('clé de limitation : IPv4 telle quelle, IPv6 regroupée par /64', () => {
   assert.equal(ipKey('203.0.113.7'), '203.0.113.7');
@@ -56,4 +56,17 @@ test('téléchargement sûr : taille comptée même sans Content-Length, hôtes 
   const redirect = async (u) => (seen.push(u.hostname), new Response(null, { status: 302, headers: { location: 'https://evil.test/x' } }));
   await assert.rejects(safeDownload('https://ok.test/a', { ...opts, fetchImpl: redirect }), (e) => e.code === 'host');
   assert.deepEqual(seen, ['ok.test']);
+});
+
+test('createLimiter : plafond par clé sur une heure glissante, clés indépendantes, remise à zéro', () => {
+  const l = createLimiter();
+  assert.deepEqual([l.take('a', 2), l.take('a', 2), l.take('a', 2)], [true, true, false]);
+  assert.equal(l.take('b', 2), true);
+  l.clear();
+  assert.equal(l.take('a', 2), true);
+  const tiny = createLimiter({ windowMs: 1 });
+  tiny.take('x', 1);
+  const until = Date.now() + 5;
+  while (Date.now() < until);
+  assert.equal(tiny.take('x', 1), true, 'les passages expirés ne comptent plus');
 });

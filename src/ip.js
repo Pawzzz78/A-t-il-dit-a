@@ -26,3 +26,22 @@ export function trimMap(map, max, expired) {
     map.delete(key);
   }
 }
+
+/** Sliding one-hour limiter per key: take(key, max) -> false once `max` hits are reached. */
+export function createLimiter({ windowMs = 3600_000, maxKeys = 5000 } = {}) {
+  const recent = new Map();
+  const take = (key, max) => {
+    const now = Date.now();
+    const list = (recent.get(key) ?? []).filter((t) => now - t < windowMs);
+    recent.delete(key);
+    if (list.length >= max) {
+      recent.set(key, list);
+      return false;
+    }
+    list.push(now);
+    recent.set(key, list);
+    trimMap(recent, maxKeys, (l) => !l.length || now - l[l.length - 1] >= windowMs);
+    return true;
+  };
+  return { take, clear: () => recent.clear() };
+}

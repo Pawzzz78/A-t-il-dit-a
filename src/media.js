@@ -34,6 +34,9 @@ export function videoFilePath(name) {
   return path.join(storageDir(), 'videos', name);
 }
 
+/** Version of an interview file: changes when the admin replaces the video. */
+export const stampOf = (video) => `${video.file_name}|${video.file_size}|${video.file_uploaded_at instanceof Date ? video.file_uploaded_at.toISOString() : video.file_uploaded_at}`;
+
 const ensureDirs = async () => {
   await fs.mkdir(path.join(storageDir(), 'uploads'), { recursive: true });
   await fs.mkdir(path.join(storageDir(), 'videos'), { recursive: true });

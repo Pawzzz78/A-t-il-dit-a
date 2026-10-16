@@ -183,3 +183,58 @@ CREATE TABLE IF NOT EXISTS wall_clips (
 );
 CREATE INDEX IF NOT EXISTS wall_clips_created_idx ON wall_clips (created_at DESC);
 CREATE TABLE IF NOT EXISTS wall_hidden_authors (author TEXT PRIMARY KEY);
+
+-- Clip library; owner_key is an HMAC of the owner (member or anonymous cookie), never shown publicly
+CREATE TABLE IF NOT EXISTS library_clips (
+  id              TEXT PRIMARY KEY,
+  owner_key       TEXT NOT NULL,
+  kind            TEXT NOT NULL DEFAULT 'clip',
+  remix_of        TEXT,
+  video_id        INTEGER REFERENCES videos(id) ON DELETE CASCADE,
+  youtube_id      TEXT NOT NULL,
+  video_title     TEXT NOT NULL DEFAULT '',
+  job_id          TEXT UNIQUE,
+  visibility      TEXT NOT NULL DEFAULT 'public',
+  hidden          BOOLEAN NOT NULL DEFAULT FALSE,
+  req             JSONB,
+  duration_s      REAL NOT NULL DEFAULT 0,
+  quality         TEXT NOT NULL DEFAULT 'hd',
+  file_stamp      TEXT,
+  text_hash       TEXT,
+  file_state      TEXT NOT NULL DEFAULT 'active',
+  file_version    INTEGER NOT NULL DEFAULT 1,
+  size_bytes      BIGINT NOT NULL DEFAULT 0,
+  has_poster      BOOLEAN NOT NULL DEFAULT FALSE,
+  file_expires_at TIMESTAMPTZ,
+  downloads       INTEGER NOT NULL DEFAULT 0,
+  rating_sum      INTEGER NOT NULL DEFAULT 0,
+  rating_count    INTEGER NOT NULL DEFAULT 0,
+  reports         INTEGER NOT NULL DEFAULT 0,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS library_clips_public_idx ON library_clips (created_at DESC) WHERE visibility = 'public' AND NOT hidden AND kind = 'clip';
+CREATE INDEX IF NOT EXISTS library_clips_owner_idx ON library_clips (owner_key, created_at DESC);
+CREATE INDEX IF NOT EXISTS library_clips_expiry_idx ON library_clips (file_expires_at) WHERE file_state = 'active';
+CREATE TABLE IF NOT EXISTS library_downloads (
+  clip_id    TEXT NOT NULL REFERENCES library_clips(id) ON DELETE CASCADE,
+  who        TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (clip_id, who)
+);
+CREATE TABLE IF NOT EXISTS library_ratings (
+  clip_id    TEXT NOT NULL REFERENCES library_clips(id) ON DELETE CASCADE,
+  owner_key  TEXT NOT NULL,
+  stars      SMALLINT NOT NULL CHECK (stars BETWEEN 1 AND 5),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (clip_id, owner_key)
+);
+CREATE TABLE IF NOT EXISTS library_reports (
+  clip_id    TEXT NOT NULL REFERENCES library_clips(id) ON DELETE CASCADE,
+  owner_key  TEXT NOT NULL,
+  reason     TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (clip_id, owner_key)
+);
+ALTER TABLE library_reports ADD COLUMN IF NOT EXISTS visitor TEXT;
+CREATE TABLE IF NOT EXISTS library_hidden_owners (owner_key TEXT PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT now());

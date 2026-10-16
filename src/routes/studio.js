@@ -14,14 +14,15 @@ import { facesStatus, framingForRequest } from '../studio/faces.js';
 import { recordEvent } from '../studio/stats.js';
 import { ensureImage, searchPhotos, stockEnabled, stockProvider } from '../studio/stock.js';
 import { parseYoutubeId } from '../youtube.js';
+import { ensureOwner, libraryConfigured } from '../library/owner.js';
 
 export const studioRouter = Router();
 studioRouter.use(express.json({ limit: '100kb' }));
 
 
-const CLIPPABLE = `v.clips_enabled AND v.file_name IS NOT NULL AND v.norm_text <> ''`;
-const COLS = `v.id, v.youtube_id, v.title, v.channel, v.published_at, v.thumbnail_url, v.file_name, v.file_size,
-  v.file_duration_s, v.file_has_audio, v.file_width, v.file_height, v.file_uploaded_at`;
+export const CLIPPABLE = `v.clips_enabled AND v.file_name IS NOT NULL AND v.norm_text <> ''`;
+export const COLS = `v.id, v.youtube_id, v.title, v.channel, v.published_at, v.thumbnail_url, v.file_name, v.file_size,
+  v.file_duration_s, v.file_has_audio, v.file_width, v.file_height, v.file_uploaded_at, v.text_hash`;
 
 async function loadVideo(youtubeId) {
   const id = parseYoutubeId(String(youtubeId ?? ''));
@@ -126,7 +127,7 @@ studioRouter.get(
 );
 
 /** Lignes de la transcription ({ start_ms, end_ms, text }) d'une vidéo. */
-async function linesOf(videoId) {
+export async function linesOf(videoId) {
   const { rows } = await pool.query('SELECT start_ms, duration_ms, text FROM segments WHERE video_id = $1 ORDER BY position', [videoId]);
   return prepareSegments(rows);
 }
@@ -186,7 +187,8 @@ studioRouter.post(
     await ensureMusic();
     const request = normalizeRequest(req.body, v);
     request.framing = await framingForRequest(v, request);
-    const job = await enqueueRender({ video: v, req: request, lines: await linesOf(v.id), ip: req.ip });
+    const owner = libraryConfigured() ? ensureOwner(req, res) : null;
+    const job = await enqueueRender({ video: v, req: request, lines: await linesOf(v.id), ip: req.ip, owner: owner?.key ?? null });
     await recordEvent('render', { jobId: job.id, youtubeId: v.youtube_id, ip: req.ip });
     res.status(202).json(publicJob(job));
   }),

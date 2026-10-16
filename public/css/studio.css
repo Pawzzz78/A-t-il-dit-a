@@ -322,3 +322,6 @@
 .ph-play.playing:focus-visible, .ph-screen:hover .ph-play.playing { opacity: 1; }
 @media (max-width: 900px) { .st-nextbar { padding: 0 1rem 1.4rem; } .st-nextbar .btn { width: 100%; } }
 @media (prefers-reduced-motion: reduce) { .ph-hint, .sub-text.pop { animation: none; } }
+
+.st-lib { margin: .6rem 0; }
+.st-lib:empty { display: none; }
