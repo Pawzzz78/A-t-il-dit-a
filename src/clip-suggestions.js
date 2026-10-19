@@ -31,6 +31,10 @@ const WINDOW_OVERLAP = 12; // lignes reprises d'une tranche à l'autre
 const OVERLONG_TOLERANCE_S = 15; // au-delà de maxS + ceci, un extrait est écarté
 const FALLBACK_LAST_MS = 4000;
 const MAX_GAP_MS = 8000;
+const SPEECH_MS_PER_CHAR = 70; // ≈ 14 caractères parlés par seconde
+const SPLIT_ABOVE_S = 12; // une ligne plus longue est découpée en phrases (transcription à gros morceaux)
+const LINE_MIN_S = 3; // on ne coupe pas avant d'avoir au moins ceci
+const LINE_MAX_S = 14; // sans ponctuation, on coupe au plus tard ici
 
 const systemPrompt = (perWindow) => `Tu es monteur de vidéos virales pour TikTok et Reels. Dans une interview de ${speakerName()}, tu repères les moments qui ont le plus de chances de devenir viraux et de bien marcher sur TikTok.
 Tu reçois la transcription découpée en lignes numérotées « [n] mm:ss texte ». Propose jusqu'à ${perWindow} extraits, classés du plus au moins viral. Propose-en autant que possible : vise au moins un extrait toutes les 2 à 3 minutes d'interview, répartis sur toute la transcription, et ne garde que des moments vraiment forts.
@@ -66,10 +70,62 @@ export function prepareSegments(rows) {
     const next = segs[i + 1]?.start_ms;
     let end = s.dur ? s.start_ms + s.dur : next ?? s.start_ms + FALLBACK_LAST_MS;
     if (next != null && end > next) end = next; // pas de chevauchement avec la ligne suivante
-    // sans durée connue : une longue pause avant la ligne suivante n'est pas de la parole, on ne l'inclut pas
-    if (!s.dur && next != null && end - s.start_ms > MAX_GAP_MS) end = s.start_ms + MAX_GAP_MS;
+    // sans durée connue : une longue pause avant la ligne suivante n'est pas de la parole, on ne l'inclut pas ;
+    // mais un long texte demande son temps de parole (gros morceaux de transcription)
+    const spoken = Math.max(MAX_GAP_MS, s.text.length * SPEECH_MS_PER_CHAR);
+    if (!s.dur && next != null && end - s.start_ms > spoken) end = s.start_ms + spoken;
     return { start_ms: s.start_ms, end_ms: Math.max(end, s.start_ms + 500), text: s.text };
   });
+}
+
+const SENTENCE_END = /[.!?…]["»”')\]]*$/;
+const PAUSE = /[,;:]["»”')\]]*$/;
+/** Poids d'un mot pour répartir une durée : sa longueur, plus une pause après la ponctuation (même règle que l'éditeur du studio). */
+function weight(token) {
+  const letters = token.replace(/[^\p{L}\p{N}]/gu, '').length;
+  return Math.max(2, letters) + (SENTENCE_END.test(token) ? 3 : PAUSE.test(token) ? 1.5 : 0);
+}
+
+/**
+ * Découpe en phrases les lignes trop longues (transcription à gros morceaux, plus longs que la durée d'un extrait) pour que le modèle
+ * puisse choisir de plus petites tranches. Les horaires à l'intérieur d'une ligne sont estimés comme dans l'éditeur du studio : la durée
+ * est répartie sur les mots selon leur longueur. Le texte n'est jamais modifié, seulement coupé entre deux mots.
+ */
+export function refineSegments(segs) {
+  const out = [];
+  for (const seg of segs) {
+    const span = seg.end_ms - seg.start_ms;
+    if (span / 1000 <= SPLIT_ABOVE_S) {
+      out.push(seg);
+      continue;
+    }
+    const tokens = seg.text.split(' ');
+    const weights = tokens.map(weight);
+    const perMs = span / weights.reduce((a, b) => a + b, 0); // durée d'une unité de poids
+    const pieces = [];
+    let from = 0;
+    let acc = 0;
+    tokens.forEach((token, i) => {
+      acc += weights[i] * perMs;
+      const last = i === tokens.length - 1;
+      const cut = !last && ((SENTENCE_END.test(token) && acc >= LINE_MIN_S * 1000) || (PAUSE.test(token) && acc >= LINE_MAX_S * 800) || acc >= LINE_MAX_S * 1000);
+      if (cut || last) {
+        pieces.push({ from, to: i + 1, weight: acc / perMs });
+        from = i + 1;
+        acc = 0;
+      }
+    });
+    let at = seg.start_ms;
+    let used = 0;
+    const total = pieces.reduce((a, p) => a + p.weight, 0);
+    pieces.forEach((piece, k) => {
+      used += piece.weight;
+      const end = k === pieces.length - 1 ? seg.end_ms : Math.max(at + 500, seg.start_ms + Math.round((span * used) / total));
+      out.push({ start_ms: at, end_ms: end, text: tokens.slice(piece.from, piece.to).join(' ') });
+      at = end;
+    });
+  }
+  return out;
 }
 
 /** Tranches de lignes [from, to] (incluses) d'environ WINDOW_CHARS caractères, avec un petit chevauchement. */
@@ -180,8 +236,9 @@ export function mergeClips(clips, max = CLIP_LIMITS.maxSuggestions) {
 
 /** Demande des extraits au modèle pour une liste de segments. `complete` est injectable pour les tests. */
 export async function suggestClipsFor(rows, { complete = completeWithOpenRouter, model = clipModel() } = {}) {
-  const segs = prepareSegments(rows);
-  if (segs.length < 3) throw new HttpError(409, 'Transcription trop courte pour proposer des extraits.');
+  const coarse = prepareSegments(rows);
+  if (coarse.length < 3) throw new HttpError(409, 'Transcription trop courte pour proposer des extraits.');
+  const segs = refineSegments(coarse); // gros morceaux : découpés en phrases pour pouvoir choisir des tranches plus fines
   const windows = windowsFor(segs);
   const found = [];
   await forEachLimit(windows.length, 3, async (w) => {

@@ -2,7 +2,7 @@
 // (la partie base de données nécessite Postgres via DATABASE_URL, sinon ignorée).
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { CLIP_LIMITS, buildCaption, buildClip, mergeClips, parseClipJson, prepareSegments, windowsFor } from '../src/clip-suggestions.js';
+import { CLIP_LIMITS, buildCaption, buildClip, mergeClips, parseClipJson, prepareSegments, refineSegments, suggestClipsFor, windowsFor } from '../src/clip-suggestions.js';
 import { LlmError } from '../src/openrouter.js';
 
 /** n segments de `step` secondes, texte « phrase i ». */
@@ -56,6 +56,64 @@ test('extrait : horaires de la transcription, durée contrôlée, titre nettoyé
   // beaucoup trop court et rien à prolonger : écarté
   assert.equal(buildClip({ start: 59, end: 59, title: 'fin' }, segs, win), null); // 5 s : sous le minimum toléré (minS − 5)
   assert.equal(buildClip({ start: 58, end: 59, title: 'fin' }, segs, win).duration_s, 10); // 10 s : encore accepté (minimum 15 s, 5 s de tolérance)
+});
+
+/** Gros morceaux : `n` segments de `step` secondes, chacun un long paragraphe de phrases (≈ 14 caractères parlés par seconde). */
+const bigRows = (n, step = 90, withDuration = true) =>
+  Array.from({ length: n }, (_, i) => {
+    const sentences = [];
+    for (let len = 0, k = 0; len < step * 14; k++) {
+      const sentence = `Voici l'idée numéro ${i}-${k} que je défends, parce que les Français attendent des réponses claires et concrètes.`;
+      sentences.push(sentence);
+      len += sentence.length + 1;
+    }
+    return { start_ms: i * step * 1000, ...(withDuration ? { duration_ms: step * 1000 } : {}), text: sentences.join(' ') };
+  });
+
+/** Faux modèle : propose, dans la tranche reçue, des extraits de 3 lignes consécutives toutes les 10 lignes. */
+const pickEvery10 = async (req) => {
+  const nums = [...req.user.matchAll(/^\[(\d+)\] /gm)].map((m) => Number(m[1]));
+  const clips = [];
+  for (let k = 0; k + 3 < nums.length; k += 10) clips.push({ start: nums[k], end: nums[k + 2], title: `Extrait ${nums[k]}`, why: 'fort', description: 'à voir', hashtags: ['#a', '#b'], score: 7 });
+  return JSON.stringify({ clips });
+};
+
+test('gros morceaux : une ligne trop longue est découpée en phrases aux horaires estimés', () => {
+  const segs = prepareSegments(bigRows(3));
+  const fine = refineSegments(segs);
+  assert.ok(fine.length > segs.length * 5, 'chaque gros morceau donne plusieurs lignes');
+  assert.equal(fine[0].start_ms, 0);
+  assert.equal(fine.at(-1).end_ms, segs.at(-1).end_ms);
+  for (let i = 0; i < fine.length; i++) {
+    assert.ok(fine[i].end_ms > fine[i].start_ms, 'durée positive');
+    assert.ok((fine[i].end_ms - fine[i].start_ms) / 1000 <= 16, 'lignes de 16 s au plus');
+    if (i) assert.equal(fine[i].start_ms, fine[i - 1].end_ms, 'sans trou ni chevauchement');
+  }
+  // les phrases se terminent par un point : on coupe aux fins de phrases
+  assert.ok(fine.filter((l) => /[.!?]$/.test(l.text)).length >= fine.length - 1);
+  // le texte n'est ni perdu ni modifié
+  assert.equal(fine.map((l) => l.text).join(' '), segs.map((s) => s.text).join(' '));
+  // des lignes déjà courtes restent telles quelles
+  const short = prepareSegments(rows(10));
+  assert.deepEqual(refineSegments(short), short);
+});
+
+test('gros morceaux : des extraits utilisables sont proposés même quand chaque morceau dure plus que la durée maximale', async () => {
+  for (const withDuration of [true, false]) {
+    const clips = await suggestClipsFor(bigRows(14, 90, withDuration), { complete: pickEvery10, model: 'faux' });
+    assert.ok(clips.length >= 3, `des extraits sont trouvés (durées connues : ${withDuration})`);
+    for (const c of clips) {
+      assert.ok(c.duration_s >= CLIP_LIMITS.minS - 5 && c.duration_s <= CLIP_LIMITS.maxS + 15, `durée ${c.duration_s} s dans les limites`);
+      assert.ok(c.start_ms >= 0 && c.end_ms <= 14 * 90_000 + 1000);
+      assert.match(c.text, /Voici l'idée/);
+    }
+  }
+});
+
+test('segments : sans durée, un long texte garde le temps de parole qu\'il demande', () => {
+  const text = 'mot '.repeat(250).trim(); // ≈ 1 000 caractères : environ 70 s de parole
+  const [seg] = prepareSegments([{ start_ms: 0, text }, { start_ms: 120_000, text: 'suite' }]);
+  assert.ok(seg.end_ms >= 60_000 && seg.end_ms <= 120_000, `fin estimée à ${seg.end_ms} ms`);
 });
 
 test('fusion : meilleure note d\'abord, pas de chevauchement, nombre borné', () => {
