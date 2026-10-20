@@ -8,7 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { ApifyError, runActor } from '../src/wall/apify.js';
-import { coverUrlAllowed, normalizeItem, normalizeItems, refreshDue, wallConfig } from '../src/wall/wall.js';
+import { coverUrlAllowed, enhanceStoredCovers, normalizeItem, normalizeItems, refreshDue, wallConfig, washedOut } from '../src/wall/wall.js';
 
 let hasFfmpeg = true;
 try {
@@ -425,5 +425,86 @@ test('classement : 13 clips au plus, les meilleurs d\'après le score ; les ongl
 test('mur : classement ou période inconnus refusés, même hérités de l\'objet', { skip: !enabled }, async () => {
   for (const q of ['sort=toString', 'period=constructor', 'sort=__proto__']) {
     assert.equal((await fetch(`${base}/api/wall?${q}`)).status, 400, q);
+  }
+});
+
+// --- vignettes délavées (fondu blanc au début de la vidéo) ---------------------------------------------------------------------------
+
+/** Image de test : `testsrc2` dont les trois canaux sont ramenés dans une plage (expression sur `val`), comme un voile blanc. */
+const makeImage = (file, lut) => execFileSync('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=360x640:d=1', '-frames:v', '1', '-vf', lut ? `lutrgb=r=${lut}:g=${lut}:b=${lut}` : 'null', '-q:v', '3', file]);
+/** 10e et 90e centiles de luminance d'une image. */
+const lumaSpread = (file) => {
+  const out = execFileSync('ffmpeg', ['-nostdin', '-v', 'error', '-i', file, '-frames:v', '1', '-vf', 'signalstats,metadata=print:file=-', '-f', 'null', '-']).toString();
+  const n = (k) => Number(new RegExp(`signalstats\\.${k}=([\\d.]+)`).exec(out)[1]);
+  return { low: n('YLOW'), high: n('YHIGH') };
+};
+
+test('vignettes : seules les images délavées (sans vrai noir, sans contraste) sont reconnues', { skip: !hasFfmpeg }, async () => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'wall-washed-'));
+  try {
+    const f = (name) => path.join(tmp, name);
+    makeImage(f('normale.jpg'), null);
+    makeImage(f('voilee.jpg'), '200+val*0.2'); // tons entre 200 et 251 : le fondu blanc
+    makeImage(f('nuit.jpg'), 'val*0.2'); // sombre mais contrastée dans sa plage : pas un voile blanc
+    makeImage(f('claire.jpg'), '160+val*0.42'); // fond blanc d'une infographie : contraste suffisant
+    assert.equal(await washedOut(f('normale.jpg')), false);
+    assert.equal(await washedOut(f('voilee.jpg')), true);
+    assert.equal(await washedOut(f('nuit.jpg')), false);
+    assert.equal(await washedOut(f('claire.jpg')), false);
+    assert.equal(await washedOut(f('absente.jpg')), false); // jamais d'erreur
+    await fs.writeFile(f('texte.jpg'), 'pas une image');
+    assert.equal(await washedOut(f('texte.jpg')), false);
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('vignettes : celles déjà enregistrées et délavées retrouvent leur contraste, les autres ne bougent pas', { skip: !hasFfmpeg }, async () => {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'wall-washed-'));
+  const saved = process.env.STORAGE_DIR;
+  process.env.STORAGE_DIR = tmp;
+  try {
+    const dirCovers = path.join(tmp, 'wall', 'covers');
+    await fs.mkdir(dirCovers, { recursive: true });
+    makeImage(path.join(dirCovers, '7000000000000000301.jpg'), '200+val*0.2');
+    makeImage(path.join(dirCovers, '7000000000000000302.jpg'), null);
+    const before = await fs.readFile(path.join(dirCovers, '7000000000000000302.jpg'));
+    await fs.writeFile(path.join(dirCovers, 'notes.txt'), 'autre fichier');
+    const wash = lumaSpread(path.join(dirCovers, '7000000000000000301.jpg'));
+    assert.ok(wash.low >= 190 && wash.high - wash.low < 60, JSON.stringify(wash));
+    assert.equal(await enhanceStoredCovers(), 1);
+    const after = lumaSpread(path.join(dirCovers, '7000000000000000301.jpg'));
+    assert.ok(after.low < 80 && after.high - after.low > 100, `contraste retrouvé : ${JSON.stringify(after)}`);
+    assert.equal(await washedOut(path.join(dirCovers, '7000000000000000301.jpg')), false);
+    assert.deepEqual(await fs.readFile(path.join(dirCovers, '7000000000000000302.jpg')), before); // fichier intact
+    assert.equal(await enhanceStoredCovers(), 0); // rien à refaire : pas de recompression à chaque passage
+    assert.equal(await enhanceStoredCovers(), 0);
+    assert.deepEqual((await fs.readdir(dirCovers)).sort(), ['7000000000000000301.jpg', '7000000000000000302.jpg', 'notes.txt']); // aucun fichier temporaire
+  } finally {
+    process.env.STORAGE_DIR = saved;
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test('vignettes : une vignette délavée téléchargée est corrigée dès son enregistrement', { skip: !enabled }, async () => {
+  const original = cover;
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'wall-washed-'));
+  try {
+    const faded = path.join(tmp, 'v.jpg');
+    makeImage(faded, '200+val*0.2');
+    cover = await fs.readFile(faded);
+    const id = '7000000000000000401';
+    assert.equal(await wall.saveCover({ id, cover_url: `${coverBase}/cover/${id}.jpg` }), true);
+    const stored = lumaSpread(wall.coverPath(id));
+    assert.ok(stored.low < 80 && stored.high - stored.low > 100, JSON.stringify(stored));
+    cover = original; // une vignette normale n'est pas retouchée
+    const normal = '7000000000000000402';
+    await wall.saveCover({ id: normal, cover_url: `${coverBase}/cover/${normal}.jpg` });
+    assert.equal(await washedOut(wall.coverPath(normal)), false);
+  } finally {
+    cover = original;
+    await fs.rm(tmp, { recursive: true, force: true });
+    await fs.rm(wall.coverPath('7000000000000000401'), { force: true });
+    await fs.rm(wall.coverPath('7000000000000000402'), { force: true });
   }
 });

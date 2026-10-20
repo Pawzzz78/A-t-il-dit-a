@@ -204,7 +204,26 @@ async function downloadCover(url, fetchImpl) {
   }
 }
 
-/** Copie la vignette d'un clip sur le volume, réduite en JPEG de 360 px de large. Renvoie true si elle est en place. */
+// Certaines vidéos commencent par un fondu blanc : leur vignette est alors délavée (grisâtre, sans vrai noir) et la carte paraît « déjà vue ».
+// On la reconnaît à ses tons sombres absents (10e centile de luminance très clair) et à son faible écart de contraste, puis on étire ses tons.
+const WASHED_MIN_DARK = 150; // luminance (0-255) du 10e centile au-delà de laquelle il n'y a plus de vrai noir
+const WASHED_MAX_SPREAD = 70; // écart entre le 90e et le 10e centile en dessous duquel l'image est plate
+const STRETCH = 'normalize=independence=0:smoothing=0';
+
+/** Vignette délavée ? (jamais d'erreur : en cas de doute, ou sans ffmpeg, l'image reste telle quelle) */
+export async function washedOut(file) {
+  try {
+    const { stdout } = await run('ffmpeg', ['-nostdin', '-v', 'error', '-i', file, '-frames:v', '1', '-vf', 'signalstats,metadata=print:file=-', '-f', 'null', '-'], { timeout: 30_000 });
+    const num = (key) => Number(new RegExp(`signalstats\\.${key}=([\\d.]+)`).exec(stdout)?.[1]);
+    const low = num('YLOW');
+    const high = num('YHIGH');
+    return Number.isFinite(low) && Number.isFinite(high) && low >= WASHED_MIN_DARK && high - low < WASHED_MAX_SPREAD;
+  } catch {
+    return false;
+  }
+}
+
+/** Copie la vignette d'un clip sur le volume, réduite en JPEG de 360 px de large (tons étirés si elle est délavée). Renvoie true si elle est en place. */
 export async function saveCover(clip, fetchImpl = fetch) {
   if (!clip.cover_url) return false;
   const buf = await downloadCover(clip.cover_url, fetchImpl);
@@ -213,7 +232,8 @@ export async function saveCover(clip, fetchImpl = fetch) {
   const src = `${tmp}.src`;
   await fs.writeFile(src, buf);
   try {
-    await run('ffmpeg', ['-v', 'error', '-y', '-i', src, '-frames:v', '1', '-vf', 'scale=360:-2', '-q:v', '4', '-f', 'image2', tmp], { timeout: 30_000 });
+    const filters = (await washedOut(src)) ? `scale=360:-2,${STRETCH}` : 'scale=360:-2';
+    await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-i', src, '-frames:v', '1', '-vf', filters, '-q:v', '4', '-f', 'image2', tmp], { timeout: 30_000 });
     await fs.rename(tmp, coverPath(clip.id));
   } finally {
     await fs.rm(src, { force: true });
@@ -221,6 +241,27 @@ export async function saveCover(clip, fetchImpl = fetch) {
   }
   await pool.query('UPDATE wall_clips SET has_cover = TRUE WHERE id = $1', [clip.id]);
   return true;
+}
+
+/** Corrige sur place les vignettes déjà enregistrées qui sont délavées. Renvoie leur nombre. */
+export async function enhanceStoredCovers() {
+  let fixed = 0;
+  for (const name of await fs.readdir(coversDir()).catch(() => [])) {
+    if (!/^\d+\.jpg$/.test(name)) continue;
+    const file = path.join(coversDir(), name);
+    if (!(await washedOut(file))) continue;
+    const tmp = `${file}.tmp`;
+    try {
+      await run('ffmpeg', ['-nostdin', '-v', 'error', '-y', '-i', file, '-frames:v', '1', '-vf', STRETCH, '-q:v', '3', '-f', 'image2', tmp], { timeout: 30_000 });
+      await fs.rename(tmp, file);
+      fixed++;
+    } catch (e) {
+      console.warn(`mur : vignette ${name} : ${e.message}`);
+    } finally {
+      await fs.rm(tmp, { force: true });
+    }
+  }
+  return fixed;
 }
 
 // --- actualisation ------------------------------------------------------------------------------------------------------------------
@@ -304,6 +345,7 @@ async function doRefresh(cfg, { trigger, startedAt, fetchImpl }) {
         console.warn(`mur : vignette ${c.id} : ${e.message}`);
       }
     }
+    await enhanceStoredCovers().catch((e) => console.warn(`mur : vignettes délavées : ${e.message}`));
     // champs du premier élément reçu : si le format de l'acteur change, l'admin voit tout de suite ce qu'il contient
     const sample = items.find((x) => x && typeof x === 'object');
     const done = { ...record, status: 'ok', finished_at: new Date().toISOString(), received: items.length, kept: clips.length, added, skipped, covers, sample_keys: sample ? Object.keys(sample).slice(0, 40) : [], cost_usd: Number.isFinite(apifyRun.usageTotalUsd) ? apifyRun.usageTotalUsd : null };
@@ -335,6 +377,7 @@ export function startWallScheduler() {
   const safe = () => tick().catch((e) => console.error(`mur : ${e.message}`));
   setTimeout(safe, 60_000).unref();
   setInterval(safe, 10 * 60_000).unref();
+  setTimeout(() => enhanceStoredCovers().catch((e) => console.warn(`mur : vignettes délavées : ${e.message}`)), 90_000).unref(); // vignettes déjà enregistrées
 }
 
 // --- modération et vue d'ensemble pour l'admin ----------------------------------------------------------------------------
