@@ -1009,7 +1009,7 @@ async function renderLibraryAdmin() {
 
 async function renderSync() {
   const gen = routeGen;
-  const o = await api('GET', '/sync/overview');
+  const [o, files] = await Promise.all([api('GET', '/sync/overview'), api('GET', '/sync/files')]);
   if (gen !== routeGen) return; // left the page meanwhile: never repaint over another page
   let inFlight = 0;
   const counters = {};
@@ -1276,7 +1276,44 @@ async function renderSync() {
       )
     : null;
 
-  $app.replaceChildren(...[state, summariesPanel, channels, failed].filter(Boolean));
+  // --- téléchargement automatique des vidéos (yt-dlp)
+  const gb = (b) => (b >= 1073741824 ? `${(b / 1073741824).toFixed(1).replace('.', ',')} Go` : `${Math.round(b / 1048576)} Mo`);
+  const filesPanel = h(
+    'section',
+    { class: 'panel' },
+    h('h2', {}, 'Téléchargement automatique des vidéos'),
+    h(
+      'p',
+      { class: 'status' },
+      `Dès qu’une vidéo a sa transcription, son fichier est téléchargé (${files.max_height} p au plus, vidéos de ${Math.round(files.min_duration_s / 60)} min ou plus), les clips sont autorisés et les extraits proposés. `,
+      `Les fichiers téléchargés par le site sont supprimés après ${files.retention_days} jours ; ceux déposés à la main ne le sont jamais.`,
+    ),
+    files.enabled
+      ? h('p', { class: 'status ok' }, `▶ Actif (yt-dlp ${files.ytdlp_version ?? 'pas encore installé'}).`)
+      : h('p', { class: 'notice' }, 'Désactivé. Pour l’activer, le développeur ajoute la variable AUTO_DOWNLOAD=on sur le serveur.'),
+    h(
+      'div',
+      { class: 'stats' },
+      h('div', { class: 'stat' }, h('div', { class: 'n' }, String(files.waiting)), h('div', { class: 'l' }, 'à télécharger')),
+      h('div', { class: 'stat' }, h('div', { class: 'n' }, String(files.downloaded)), h('div', { class: 'l' }, 'téléchargées')),
+      h('div', { class: 'stat' }, h('div', { class: 'n' }, gb(files.bytes)), h('div', { class: 'l' }, 'espace utilisé')),
+      h('div', { class: 'stat' }, h('div', { class: 'n' }, files.free_mb == null ? '—' : gb(files.free_mb * 1048576)), h('div', { class: 'l' }, 'espace libre')),
+    ),
+    files.cooldown_until ? h('p', { class: 'status err' }, `Téléchargements suspendus jusqu’à ${when(files.cooldown_until)} (YouTube bloque le serveur).`) : null,
+    files.last_error ? h('p', { class: 'status err' }, `Dernière erreur : ${files.last_error.replace(/^\S+ — /, '')}`) : null,
+    files.enabled
+      ? h(
+          'div',
+          { class: 'actions' },
+          h('button', { class: 'btn', type: 'button', onclick: go(() => api('POST', '/sync/files/run', {}), 'Téléchargement lancé : il peut durer quelques minutes.') }, 'Télécharger maintenant'),
+          files.with_error || files.cooldown_until
+            ? h('button', { class: 'btn secondary', type: 'button', onclick: go(async () => `${(await api('POST', '/sync/files/retry', {})).reset} vidéo(s) remise(s) en file.`) }, 'Réessayer les échecs')
+            : null,
+        )
+      : null,
+  );
+
+  $app.replaceChildren(...[state, summariesPanel, filesPanel, channels, failed].filter(Boolean));
   cleanup(); // a re-render (timer, action) replaces the previous timer instead of adding one
 
   const sigOf = (x) =>

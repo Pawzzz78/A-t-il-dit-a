@@ -238,3 +238,12 @@ CREATE TABLE IF NOT EXISTS library_reports (
 );
 ALTER TABLE library_reports ADD COLUMN IF NOT EXISTS visitor TEXT;
 CREATE TABLE IF NOT EXISTS library_hidden_owners (owner_key TEXT PRIMARY KEY, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+
+-- Téléchargement automatique des vidéos (yt-dlp) : file_source = 'auto' pour un fichier récupéré par le site (seuls ces fichiers sont
+-- supprimés après VIDEO_RETENTION_DAYS jours), NULL pour un fichier déposé à la main (jamais supprimé automatiquement).
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS file_source      TEXT;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS fetch_attempts   INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS fetch_next_at    TIMESTAMPTZ;
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS fetch_error      TEXT;
+-- auto_enabled_at : clips autorisés automatiquement, une seule fois
+ALTER TABLE videos ADD COLUMN IF NOT EXISTS auto_enabled_at  TIMESTAMPTZ;

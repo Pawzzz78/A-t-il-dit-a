@@ -16,6 +16,7 @@ import { startSummaryScheduler } from './auto-summaries.js';
 import { startScheduler } from './sync.js';
 import { startWallScheduler } from './wall/wall.js';
 import { startLibraryMaintenance } from './library/library.js';
+import { startVideoFetcher } from './video-fetch.js';
 
 // Origins the pages really use: YouTube (admin player, thumbnails), TikTok (wall), Pixabay/Pexels (stock thumbnails).
 // Inline styles stay allowed: the studio injects its @font-face rules and the admin sets style attributes.
@@ -98,4 +99,5 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   startStudioCleanup();
   startWallScheduler();
   startLibraryMaintenance();
+  startVideoFetcher();
 }

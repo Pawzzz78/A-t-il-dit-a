@@ -336,6 +336,20 @@ police Montserrat (fichiers dans `public/fonts/`). Le logo officiel n'est volont
 Tout est dans [`public/css/theme.css`](public/css/theme.css) ; `app.css` et `admin.css` n'utilisent que ces variables.
 
 
+## Téléchargement automatique des vidéos
+
+Pour que le studio n'attende plus un dépôt à la main, le site peut **télécharger lui-même les interviews** (yt-dlp, outil libre) : `AUTO_DOWNLOAD=on`. Désactivé par défaut.
+
+- **Quelles vidéos** : celles trouvées par la synchronisation des chaînes, **déjà transcrites** (traitement démarré dans l'admin), de **10 min ou plus** (`AUTO_DOWNLOAD_MIN_S`, format long seulement) et publiées depuis moins de 90 jours. Les vidéos ajoutées à la main ne sont jamais téléchargées ni touchées. Les plus récentes d'abord, une vidéo par passage (toutes les 5 min).
+- **Fichier** : 720 p au plus (`AUTO_DOWNLOAD_MAX_HEIGHT`), MP4, rangé sur le volume (`<STORAGE_DIR>/videos`), pas dans la base. Mêmes contrôles qu'un dépôt à la main (ffprobe, durée comparée à celle de YouTube : un fichier de durée différente est écarté). Un fichier déposé à la main pendant le téléchargement n'est jamais remplacé.
+- **Ensuite, tout est automatique** : détection des visages (cadrage), clips **autorisés** (une seule fois : si l'admin les désactive, le choix est respecté ; `AUTO_ENABLE_CLIPS=off` pour garder la main) et extraits proposés par le modèle.
+- **Conservation** : les fichiers téléchargés par le site sont supprimés **après 90 jours** (`VIDEO_RETENTION_DAYS`, d'après la date de publication) ; la transcription, les clips et leurs réglages restent. Les fichiers déposés à la main ne sont jamais supprimés. Un clip de la bibliothèque dont l'interview n'est plus disponible ne peut plus être recréé ni modifié (message explicite) ; il reste téléchargeable tant que sa vidéo est gardée.
+- **Place** : pas de téléchargement sous `AUTO_DOWNLOAD_MIN_FREE_MB` (1 500 Mo) d'espace libre ; vidéos plus grosses que `MAX_VIDEO_MB` refusées. Nettoyage toutes les 6 h.
+- **Pannes** : échec = nouvelle tentative après 2 h, 4 h, 8 h, 16 h puis 24 h (5 essais) ; vidéo indisponible (privée, supprimée) = abandon ; **YouTube qui bloque le serveur** (contrôle « robot », fréquent depuis un hébergeur) = pause de 3 h sans compter d'essai. Dans ce cas, `YTDLP_PROXY` (proxy) ou `YTDLP_COOKIES_FILE` (fichier de cookies sur le volume) sont les remèdes ; sinon, télécharger sur un ordinateur et déposer le fichier comme avant. L'admin (page Synchronisation) montre l'état, l'espace, la dernière erreur, « Télécharger maintenant » et « Réessayer les échecs ».
+- **yt-dlp** : l'exécutable officiel est téléchargé une fois sur le volume (`<STORAGE_DIR>/bin/yt-dlp`, somme SHA-256 vérifiée) puis mis à jour chaque jour (`yt-dlp -U`), car YouTube change souvent. `YTDLP_PATH` impose un exécutable précis (alors pas de mise à jour automatique). Node sert de moteur JavaScript à yt-dlp (`YTDLP_JS_RUNTIME`, `off` pour le retirer).
+- **Droits** : télécharger des vidéos YouTube demande l'accord de leurs auteurs (celui de Nouvelle Énergie pour ses chaînes et celle de David Lisnard ; pas pour des chaînes tierces).
+- **Tests** : `test/video-fetch.test.js` (faux yt-dlp qui copie une vraie vidéo : choix des vidéos, succès, échecs, garde-fous, conservation, installation vérifiée).
+
 ## Accès réservé aux adhérents Nouvelle Énergie
 
 Le studio (`/` et `/api/studio/*`) peut être réservé aux adhérents grâce au **SSO de Nouvelle Énergie** (OpenID Connect, Keycloak ; doc : espace adhérents → Initiatives → Connexion). **Le mur (`/mur/`) reste public.** L'admin garde son mot de passe, à part.

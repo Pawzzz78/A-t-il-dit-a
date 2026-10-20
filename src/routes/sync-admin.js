@@ -3,6 +3,7 @@ import { retrySummary, runSummaryCycle } from '../auto-summaries.js';
 import { HttpError, ah } from '../http-error.js';
 import { pool } from '../db.js';
 import { discoverChannel, overview, previewShorts, purgeShorts, runCycle, setSetting } from '../sync.js';
+import { runFetchCycle, filesOverview, retryFailed } from '../video-fetch.js';
 import { YouTubeApiError, resolveChannel, youtubeApiConfigured } from '../youtube.js';
 
 export const syncRouter = Router();
@@ -27,6 +28,23 @@ async function getChannel(id) {
 }
 
 syncRouter.get('/overview', ah(async (_req, res) => res.json(await overview())));
+
+// --- téléchargement automatique des fichiers vidéo (yt-dlp) ---------------------------------------------------------
+syncRouter.get('/files', ah(async (_req, res) => res.json(await filesOverview())));
+
+/** Lance un passage de téléchargement tout de suite (en arrière-plan : un téléchargement peut durer plusieurs minutes). */
+syncRouter.post(
+  '/files/run',
+  ah(async (_req, res) => {
+    const o = await filesOverview();
+    if (!o.enabled) throw new HttpError(409, "Le téléchargement automatique est désactivé (variable AUTO_DOWNLOAD=on).");
+    runFetchCycle().catch((e) => console.error(`vidéos : ${e.message}`));
+    res.status(202).json({ started: true });
+  }),
+);
+
+/** Remet à zéro les vidéos en échec et la pause due à un blocage de YouTube. */
+syncRouter.post('/files/retry', ah(async (_req, res) => res.json({ reset: await retryFailed() })));
 
 /** Ajoute une chaîne et liste aussitôt ses vidéos (aucun crédit Supadata n'est consommé à ce stade). */
 syncRouter.post(

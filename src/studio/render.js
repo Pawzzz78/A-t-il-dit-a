@@ -418,6 +418,9 @@ export function publicJob(job) {
     expires_in_s: job.finishedAt ? Math.max(0, Math.round((job.finishedAt + config().ttlMs - Date.now()) / 1000)) : null,
   };
 }
+/** Un clip de cette vidéo est en file d'attente ou en cours de création (son fichier ne doit pas disparaître). */
+export const videoInUse = (youtubeId) => [...jobs.values()].some((j) => j.youtube_id === youtubeId && (j.status === 'queued' || j.status === 'running'));
+
 export const getJob = (id) => (/^[0-9a-f]{24}$/.test(id) ? jobs.get(id) : undefined);
 
 /** Met un rendu en file. `video` : ligne de la base ; `lines` : lignes de la transcription ; renvoie le job. */
