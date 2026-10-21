@@ -470,10 +470,10 @@ async function runJob(job) {
   job.status = 'running';
   try {
     await fs.writeFile(job.assPath, await assForRequest({ req: job.req, lines: job.lines })); // (mesure du fond arrondi comprise : dans la file, pas avant)
-    if (job.status === 'cancelled') return; // annulé pendant la mesure du fond
+    if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true }); // pendant la mesure du fond ; onDone doit tout de même suivre
     const images = {};
     for (const b of job.req.broll) images[b.id] = await ensureImage(b.id, 'full', { ip: job.ip });
-    if (job.status === 'cancelled') return;
+    if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true });
     const args = buildFfmpegArgs({ file: job.file, req: job.req, hasAudio: job.hasAudio, assPath: job.assPath, out: job.out, kind: 'final', images });
     const run = runFfmpeg(args, job.total, { onProgress: (p) => (job.progress = p), timeoutMs: config().timeoutMs });
     job.cancel = run.cancel;
