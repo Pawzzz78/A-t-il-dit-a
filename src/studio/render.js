@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BROLL, FPS, LIMITS, OUT, buildAss, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
+import { BROLL, END_CARD, FPS, LIMITS, OUT, buildAss, endCardContent, sanitizeEndCard, sourceText, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
 import { ensureImage, stockDir, validPhotoId } from './stock.js';
 import { escFilterPath, measureBoxes } from './box-probe.js';
 import { cropXExpr } from '../../public/js/framing.js';
@@ -131,6 +131,7 @@ export function normalizeRequest(body, video) {
   const voice = Math.round(Math.min(1.5, Math.max(0, Number.isFinite(Number(b.voice)) ? Number(b.voice) : 1)) * 100) / 100;
   const clipTotal = Math.round(total * 1000) / 1000;
   const zoom = sanitizeZoom(b.zoom, clipTotal);
+  const endCard = sanitizeEndCard(b.end_card);
   return {
     extracts,
     layout,
@@ -140,7 +141,9 @@ export function normalizeRequest(body, video) {
     edits: normalizeEdits(b.edits),
     zoom: zoom.events.length ? zoom : null,
     broll: normalizeBroll(b.broll, clipTotal),
+    end_card: endCard,
     total: clipTotal,
+    outTotal: endCard ? Math.round((clipTotal + endCard.dur) * 1000) / 1000 : clipTotal,
   };
 }
 
@@ -202,7 +205,8 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
   req.extracts.forEach((e) => args.push('-ss', String(e.start_ms / 1000), '-t', String((e.end_ms - e.start_ms) / 1000), '-i', file));
   const music = kind === 'final' && req.music ? findTrack(req.music.id) : null;
   const musicIdx = req.extracts.length;
-  if (music) args.push('-stream_loop', '-1', '-t', String(req.total), '-i', music.path);
+  const outTotal = kind === 'final' ? req.outTotal ?? req.total : req.total;
+  if (music) args.push('-stream_loop', '-1', '-t', String(outTotal), '-i', music.path);
   const broll = kind === 'final' ? req.broll ?? [] : [];
   const imageIdx = musicIdx + (music ? 1 : 0);
   broll.forEach((b) => args.push('-loop', '1', '-framerate', String(FPS), '-t', String(b.dur), '-i', images[b.id] ?? path.join(stockDir(), `${b.id}.jpg`)));
@@ -235,14 +239,20 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
     f.push(`[${last}][bk${k}]overlay=eof_action=pass:enable='between(t,${b.start},${b.start + b.dur})'[vb${k}]`);
     last = `vb${k}`;
   });
+  if (kind === 'final' && req.end_card) {
+    f.push(`color=c=0x${END_CARD.bg.slice(1)}:s=${size.w}x${size.h}:r=30:d=${req.end_card.dur},format=yuv420p,setsar=1[ec]`);
+    f.push(`[${last}]format=yuv420p,setsar=1[vm];[vm][ec]concat=n=2:v=1:a=0[ve]`);
+    last = 've';
+  }
+  const pad = outTotal > req.total ? `,apad=whole_dur=${outTotal}` : '';
   f.push(kind === 'final' ? `[${last}]ass=${esc(assPath)}:fontsdir=${esc(FONTS_DIR)}[vo]` : `[${last}]null[vo]`);
   if (music) {
-    const fadeOut = Math.max(0, req.total - 1.8);
-    f.push(`[ac]volume=${req.voice}[av]`);
+    const fadeOut = Math.max(0, outTotal - 1.8);
+    f.push(`[ac]volume=${req.voice}${pad}[av]`);
     f.push(`[${musicIdx}:a]aresample=48000,aformat=channel_layouts=stereo,volume=${req.music.volume},afade=t=in:st=0:d=0.6,afade=t=out:st=${fadeOut}:d=1.8[m]`);
     f.push('[av][m]amix=inputs=2:duration=first:dropout_transition=0,volume=2,alimiter=limit=0.95[ao]');
   } else {
-    f.push(`[ac]volume=${req.voice},alimiter=limit=0.95[ao]`);
+    f.push(`[ac]volume=${req.voice}${pad},alimiter=limit=0.95[ao]`);
   }
   args.push('-filter_complex', f.join(';'), '-map', '[vo]', '-map', '[ao]');
   if (kind === 'preview' && previewExt() === 'webm') {
@@ -251,7 +261,7 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
   }
   args.push('-c:v', 'libx264', '-preset', size.preset, '-crf', String(size.crf), '-pix_fmt', 'yuv420p', '-r', '30');
   if (kind === 'final') args.push('-profile:v', 'high', '-level', '4.1');
-  args.push('-c:a', 'aac', '-b:a', kind === 'final' ? '160k' : '64k', '-ar', '48000', '-t', String(req.total), '-movflags', '+faststart', out);
+  args.push('-c:a', 'aac', '-b:a', kind === 'final' ? '160k' : '64k', '-ar', '48000', '-t', String(outTotal), '-movflags', '+faststart', out);
   return args;
 }
 
@@ -259,7 +269,7 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
  * Fichier ASS du clip : mots horodatés des lignes de la transcription (avec les corrections de texte), groupés selon le style.
  * Un fond arrondi demande de mesurer chaque ligne de texte avec libass (box-probe.js) : d'où la fonction asynchrone.
  */
-export async function assForRequest({ req, lines }) {
+export async function assForRequest({ req, lines, video = null }) {
   const { words } = wordsForExtracts(applyEdits(lines, req.edits), req.extracts);
   const groups = groupWords(words, req.style);
   const font = fontById.get(req.style.font) ?? FONTS[0];
@@ -269,7 +279,15 @@ export async function assForRequest({ req, lines }) {
     style: req.style,
     font: { ass_name: font.ass_name, em_ratio: font.em_ratio, cap_em: font.cap_em },
     boxes,
+    endCard: endCardFor(req, video),
   });
+}
+
+function endCardFor(req, video) {
+  const content = endCardContent(req.end_card, sourceText(video?.title, video?.published_at));
+  if (!content || !content.title) return null;
+  const font = fontById.get('montserrat') ?? FONTS[0];
+  return { ...content, start: req.total, end: req.outTotal, font: { ass_name: font.ass_name } };
 }
 
 // --- exécution de ffmpeg ----------------------------------------------------------------------------
@@ -439,10 +457,10 @@ export async function enqueueRender({ video, req, lines, ip: rawIp = 'local', ow
     owner,
     onDone,
     youtube_id: video.youtube_id,
-    video: { id: video.id, title: video.title, stamp: stampOf(video), text_hash: video.text_hash ?? null },
+    video: { id: video.id, title: video.title, published_at: video.published_at ?? null, stamp: stampOf(video), text_hash: video.text_hash ?? null },
     status: 'queued',
     progress: 0,
-    total: req.total,
+    total: req.outTotal ?? req.total,
     filename: `lisnard-studio-${slug(video.title)}-${id.slice(0, 6)}.mp4`,
     out: path.join(dirs().renders, `${id}.mp4`),
     assPath: path.join(dirs().renders, `${id}.ass`),
@@ -472,7 +490,7 @@ function pump() {
 async function runJob(job) {
   job.status = 'running';
   try {
-    await fs.writeFile(job.assPath, await assForRequest({ req: job.req, lines: job.lines })); // (mesure du fond arrondi comprise : dans la file, pas avant)
+    await fs.writeFile(job.assPath, await assForRequest({ req: job.req, lines: job.lines, video: job.video })); // (mesure du fond arrondi comprise : dans la file, pas avant)
     if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true }); // pendant la mesure du fond ; onDone doit tout de même suivre
     const images = {};
     for (const b of job.req.broll) images[b.id] = await ensureImage(b.id, 'full', { ip: job.ip });

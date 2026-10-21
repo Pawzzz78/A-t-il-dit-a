@@ -27,6 +27,12 @@ import {
   sourceText,
   fitDescription,
   draftFromClip,
+  sanitizeEndCard,
+  modelFromState,
+  sanitizeModel,
+  parseModels,
+  endCardSettings,
+  endCardContent,
   DESCRIPTION_MAX,
   buildAss,
   fitScale,
@@ -472,4 +478,50 @@ test('draftFromClip : réglages d’un clip de la bibliothèque -> brouillon de 
   assert.deepEqual([d.jobId, d.delivered], [null, false]);
   const empty = draftFromClip(null);
   assert.deepEqual([empty.extracts, empty.music, empty.zoom.on, empty.edits], [[], { id: null }, false, {}]);
+});
+
+test('écran de fin : validation, contenu et événements ASS', () => {
+  assert.equal(sanitizeEndCard(null), null);
+  assert.equal(sanitizeEndCard({ on: false, text: 'x' }), null);
+  assert.equal(sanitizeEndCard({ on: true, source: false, text: '   ' }), null);
+  assert.deepEqual(sanitizeEndCard({ on: true }), { on: true, source: true, text: '', dur: 3 });
+  const c = sanitizeEndCard({ on: true, source: false, text: `a\nb${'x'.repeat(200)}`, dur: 9 });
+  assert.equal(c.dur, 5);
+  assert.equal(c.text.length, 120);
+  assert.ok(!c.text.includes('\n'));
+  assert.equal(sanitizeEndCard({ on: true, dur: 1 }).dur, 2);
+  assert.deepEqual(endCardContent({ source: true, text: 'Adhère' }, 'Source : X'), { title: 'Adhère', foot: 'Source : X' });
+  assert.deepEqual(endCardContent({ source: true, text: '' }, 'Source : X'), { title: 'Source : X', foot: '', small: true });
+  const style = sanitizeStyle({ preset: 'hormozi' }, ['anton']);
+  const ass = buildAss({ groups: [{ start: 0, end: 4, words: [{ start: 0, end: 4, text: 'bonjour' }] }], style, font: { ass_name: 'Anton', em_ratio: 1, cap_em: 0.7 },
+    endCard: { start: 4, end: 7, title: 'Adhère {vite}', foot: 'Source : X', font: { ass_name: 'Montserrat' } } });
+  assert.match(ass, /Style: EndTitle,Montserrat,/);
+  assert.match(ass, /Dialogue: 3,0:00:04\.00,0:00:07\.00,EndTitle,.*ADHÈRE VITE$/m);
+  assert.match(ass, /Dialogue: 3,0:00:04\.00,0:00:07\.00,EndFoot,.*Source : X$/m);
+  assert.ok(ass.indexOf('Style: EndFoot') < ass.indexOf('[Events]'));
+  assert.ok(!buildAss({ groups: [], style, font: { ass_name: 'Anton', em_ratio: 1, cap_em: 0.7 } }).includes('EndTitle'));
+});
+
+test('modèles : réglages sans l’interview, validés à l’application, liste du navigateur', () => {
+  const S = {
+    style: sanitizeStyle({ preset: 'hormozi' }, ['anton']), music: { id: 'lofi-doux', volume: 0.4 }, voice: 1.2,
+    layout: { fit: 'crop', cropX: 0.2, quality: 'fast', mirror: true, follow: { on: true, subject: 'lisnard' } },
+    zoom: { on: true, auto: false, strength: 1.3, focus: { x: 0.5, y: 0.4 }, events: [{ t: 1, kind: 'in' }] },
+    endCard: { on: true, source: false, text: 'Adhère', dur: 4 },
+    extracts: [{ start_ms: 0, end_ms: 5000 }], broll: [{ id: '1' }], edits: new Map([[0, { text: 'x' }]]),
+  };
+  const m = modelFromState(S);
+  assert.deepEqual(Object.keys(m).sort(), ['endCard', 'layout', 'music', 'style', 'voice', 'zoom']);
+  assert.equal(m.layout.cropX, undefined, 'la position du cadrage dépend de la vidéo');
+  assert.equal(m.zoom.events, undefined);
+  const ok = sanitizeModel(JSON.parse(JSON.stringify(m)), { fontIds: ['anton'], musicIds: ['lofi-doux'], framingReady: true, identified: true });
+  assert.deepEqual([ok.music, ok.voice, ok.layout.follow, ok.zoom.strength, ok.endCard], [{ id: 'lofi-doux', volume: 0.4 }, 1.2, { on: true, subject: 'lisnard' }, 1.3, { on: true, source: false, text: 'Adhère', dur: 4 }]);
+  const elsewhere = sanitizeModel(m, { fontIds: ['bebas-neue'], musicIds: [], framingReady: false, identified: false });
+  assert.deepEqual([elsewhere.music.id, elsewhere.layout.follow, elsewhere.style.font], [null, { on: false, subject: 'auto' }, 'bebas-neue']);
+  assert.deepEqual(endCardSettings({ on: false, text: 'garde', dur: 9 }), { on: false, source: true, text: 'garde', dur: 5 });
+  assert.deepEqual(sanitizeModel(null).endCard, { on: false, source: true, text: '', dur: 3 });
+  assert.deepEqual(parseModels('pas du json'), []);
+  assert.deepEqual(parseModels('{"a":1}'), []);
+  const list = parseModels(JSON.stringify([{ id: 'b', name: 'Zèbre', settings: {} }, { id: 'a', name: '  Alpha ', settings: {} }, { id: 'x', name: 'sans réglages' }]));
+  assert.deepEqual(list.map((x) => x.name), ['Alpha', 'Zèbre']);
 });

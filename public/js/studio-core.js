@@ -296,6 +296,26 @@ export function sourceText(title, publishedAt) {
   return `Source : ${t || 'interview'}${date ? ` · ${date}` : ''}`;
 }
 
+// End card palette and layout borrowed from the PostLisnard visuals (navy background, khaki rules)
+export const END_CARD = { minS: 2, maxS: 5, defaultS: 3, maxText: 120, bg: '#032F67', accent: '#A0A37E', pad: 110 };
+
+export function sanitizeEndCard(input) {
+  const c = input && typeof input === 'object' ? input : null;
+  if (!c || c.on !== true) return null;
+  const text = String(c.text ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, END_CARD.maxText);
+  const source = c.source !== false;
+  if (!text && !source) return null;
+  const d = Math.round(Number(c.dur));
+  return { on: true, source, text, dur: Number.isFinite(d) ? Math.min(END_CARD.maxS, Math.max(END_CARD.minS, d)) : END_CARD.defaultS };
+}
+
+// Without a custom message the source line becomes the main text
+export function endCardContent(card, sourceLine) {
+  if (!card) return null;
+  const src = card.source ? String(sourceLine ?? '').trim() : '';
+  return card.text ? { title: card.text, foot: src } : { title: src, foot: '', small: true };
+}
+
 export function fitDescription(caption, source, max = DESCRIPTION_MAX) {
   const cap = String(caption ?? '').trim();
   const src = String(source ?? '').trim();
@@ -387,7 +407,27 @@ export function buildProbeAss({ groups, style, font }) {
  * le rectangle de libass (angles droits). Les positions et tailles sont exprimées dans le repère 1080 × 1920 : libass les adapte à la
  * définition de sortie.
  */
-export function buildAss({ groups, style, font, boxes }) {
+const endCardStyles = (font) => [
+  `Style: EndTitle,${font.ass_name},108,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,4,${END_CARD.pad},${END_CARD.pad},0,1`,
+  `Style: EndSmall,${font.ass_name},64,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,4,${END_CARD.pad},${END_CARD.pad},0,1`,
+  `Style: EndFoot,${font.ass_name},42,${assColor('#FFFFFF', 40)},&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,1,${END_CARD.pad},${END_CARD.pad},0,1`,
+];
+
+// Plain background comes from ffmpeg; libass draws the rules and the text
+function endCardEvents({ start, end, title, foot, small }) {
+  const t0 = assTime(start);
+  const t1 = assTime(end);
+  const rule = (y, w) => `Dialogue: 2,${t0},${t1},EndTitle,,0,0,0,,{\\an7\\pos(${END_CARD.pad},${y})\\1c${assTag(END_CARD.accent)}\\bord0\\shad0\\fad(250,0)\\p1}m 0 0 l ${w} 0 l ${w} 12 l 0 12`;
+  const ev = [rule(560, 170)];
+  if (title) ev.push(`Dialogue: 3,${t0},${t1},${small ? 'EndSmall' : 'EndTitle'},,0,0,0,,{\\an7\\pos(${END_CARD.pad},620)\\fad(250,0)}${assEscape(small ? title : title.toLocaleUpperCase('fr-FR'))}`);
+  if (foot) {
+    ev.push(rule(1480, 110));
+    ev.push(`Dialogue: 3,${t0},${t1},EndFoot,,0,0,0,,{\\an1\\pos(${END_CARD.pad},${OUT.h - 240})\\fad(250,0)}${assEscape(foot)}`);
+  }
+  return ev;
+}
+
+export function buildAss({ groups, style, font, boxes, endCard = null }) {
   const { cx, cy, margin } = placement(style);
   const boxed = style.box;
   const drawn = roundedBox(style) && Array.isArray(boxes); // fond dessiné d'après la mesure de libass, plutôt que le rectangle (par ligne) de libass
@@ -400,8 +440,9 @@ export function buildAss({ groups, style, font, boxes }) {
   const out = [...ASS_HEAD(OUT.w, OUT.h)];
   out.push(
     `Style: Main,${font.ass_name},${fontSizeFor(style, font)},${assColor(primary)},${assColor(secondary)},${outlineCol},${shadowCol},0,0,0,0,100,100,0,0,${boxed && !drawn ? 3 : 1},${drawn ? 0 : outline},${boxed ? 0 : style.shadow},5,${margin},${margin},0,1`,
-    ...ASS_EVENTS,
   );
+  if (endCard) out.push(...endCardStyles(endCard.font));
+  out.push(...ASS_EVENTS);
   const pos = `{\\an5\\pos(${cx},${cy})`;
   // fond (couche 0) sous le texte (couche 1)
   const dlg = (start, end, text, first, k) =>
@@ -436,6 +477,7 @@ export function buildAss({ groups, style, font, boxes }) {
       });
     }
   });
+  if (endCard) out.push(...endCardEvents(endCard));
   return `${out.join('\n')}\n`;
 }
 
@@ -673,8 +715,62 @@ export function draftFromClip(req, remixOf = null) {
     zoom: zoom ? { on: true, auto: false, strength: zoom.strength, focus: zoom.focus, events: zoom.events } : { on: false },
     broll: (Array.isArray(r.broll) ? r.broll : []).map((b) => ({ id: String(b.id), start: b.start, dur: b.dur, thumb: `/api/studio/stock/image/${encodeURIComponent(b.id)}` })),
     edits: r.edits && typeof r.edits === 'object' && !Array.isArray(r.edits) ? r.edits : {},
+    endCard: r.end_card ? { ...r.end_card, on: true } : null,
     jobId: null,
     delivered: false,
     remixOf,
   };
+}
+
+export const MODELS = { max: 20, nameMax: 40 };
+export const DEFAULT_END_CARD = { on: false, source: true, text: '', dur: END_CARD.defaultS };
+
+// Kept even when switched off so unticking loses nothing
+export function endCardSettings(input) {
+  const c = input && typeof input === 'object' ? input : {};
+  const clean = sanitizeEndCard({ ...c, on: true, source: true });
+  return { on: c.on === true, source: c.source !== false, text: clean?.text ?? '', dur: clean?.dur ?? END_CARD.defaultS };
+}
+
+// Model = every setting that does not depend on the interview (no extracts, text edits or b-roll)
+export function modelFromState(S) {
+  return {
+    style: S.style,
+    music: { id: S.music.id ?? null, volume: S.music.volume },
+    voice: S.voice,
+    layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror, follow: { on: S.layout.follow.on, subject: S.layout.follow.subject } },
+    zoom: { on: S.zoom.on, auto: S.zoom.auto, strength: S.zoom.strength, focus: S.zoom.focus },
+    endCard: S.endCard,
+  };
+}
+
+export function sanitizeModel(m, { fontIds = [], musicIds = [], framingReady = false, identified = false } = {}) {
+  const x = m && typeof m === 'object' ? m : {};
+  const num = (v, lo, hi, d) => (Number.isFinite(Number(v)) ? Math.min(hi, Math.max(lo, Number(v))) : d);
+  const l = x.layout ?? {};
+  const subject = ['lisnard', 'auto', 'left', 'right'].includes(l.follow?.subject) && (l.follow.subject !== 'lisnard' || identified) ? l.follow.subject : identified ? 'lisnard' : 'auto';
+  const z = sanitizeZoom(x.zoom ?? {});
+  return {
+    style: sanitizeStyle(x.style, fontIds),
+    music: { id: musicIds.includes(x.music?.id) ? x.music.id : null, volume: num(x.music?.volume, 0, 1, 0.25) },
+    voice: num(x.voice, 0, 1.5, 1),
+    layout: { fit: l.fit === 'crop' ? 'crop' : 'blur', quality: l.quality === 'fast' ? 'fast' : 'hd', mirror: l.mirror === true, follow: { on: l.follow?.on === true && framingReady, subject } },
+    zoom: { on: x.zoom?.on === true, auto: x.zoom?.auto !== false, strength: z.strength, focus: z.focus },
+    endCard: endCardSettings(x.endCard),
+  };
+}
+
+export function parseModels(raw) {
+  let list;
+  try {
+    list = JSON.parse(raw ?? '[]');
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string' && m.settings && typeof m.settings === 'object')
+    .map((m) => ({ id: m.id, name: m.name.trim().slice(0, MODELS.nameMax) || 'Modèle', settings: m.settings }))
+    .slice(0, MODELS.max)
+    .sort((a, b) => a.name.localeCompare(b.name, 'fr'));
 }

@@ -818,3 +818,26 @@ test('mesure du fond : un ffmpeg bloqué est arrêté au bout du délai', { skip
   const font = studio.FONTS.find((f) => f.id === req.style.font) ?? studio.FONTS[0];
   await assert.rejects(measureBoxes({ groups, style: req.style, font, fontsDir: studio.FONTS_DIR, timeoutMs: 1 }), /délai/);
 });
+
+test('écran de fin : carte bleue ajoutée après le clip, son prolongé, sous-titres arrêtés à la fin des extraits', { skip: !enabled }, async () => {
+  const card = { on: true, source: true, text: 'Partage la vidéo', dur: 3 };
+  const req = studio.normalizeRequest({ ...REQ(), end_card: card }, { file_duration_s: DURATION });
+  assert.deepEqual(req.end_card, card);
+  assert.equal(req.outTotal, req.total + 3);
+  const plain = studio.buildFfmpegArgs({ file: 'in.mp4', req: studio.normalizeRequest(REQ(), { file_duration_s: DURATION }), hasAudio: true, assPath: 'a.ass', out: 'o.mp4' });
+  assert.ok(!plain.join(' ').includes('color=c='), 'sans écran de fin, rien ne change');
+  const sent = await api('POST', '/api/studio/render', { ...REQ(), music: null, end_card: card });
+  assert.equal(sent.status, 202, JSON.stringify(sent.body));
+  const done = await waitFor(sent.body.id, (s) => s.status === 'done' || s.status === 'error');
+  assert.equal(done.status, 'done', JSON.stringify(done));
+  assert.ok(Math.abs(done.duration_s - 10.5) < 0.01);
+  const out = path.join(dir, 'endcard.mp4');
+  await fs.writeFile(out, Buffer.from(await (await fetch(`${base}/api/studio/render/${sent.body.id}/file`)).arrayBuffer()));
+  const info = probe(out);
+  assert.ok(Math.abs(Number(info.format.duration) - 10.5) < 0.3, `durée ${info.format.duration}`);
+  const a = info.streams.find((s) => s.codec_type === 'audio');
+  assert.ok(Math.abs(Number(a.duration) - 10.5) < 0.3, `audio ${a.duration}`);
+  // a corner far from the text is the card's navy blue
+  const px = execFileSync('ffmpeg', ['-v', 'error', '-ss', '9.5', '-i', out, '-frames:v', '1', '-vf', 'crop=20:20:680:20,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
+  assert.ok(px[0] < 30 && px[1] > 25 && px[1] < 75 && px[2] > 70 && px[2] < 140, `couleur ${[...px]}`);
+});
