@@ -38,7 +38,7 @@
 .st-link { border: 0; background: none; color: var(--color-accent); font: inherit; font-weight: 700; font-size: .8rem; cursor: pointer; padding: .4rem; min-height: 44px; }
 
 /* Clip dialog: video on the left, one block per intent on the right (stacked on phones) */
-.lib-dialog { width: min(94vw, 27rem); }
+.lib-dialog { width: min(94vw, 27rem); transform: none; }
 .lib-head h2 { margin-bottom: .2rem; }
 .lib-head .dialog-text { margin-bottom: .5rem; }
 .lib-chipline { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .8rem; }
