@@ -377,31 +377,46 @@ function renderDialog() {
     return;
   }
   if (m.file_state === 'active') prepUniq(m); // pendant que la personne regarde, sa version se prépare
+  const active = m.file_state === 'active';
+  const section = (cls, title, hint, ...kids) => el('section', { class: `lib-sec ${cls}` }, el('h3', {}, title), hint ? el('p', { class: 'lib-sec-hint' }, hint) : null, ...kids);
+  const choice = (props, title, text, tag = 'button') => el(tag, { class: 'lib-choice', ...(tag === 'button' ? { type: 'button' } : {}), ...props }, el('strong', {}, title), el('span', {}, text));
+  const getIt = active ? section('lib-sec-get', 'Récupérer la vidéo', null,
+    m.end_card_s
+      ? el('div', { class: 'lib-choices' },
+        choice({ class: 'lib-choice primary', onclick: () => onDownload(m, msg) }, 'Avec l’écran de fin', `${dur(m.duration_s)} · se termine sur la carte et la source`),
+        choice({ href: `/api/library/clips/${m.id}/file?use=download&end=0`, download: '', onclick: () => say(msg, 'Téléchargement sans l’écran de fin lancé.') }, 'Sans l’écran de fin', `${dur(m.duration_s - m.end_card_s)} · le clip seul`, 'a'))
+      : el('div', { class: 'lib-choices' }, choice({ class: 'lib-choice primary', onclick: () => onDownload(m, msg) }, 'Télécharger', `${dur(m.duration_s)} · la vidéo telle quelle, prête à publier`)),
+    el('button', { class: 'st-link lib-share', type: 'button', onclick: () => share(m, msg) }, 'Partager le lien de ce clip')) : null;
+  const reuse = section('lib-sec-reuse', 'Le réutiliser', null,
+    el('div', { class: 'lib-choices' },
+      choice({ href: `/?v=${encodeURIComponent(m.youtube_id)}&clip=${m.id}` }, 'Modifier', 'Ouvre ses réglages dans l’éditeur : change l’extrait, le style ou la musique, puis crée ta version.', 'a'),
+      !c.mine && write ? choice({ onclick: () => act(msg, async () => { await api('POST', `/clips/${m.id}/repost`); say(msg, 'Ajouté à « Mes clips ».'); }) }, 'Republier', 'L’ajoute à « Mes clips », tel quel, pour le retrouver et le partager.') : null));
+  const opinion = !m.mine && c.kind === 'clip'
+    ? section('lib-sec-rate', 'Ton avis', null,
+      write ? el('div', { class: 'lib-rate' }, el('span', {}, 'Ta note'), starsInput(c, msg)) : el('p', { class: 'st-help' }, el('a', { href: loginHref() }, 'Connecte-toi'), ' pour noter, republier ou signaler ce clip.'),
+      write ? reportForm(c, msg) : null)
+    : null;
+  const manage = c.mine
+    ? section('lib-sec-mine', c.kind === 'clip' ? 'Ton clip' : 'Dans tes clips', c.kind === 'clip' ? (c.visibility === 'public' ? 'Public : tout le monde peut le voir, le télécharger et le réutiliser.' : 'Privé : visible seulement par toi, dans « Mes clips ».') : null,
+      el('div', { class: 'lib-actions' },
+        mine ? el('button', { class: 'btn secondary small', type: 'button', onclick: () => act(msg, async () => { current = { ...c, ...(await api('PATCH', `/clips/${c.id}`, { visibility: c.visibility === 'public' ? 'private' : 'public' })) }; renderDialog(); load(); }) },
+          c.visibility === 'public' ? 'Passer en privé' : 'Rendre public') : null,
+        el('button', { class: 'btn secondary small danger', type: 'button', onclick: () => act(msg, async () => {
+          if (mine && !confirm('Retirer ce clip de la bibliothèque ?')) return;
+          await api('DELETE', `/clips/${c.id}`);
+          dialog.close();
+          load();
+        }) }, mine ? 'Retirer de la bibliothèque' : 'Retirer de mes clips')))
+    : null;
   $('dialog-body').replaceChildren(...[
-    el('h2', { id: 'dialog-title' }, m.video_title || 'Clip'),
-    el('p', { class: 'dialog-text' }, src),
-    el('div', { class: 'dialog-player' }, player),
-    el('div', { class: 'dialog-stats' }, el('span', {}, downloads(m)), el('span', {}, stars(m)), el('span', {}, dur(m.duration_s)), m.remix_of ? el('span', {}, 'Version modifiée d’un autre clip') : null),
-    el('div', { class: 'lib-actions' },
-      m.file_state === 'active' ? el('button', { class: 'btn small', type: 'button', onclick: () => onDownload(m, msg) }, m.end_card_s ? 'Télécharger avec l’écran de fin' : 'Télécharger') : null,
-      m.file_state === 'active' && m.end_card_s ? el('a', { class: 'btn secondary small', href: `/api/library/clips/${m.id}/file?use=download&end=0`, download: '', onclick: () => say(msg, 'Téléchargement sans l’écran de fin lancé.') }, 'Sans l’écran de fin') : null,
-      el('button', { class: 'btn secondary small', type: 'button', onclick: () => share(m, msg) }, 'Partager'),
-      el('a', { class: 'btn secondary small', href: `/?v=${encodeURIComponent(m.youtube_id)}&clip=${m.id}` }, 'Modifier'),
-      !c.mine && write ? el('button', { class: 'btn secondary small', type: 'button', onclick: () => act(msg, async () => { await api('POST', `/clips/${m.id}/repost`); say(msg, 'Ajouté à « Mes clips ».'); }) }, 'Republier') : null),
-    el('p', { class: 'st-help' }, 'Télécharger : la vidéo telle quelle. Modifier : ouvre ses réglages dans l’éditeur pour faire ta version (autres extraits, style, légende).'),
-    !m.mine && c.kind === 'clip' ? (write ? el('div', { class: 'lib-rate' }, el('span', {}, 'Ta note'), starsInput(c, msg)) : el('p', { class: 'st-help' }, el('a', { href: loginHref() }, 'Connecte-toi'), ' pour noter ou republier ce clip.')) : null,
-    mine ? el('div', { class: 'lib-actions' },
-      el('button', { class: 'btn secondary small', type: 'button', onclick: () => act(msg, async () => { current = { ...c, ...(await api('PATCH', `/clips/${c.id}`, { visibility: c.visibility === 'public' ? 'private' : 'public' })) }; renderDialog(); load(); }) },
-        c.visibility === 'public' ? 'Passer en privé' : 'Rendre public'),
-      el('button', { class: 'btn secondary small danger', type: 'button', onclick: () => act(msg, async () => {
-        if (!confirm('Retirer ce clip de la bibliothèque ?')) return;
-        await api('DELETE', `/clips/${c.id}`);
-        dialog.close();
-        load();
-      }) }, 'Retirer')) : null,
-    c.mine && c.kind === 'repost' ? el('button', { class: 'btn secondary small', type: 'button', onclick: () => act(msg, async () => { await api('DELETE', `/clips/${c.id}`); dialog.close(); load(); }) }, 'Retirer de mes clips') : null,
-    !m.mine && write && c.kind === 'clip' ? reportForm(c, msg) : null,
-    msg].filter(Boolean));
+    el('header', { class: 'lib-head' },
+      el('h2', { id: 'dialog-title' }, m.video_title || 'Clip'),
+      el('p', { class: 'dialog-text' }, src),
+      el('div', { class: 'lib-chipline' }, el('span', {}, dur(m.duration_s)), el('span', {}, downloads(m)), el('span', {}, stars(m)), m.remix_of ? el('span', {}, 'Version modifiée') : null)),
+    el('div', { class: 'lib-body' },
+      el('div', { class: 'dialog-player' }, player),
+      el('div', { class: 'lib-side' }, getIt, reuse, opinion, manage, msg)),
+  ].filter(Boolean));
 }
 
 dialog.addEventListener('close', () => {
