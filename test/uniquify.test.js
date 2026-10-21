@@ -48,6 +48,7 @@ test('uniqParams : tous les tirages restent dans les bandes (500 seeds × 2 nive
       assert.ok(Math.abs(p.eqGain) > 0 && Math.abs(p.eqGain) <= conf.eqGain + EPS, `eqGain ${p.eqGain}`);
       assert.ok(Math.abs(p.shelfGain) > 0 && Math.abs(p.shelfGain) <= conf.shelf + EPS, `shelfGain ${p.shelfGain}`);
       assert.ok(Math.abs(p.volume - 1) > 0 && Math.abs(p.volume - 1) <= conf.volume + EPS, `volume ${p.volume}`);
+      assert.ok(p.trimStart >= conf.trimStart[0] - EPS && p.trimStart <= conf.trimStart[1] + EPS, `trimStart ${p.trimStart}`);
     }
   }
 });
@@ -97,6 +98,9 @@ test('buildUniqArgs : arguments complets, déterministes par seed, repli qualit�
   assert.ok(d.args.join(' ').includes('scale=1080:1920'), 'qualité inconnue : hd par défaut');
   const i = a.args;
   assert.equal(i[i.indexOf('-i') + 1], '/x/in.mp4');
+  // -ss en option de sortie (après -i) : l'amputation des premières frames décale l'alignement temporel
+  assert.ok(i.indexOf('-ss') > i.indexOf('-i'), '-ss après l’entrée');
+  assert.ok(i.indexOf('-ss') < i.length - 1 && i[i.indexOf('-ss') + 1] === String(a.params.trimStart), 'valeur du trim issue du seed');
   assert.equal(i[i.indexOf('-vf') + 1], videoFilters(a.params, SIZES.hd));
   assert.equal(i[i.indexOf('-af') + 1], audioFilters(a.params));
   assert.equal(i[i.indexOf('-c:v') + 1], 'libx264');
@@ -106,7 +110,21 @@ test('buildUniqArgs : arguments complets, déterministes par seed, repli qualit�
 });
 
 test('parseFilterNames : lit la sortie de « ffmpeg -filters »', () => {
-  const names = parseFilterNames('Filters:\n  T.. = Timeline support\n .. eq                V->V       Adjust brightness.\n .. crop              V->V       Crop the input video.\n .. rubberband        A->A       Apply time-stretching.\n');
-  assert.ok(names.has('eq') && names.has('crop') && names.has('rubberband'));
-  assert.ok(!names.has('support'));
+  // lignes réelles : trois drapeaux jusqu'à ffmpeg 7 (dont « C », commandes), deux depuis ffmpeg 8 (« T. »)
+  const out = [
+    ' T. volume            A->A       Change input volume.',
+    'Filters:',
+    '  T.. = Timeline support',
+    '  .S. = Slice threading',
+    '  ..C = Command support',
+    '  A = Audio input/output',
+    ' TSC eq                V->V       Adjust brightness, contrast, gamma, and saturation.',
+    ' ..C crop              V->V       Crop the input video.',
+    ' T.C hue               V->V       Adjust the hue and saturation of the input video.',
+    ' ..C rubberband        A->A       Apply time-stretching and pitch-shifting.',
+    ' ... anullsrc          |->A       Null audio source, return empty audio frames.',
+  ].join('\n');
+  const names = parseFilterNames(out);
+  for (const f of ['volume', 'eq', 'crop', 'hue', 'rubberband', 'anullsrc']) assert.ok(names.has(f), f);
+  assert.ok(!names.has('support') && !names.has('threading'));
 });

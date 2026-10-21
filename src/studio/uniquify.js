@@ -3,11 +3,13 @@
  * fichier distribué soit différent des autres tout en restant identique au regard du spectateur.
  *
  *  - Aucun retournement, aucune rotation, aucun changement de vitesse : les sous-titres incrustés restent
- *    lisibles et synchrones (l'image et l'audio conservent exactement la même durée).
+ *    lisibles et synchrones (image et audio sont amputées ensemble d'un début de 1 à 3 frames : durée quasi
+ *    identique, alignement temporel décalé d'un fichier à l'autre).
  *  - Déterministe : un seed (clip, personne) reproduit toujours la même chaîne ; une autre personne obtient
  *    une autre chaîne. Les valeurs sont tirées d'un PRNG (mulberry32) dans des bandes calibrées.
- *  - Bandes d'après le profil « soft » de yt_uniquifier (brightness 0.006, contrast 1.01, saturation 1.015,
- *    noise 2, pitch 1.0004), étalées en intervalles pour varier d'une personne à l'autre.
+ *  - Bandes inspirées du profil « soft » de yt_uniquifier, ensuite renforcées par mesure (pHash, recadrage
+ *    progressif) : couleur ≤ 2,5 % et pitch ±10 cents en `gentle` (4,5 % / ±17 cents en `medium`) ; les bandes
+ *    varient d'une personne à l'autre pour diversifier les signaux (hash perceptuel, durée, taille, audio).
  *
  * Module pur : aucune dépendance au reste de l'application, testable sans ffmpeg.
  */
@@ -23,14 +25,17 @@ export const SIZES = { hd: { w: 1080, h: 1920 }, fast: { w: 720, h: 1280 } };
  */
 export const LEVELS = {
   gentle: {
-    brightness: 0.010, contrast: 0.010, gamma: 0.005, saturation: 0.015, hue: 0.5,
-    crop: 0.0025, sharpen: [0.10, 0.25], noise: [0.8, 1.6],
-    pitch: 0.003, eqGain: 0.8, shelf: 0.5, volume: 0.005,
+    brightness: 0.020, contrast: 0.020, gamma: 0.010, saturation: 0.025, hue: 1.0,
+    crop: 0.0080, sharpen: [0.15, 0.35], noise: [1.2, 2.4],
+    pitch: 0.006, eqGain: 1.2, shelf: 0.8, volume: 0.010,
+    // 1 à 3 frames au début : décale l'alignement temporel (images et audio coupées ensemble, synchro préservée)
+    trimStart: [0.033, 0.1],
   },
   medium: {
-    brightness: 0.020, contrast: 0.020, gamma: 0.010, saturation: 0.030, hue: 1.0,
-    crop: 0.0040, sharpen: [0.15, 0.40], noise: [1.0, 2.5],
-    pitch: 0.006, eqGain: 1.5, shelf: 0.8, volume: 0.010,
+    brightness: 0.030, contrast: 0.030, gamma: 0.015, saturation: 0.045, hue: 1.5,
+    crop: 0.0120, sharpen: [0.25, 0.50], noise: [1.5, 3.5],
+    pitch: 0.010, eqGain: 2.0, shelf: 1.2, volume: 0.015,
+    trimStart: [0.05, 0.15],
   },
 };
 
@@ -71,7 +76,7 @@ export function uniqParams(seed, level = 'gentle') {
     gamma: r3(1 + signed(conf.gamma)),
     saturation: r3(1 + signed(conf.saturation)),
     hue: r1(signed(conf.hue)),
-    crop: r4(pick(conf.crop * 0.35, conf.crop)), // fraction retirée par côté (1080 px : ≈ 1 à 3 px en gentle)
+    crop: r4(pick(conf.crop * 0.35, conf.crop)), // fraction retirée par côté (1080 px : ≈ 3 à 9 px en gentle, zoom total ≤ 3 %)
     sharpen: r2(pick(conf.sharpen[0], conf.sharpen[1])),
     noise: r1(pick(conf.noise[0], conf.noise[1])),
     pitch: r4(1 + signed(conf.pitch)),
@@ -79,6 +84,7 @@ export function uniqParams(seed, level = 'gentle') {
     eqGain: r1(signed(conf.eqGain)),
     shelfGain: r1(signed(conf.shelf)),
     volume: r3(1 + signed(conf.volume)),
+    trimStart: r3(pick(conf.trimStart[0], conf.trimStart[1])),
   };
 }
 
@@ -117,12 +123,15 @@ export function buildUniqArgs({ file, out, quality = 'hd', seed, level = 'gentle
   const args = [
     '-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-y',
     '-i', file,
+    // option de sortie (après -i) : élimine les N premières frames, image et audio ensemble — synchro préservée
+    '-ss', String(params.trimStart),
     '-vf', videoFilters(params, size),
     '-af', audioFilters(params, { rubberband }),
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-pix_fmt', 'yuv420p', '-r', '30',
     '-profile:v', 'high', '-level', '4.1',
     '-c:a', 'aac', '-b:a', '160k', '-ar', '48000',
     '-movflags', '+faststart',
+    '-f', 'mp4', // format explicite : la sortie peut être un fichier temporaire sans extension .mp4
     out,
   ];
   return { params, args };
@@ -131,7 +140,7 @@ export function buildUniqArgs({ file, out, quality = 'hd', seed, level = 'gentle
 // --- capacités du ffmpeg du serveur ---------------------------------------------------------------
 
 let caps;
-const NAME = /^\s*[TS.]+\s+([a-z][a-z0-9_]*)\s+[AVXN(]/;
+const NAME = /^\s*[TSC.]{2,3}\s+([a-z][a-z0-9_]*)\s+[AVXN|]/; // drapeaux « TSC » (≤ ffmpeg 7) ou « T. » (≥ 8), puis E/S (« V->V », « |->A »)
 export function parseFilterNames(output) {
   const names = new Set();
   for (const line of String(output).split('\n')) {

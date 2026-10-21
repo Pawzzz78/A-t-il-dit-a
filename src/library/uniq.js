@@ -25,6 +25,7 @@ export const uniqConfig = () => {
     concurrency: Math.max(1, num(process.env.LIBRARY_UNIQ_CONCURRENCY, 1)),
     maxQueue: Math.max(1, num(process.env.LIBRARY_UNIQ_QUEUE, 10)),
     timeoutMs: num(process.env.LIBRARY_UNIQ_TIMEOUT_MS, 180_000),
+    retryDelayMs: Math.max(0, num(process.env.LIBRARY_UNIQ_RETRY_MS, 5_000)),
   };
 };
 
@@ -33,6 +34,8 @@ const ID = /^[0-9a-f]{24}$/;
 const whoOf16 = (who) => String(who).slice(0, 16);
 const variantPath = (id, who, level) => path.join(variantsDir(), `${id}_${whoOf16(who)}_${level}.mp4`);
 const sidecarOf = (file) => `${file}.json`;
+// `.part` (pas `.mp4`) : un encodage en cours n'est ni compté, ni évincé, ni servi comme une variante
+const partOf = (file) => `${file}.part`;
 
 export const resetUniqState = () => {
   jobs.clear();
@@ -54,7 +57,13 @@ export async function variantFile(id, who) {
 /** Supprime toutes les variantes d'un clip (fichiers, sidecars et jobs en cours). */
 export async function removeVariants(id) {
   if (!ID.test(String(id))) return;
-  for (const [key, job] of jobs) if (job.id === id) jobs.delete(key);
+  for (const [key, job] of jobs) {
+    if (job.id !== id) continue;
+    jobs.delete(key); // runVariant voit le job orphelin et ne range pas son fichier
+    const i = queue.indexOf(job);
+    if (i >= 0) queue.splice(i, 1);
+    job.cancel?.();
+  }
   const names = await fs.readdir(variantsDir()).catch(() => []);
   await Promise.all(
     names
@@ -70,6 +79,20 @@ const jobs = new Map(); // `${id}|${who16}` -> job
 const queue = [];
 let running = 0;
 
+/** Vue publique d'un job ; `retry` : faux quand les tentatives sont épuisées (le client masque « Réessayer »). */
+const jobView = (job) => {
+  if (job.status !== 'error') return { state: job.status, progress: job.progress };
+  return { state: 'error', progress: 0, error: job.error, retry: job.attempts < MAX_VARIANT_ATTEMPTS };
+};
+
+/** Raison affichée à la personne : une catégorie, pas le journal ffmpeg (chemins, adresses) qui reste dans les logs. */
+const variantErrorMessage = (e) => {
+  const msg = String(e?.message ?? '');
+  if (/ffmpeg n'est pas installé/i.test(msg)) return 'le traitement vidéo est indisponible sur ce serveur';
+  if (e?.timedOut) return 'le délai de préparation a été dépassé';
+  return 'une erreur est survenue pendant le traitement de la vidéo';
+};
+
 /**
  * Statut public d'une variante. `who` : clé du propriétaire (adhérent ou cookie anonyme) ou empreinte IP.
  * `idle` : rien n'a été préparé ; `skipped` : repli sur le fichier original (file pleine ou ffmpeg absent).
@@ -79,9 +102,14 @@ export async function variantState(id, who) {
   if (!cfg.on || !who) return { state: 'disabled', progress: 0 };
   if (await variantFile(id, who)) return { state: 'ready', progress: 1 };
   const job = jobs.get(`${id}|${whoOf16(who)}`);
-  if (job) return { state: job.status === 'done' ? 'ready' : job.status, progress: job.status === 'done' ? 1 : job.progress };
+  if (job) return jobView(job);
   return { state: 'idle', progress: 0 };
 }
+
+/** Nombre maximal de tentatives d'encodage par (clip, personne) : borne le coût des réessais. */
+const MAX_VARIANT_ATTEMPTS = 3;
+/** Durée après laquelle un échec est oublié (cause passagère) ; l'écart minimal entre tentatives est `retryDelayMs`. */
+const ERROR_TTL_MS = 15 * 60_000;
 
 /**
  * Met une variante en file si besoin. Idempotent : prête → `ready`, déjà en cours → son statut,
@@ -92,16 +120,18 @@ export async function ensureVariant({ id, who, file, quality, durationS }) {
   const cfg = uniqConfig();
   if (!cfg.on || !who) return { state: 'disabled', progress: 0 };
   if (await variantFile(id, who)) return { state: 'ready', progress: 1 };
+  const caps = await uniqCapabilities();
+  // lu après les await : une requête concurrente a pu créer le job entre-temps
   const key = `${id}|${whoOf16(who)}`;
   const existing = jobs.get(key);
-  if (existing) return { state: existing.status, progress: existing.progress };
-  const caps = await uniqCapabilities();
-  if (!caps.ok) return { state: 'skipped', progress: 0 };
-  if (queue.length >= cfg.maxQueue) return { state: 'skipped', progress: 0 };
+  if (existing && existing.status !== 'error') return jobView(existing);
+  const recent = existing && Date.now() - existing.failedAt < ERROR_TTL_MS;
+  if (recent && (existing.attempts >= MAX_VARIANT_ATTEMPTS || Date.now() - existing.failedAt < cfg.retryDelayMs)) return jobView(existing);
+  if (!caps.ok || queue.length >= cfg.maxQueue) return { state: 'skipped', progress: 0 };
   const job = {
     id, who, file, quality, durationS: Number(durationS) > 0 ? Number(durationS) : 30,
     seed: seedFrom(`${id}|${who}`),
-    rubberband: caps.rubberband,
+    attempts: recent ? existing.attempts + 1 : 1, // échec oublié (TTL) : compteur remis à zéro
     status: 'queued',
     progress: 0,
     cancel: null,
@@ -109,7 +139,7 @@ export async function ensureVariant({ id, who, file, quality, durationS }) {
   jobs.set(key, job);
   queue.push(job);
   pump();
-  return { state: job.status, progress: 0 };
+  return jobView(job);
 }
 
 function pump() {
@@ -125,45 +155,45 @@ function pump() {
 }
 
 async function runVariant(job) {
+  const key = `${job.id}|${whoOf16(job.who)}`;
+  const level = uniqConfig().level;
+  const out = variantPath(job.id, job.who, level);
+  const tmp = partOf(out);
+  const orphan = () => jobs.get(key) !== job; // clip supprimé ou recréé : removeVariants a retiré le job
   try {
+    if (orphan()) return;
+    job.status = 'running';
     const caps = await uniqCapabilities();
-    if (!caps.ok) return (job.status = 'skipped');
-    const { params, args } = buildUniqArgs({
-      file: job.file,
-      out: variantPath(job.id, job.who, uniqConfig().level),
-      quality: job.quality,
-      seed: job.seed,
-      level: uniqConfig().level,
-      rubberband: caps.rubberband,
-    });
-    job.params = params;
+    if (!caps.ok) {
+      job.status = 'skipped';
+      jobs.delete(key); // pas d'état figé : la prochaine demande re-sonde ffmpeg
+      return;
+    }
+    const { params, args } = buildUniqArgs({ file: job.file, out: tmp, quality: job.quality, seed: job.seed, level, rubberband: caps.rubberband });
     await fs.mkdir(variantsDir(), { recursive: true }); // ffmpeg ouvre la sortie dès le départ
-    const tmp = `${variantPath(job.id, job.who, uniqConfig().level)}.tmp.mp4`;
-    args[args.length - 1] = tmp;
-    const run = runFfmpeg(args, job.durationS, { onProgress: (p) => (job.progress = p), timeoutMs: uniqConfig().timeoutMs });
+    // la sortie fait `trimStart` de moins que le clip : progression calculée sur la durée réelle
+    const run = runFfmpeg(args, Math.max(1, job.durationS - params.trimStart), {
+      onProgress: (p) => (job.progress = p),
+      timeoutMs: uniqConfig().timeoutMs,
+    });
     job.cancel = run.cancel;
     await run.promise;
-    await fs.mkdir(variantsDir(), { recursive: true });
-    await fs.rename(tmp, variantPath(job.id, job.who, uniqConfig().level));
-    await fs.writeFile(sidecarOf(variantPath(job.id, job.who, uniqConfig().level)), JSON.stringify({
-      clip: job.id,
-      who: whoOf16(job.who),
-      level: uniqConfig().level,
-      seed: job.seed,
-      at: new Date().toISOString(),
-    }));
+    if (orphan()) return;
+    await fs.rename(tmp, out);
+    await fs.writeFile(sidecarOf(out), JSON.stringify({ clip: job.id, who: whoOf16(job.who), level, seed: job.seed, at: new Date().toISOString() }));
     job.status = 'done';
-    job.progress = 1;
+    jobs.delete(key); // le fichier fait foi : une variante évincée plus tard sera simplement re-préparée
+    bytesAt = 0;
     await evictOldest(job.id);
   } catch (e) {
+    if (orphan()) return;
     console.error(`Bibliothèque ${job.id} (variante) : ${e.message}`);
     job.status = 'error';
+    job.failedAt = Date.now();
+    job.error = variantErrorMessage(e); // phrase courte pour l'interface ; le détail complet est dans les logs
   } finally {
-    if (job.status !== 'done' && job.status !== 'skipped') {
-      // annulée (clip supprimé) ou en erreur : le fichier partiel est retiré par removeVariants / l'épuration
-      await fs.rm(`${variantPath(job.id, job.who, uniqConfig().level)}.tmp.mp4`, { force: true });
-    }
     job.cancel = null;
+    if (job.status !== 'done') await fs.rm(tmp, { force: true });
   }
 }
 
@@ -174,12 +204,13 @@ function runFfmpeg(args, total, { onProgress, timeoutMs }) {
     const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let err = '';
     let cancelled = false;
+    let timedOut = false; // drapeau séparé : le tampon stderr tronqué pourrait perdre un marqueur texte
     kill = () => {
       cancelled = true;
       proc.kill('SIGKILL');
     };
     const timer = setTimeout(() => {
-      err += '\nDélai dépassé';
+      timedOut = true;
       proc.kill('SIGKILL');
     }, timeoutMs);
     proc.stdout.on('data', (chunk) => {
@@ -196,6 +227,7 @@ function runFfmpeg(args, total, { onProgress, timeoutMs }) {
     proc.on('close', (code) => {
       clearTimeout(timer);
       if (cancelled) return reject(Object.assign(new Error('annulé'), { cancelled: true }));
+      if (timedOut) return reject(Object.assign(new Error(`Délai dépassé (${timeoutMs} ms)`), { timedOut: true }));
       if (code === 0) return resolve();
       reject(new Error(err.trim() || `ffmpeg a échoué (code ${code})`));
     });
@@ -244,19 +276,25 @@ export async function variantsBytes() {
 }
 
 /**
- * Épuration : les variantes d'un clip disparu partent. Appelé par l'entretien de la bibliothèque avec
- * l'ensemble des ids encore présents en base.
+ * Épuration : les variantes d'un clip sans fichier actif (supprimé ou archivé) partent, ainsi que les
+ * encodages abandonnés (`.part` laissés par un arrêt brutal). `activeIds` : clips dont le fichier existe.
  */
-export async function sweepVariants(existingIds) {
+export async function sweepVariants(activeIds, now = Date.now()) {
   const dir = variantsDir();
   const names = await fs.readdir(dir).catch(() => []);
-  const stale = names.filter((n) => !existingIds.has(n.split('_')[0]) && n.endsWith('.mp4'));
-  await Promise.all(
-    stale.map((n) => Promise.all([fs.rm(path.join(dir, n), { force: true }), fs.rm(path.join(dir, `${n}.json`), { force: true })])),
-  );
+  const stale = [];
+  for (const n of names) {
+    if (n.endsWith('.part')) {
+      const st = await fs.stat(path.join(dir, n)).catch(() => null);
+      if (st && now - st.mtimeMs > 2 * uniqConfig().timeoutMs) stale.push(n);
+    } else if (n.endsWith('.mp4') && !activeIds.has(n.split('_')[0])) {
+      stale.push(n, `${n}.json`);
+    }
+  }
+  await Promise.all(stale.map((n) => fs.rm(path.join(dir, n), { force: true })));
   if (stale.length) {
     bytesAt = 0;
     bytesValue = null;
   }
-  return stale.length;
+  return stale.filter((n) => n.endsWith('.mp4')).length;
 }

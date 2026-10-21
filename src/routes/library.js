@@ -148,9 +148,10 @@ libraryRouter.post(
     if (!file) throw new HttpError(410, 'Ce clip est archivé : recrée-le pour le télécharger.');
     const who = whoOf(req);
     if (!who) return res.json({ state: 'disabled', progress: 0 });
-    if (await variantFile(row.id, who)) return res.json({ state: 'ready', progress: 1 });
-    if (!variantLimiter.take(`variant:${ipKey(req.ip)}`, 120)) throw new HttpError(429, 'Trop de préparations pour le moment : réessaie plus tard.');
     res.set('Cache-Control', 'no-store');
+    const st = await variantState(row.id, who);
+    if (['ready', 'queued', 'running'].includes(st.state)) return res.json(st); // rien de nouveau : le quota n'est pas consommé
+    if (!variantLimiter.take(`variant:${ipKey(req.ip)}`, 120)) throw new HttpError(429, 'Trop de préparations pour le moment : réessaie plus tard.');
     res.json(await ensureVariant({ id: row.id, who, file, quality: row.quality, durationS: Number(row.duration_s) }));
   }),
 );

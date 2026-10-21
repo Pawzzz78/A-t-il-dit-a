@@ -14,7 +14,7 @@ try {
   hasFfmpeg = false;
 }
 const enabled = Boolean(process.env.DATABASE_URL) && hasFfmpeg;
-const YT = 'UNIQtest_001';
+const YT = 'UNIQtest_00'; // 11 caractères : un identifiant YouTube est exactement 11
 const DURATION = 8;
 const CLIP_S = 3; // extrait 500 ms → 3500 ms
 const SECRET = 'z'.repeat(32);
