@@ -1,18 +1,26 @@
 // Reads are public; writes need an owner (member in members-only mode, else the anonymous cookie)
 import express, { Router } from 'express';
 import { HttpError, ah, jsonErrors } from '../http-error.js';
-import { ipKey, trimMap } from '../ip.js';
+import { createLimiter, ipKey, trimMap } from '../ip.js';
 import { membersOnly } from '../members/oidc.js';
 import {
   SORTS, clipFile, clipPoster, clipRequest, countDownload, deleteClip, deleteOwnerData, downloadName, getClip, libraryConfig, listMine, listPublic,
   mediaClip, present, publishFromJob, rate, recreate, report, repost, setVisibility,
 } from '../library/library.js';
+import { ensureVariant, variantFile, variantState } from '../library/uniq.js';
 import { clearOwner, libraryConfigured, optionalOwner, requireOwner } from '../library/owner.js';
 import { getJob } from '../studio/render.js';
+import { visitorHash } from '../studio/stats.js';
+
+// « Personne » d'une variante : la clé du propriétaire (adhérent ou cookie anonyme), sinon l'empreinte de la connexion
+const whoOf = (req) => req.owner?.key || visitorHash(ipKey(req.ip)) || null;
 
 export const libraryRouter = Router();
 libraryRouter.use(express.json({ limit: '10kb' }));
 libraryRouter.use((_req, res, next) => (libraryConfigured() ? next() : res.status(503).json({ error: "La bibliothèque n'est pas disponible." })));
+
+// One variant per person per clip is cached on disk; this only bounds how fast new encodes are started
+const variantLimiter = createLimiter();
 
 // Bytes served per visitor and hour: bounds the bandwidth a scraper can pull
 const served = new Map();
@@ -30,7 +38,10 @@ const addBytes = (ip, n) => {
   } else rec.bytes += n;
   trimMap(served, 5000, (r) => r.resetAt <= now);
 };
-export const resetLibraryRoutes = () => served.clear();
+export const resetLibraryRoutes = () => {
+  served.clear();
+  variantLimiter.clear();
+};
 
 libraryRouter.get(
   '/',
@@ -99,13 +110,48 @@ libraryRouter.get(
     const before = socket.bytesWritten;
     res.on('close', () => addBytes(req.ip, Math.max(0, socket.bytesWritten - before)));
     const download = req.query.use === 'download';
-    if (download) await countDownload(row, { owner: req.owner?.key, ip: req.ip });
+    let target = file;
+    if (download) {
+      await countDownload(row, { owner: req.owner?.key, ip: req.ip });
+      const who = whoOf(req);
+      if (who) target = (await variantFile(row.id, who)) ?? file; // la version unique de la personne, sinon l'original
+    }
     const headers = { 'Cache-Control': 'private, max-age=3600', 'Content-Type': 'video/mp4' };
     const done = (err) => {
       if (err && !res.headersSent) res.status(404).json({ error: 'Clip introuvable.' });
     };
-    if (download) res.download(file, downloadName(row), { headers }, done);
-    else res.sendFile(file, { acceptRanges: true, headers }, done);
+    if (download) res.download(target, downloadName(row), { headers }, done);
+    else res.sendFile(target, { acceptRanges: true, headers }, done);
+  }),
+);
+
+// Version unique par (clip, personne) : une deuxième passe ffmpeg avec des micro-transforms invisibles,
+// préparée en arrière-plan à l'ouverture du clip et servie au téléchargement. Le fichier original reste
+// toujours servi si la variante n'est pas prête — un téléchargement n'échoue jamais.
+libraryRouter.get(
+  '/clips/:id/variant',
+  optionalOwner,
+  ah(async (req, res) => {
+    const row = await mediaClip(req.params.id, req.owner?.key);
+    if (!clipFile(row)) throw new HttpError(410, 'Ce clip est archivé : recrée-le pour le télécharger.');
+    res.set('Cache-Control', 'no-store');
+    res.json(await variantState(row.id, whoOf(req)));
+  }),
+);
+
+libraryRouter.post(
+  '/clips/:id/variant',
+  optionalOwner,
+  ah(async (req, res) => {
+    const row = await mediaClip(req.params.id, req.owner?.key);
+    const file = clipFile(row);
+    if (!file) throw new HttpError(410, 'Ce clip est archivé : recrée-le pour le télécharger.');
+    const who = whoOf(req);
+    if (!who) return res.json({ state: 'disabled', progress: 0 });
+    if (await variantFile(row.id, who)) return res.json({ state: 'ready', progress: 1 });
+    if (!variantLimiter.take(`variant:${ipKey(req.ip)}`, 120)) throw new HttpError(429, 'Trop de préparations pour le moment : réessaie plus tard.');
+    res.set('Cache-Control', 'no-store');
+    res.json(await ensureVariant({ id: row.id, who, file, quality: row.quality, durationS: Number(row.duration_s) }));
   }),
 );
 

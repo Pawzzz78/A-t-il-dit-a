@@ -145,8 +145,90 @@ const dialog = $('dialog');
 let current = null;
 let pendingTimer = 0;
 
+// Version unique du clip pour la personne qui l'ouvre : le serveur prépare une copie (deuxième passe avec
+// micro-transforms invisibles) pendant la lecture ; le téléchargement la sert, sinon l'original.
+const uniq = { key: null, state: 'idle', progress: 0, timer: 0, want: false };
+const uniqKey = (m) => `${m.id}:${m.file_version}`;
+const stopUniq = () => {
+  clearTimeout(uniq.timer);
+  uniq.timer = 0;
+  uniq.want = false;
+};
+
+function prepUniq(m) {
+  const key = uniqKey(m);
+  if (uniq.key === key) return;
+  uniq.key = key;
+  uniq.state = 'idle';
+  uniq.progress = 0;
+  api('POST', `/clips/${m.id}/variant`)
+    .then((st) => {
+      if (uniq.key !== key) return;
+      uniq.state = st.state;
+      uniq.progress = st.progress ?? 0;
+      uniqTick(m);
+    })
+    .catch(() => {
+      if (uniq.key !== key) return;
+      uniq.state = 'error'; // préparation indisponible : le téléchargement servira l'original
+      uniqTick(m);
+    });
+}
+
+function uniqTick(m) {
+  const key = uniqKey(m);
+  clearTimeout(uniq.timer);
+  uniq.timer = setTimeout(async () => {
+    if (!dialog.open || !current || uniq.key !== key || uniqKey(media(current)) !== key) return;
+    let st;
+    try {
+      st = await api('GET', `/clips/${m.id}/variant`);
+    } catch {
+      return uniqTick(m); // à-coup réseau : on réessaie
+    }
+    if (uniq.key !== key) return;
+    uniq.state = st.state;
+    uniq.progress = st.progress ?? 0;
+    if (uniq.want) {
+      if (['ready', 'disabled', 'skipped', 'error'].includes(uniq.state)) {
+        uniqDownload(m, uniq.state === 'ready' ? $('dialog-msg') : undefined);
+        return;
+      }
+      const msg = $('dialog-msg');
+      if (msg) say(msg, `Préparation de ta version unique ${uniq.progress >= 0.99 ? '' : `${Math.round(uniq.progress * 100)} %` + ' '}…`);
+    }
+    if (['queued', 'running'].includes(uniq.state)) uniqTick(m);
+  }, 1500);
+}
+
+function uniqDownload(m, msg) {
+  const ready = uniq.state === 'ready';
+  stopUniq();
+  const a = el('a', { href: `/api/library/clips/${m.id}/file?use=download`, download: '' });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  if (msg) say(msg, ready ? 'Version unique : téléchargement lancé.' : 'Téléchargement lancé.');
+  setTimeout(() => openClip(m.id), 1500); // comme avant : les compteurs se rafraîchissent
+}
+
+function onDownload(m, msg) {
+  const key = uniqKey(m);
+  if (uniq.key !== key) {
+    uniq.key = key;
+    uniq.state = 'idle';
+  }
+  if (['ready', 'disabled', 'skipped', 'error'].includes(uniq.state)) return uniqDownload(m, uniq.state === 'ready' ? msg : undefined);
+  uniq.want = true;
+  say(msg, 'Préparation de ta version unique…');
+  if (uniq.state === 'idle') prepUniq(m);
+  else uniqTick(m);
+}
+
 async function openClip(id) {
   clearTimeout(pendingTimer);
+  stopUniq();
+  uniq.key = null;
   try {
     current = await api('GET', `/clips/${id}`);
   } catch (e) {
@@ -252,13 +334,14 @@ function renderDialog() {
       msg);
     return;
   }
+  if (m.file_state === 'active') prepUniq(m); // pendant que la personne regarde, sa version se prépare
   $('dialog-body').replaceChildren(...[
     el('h2', { id: 'dialog-title' }, m.video_title || 'Clip'),
     el('p', { class: 'dialog-text' }, src),
     el('div', { class: 'dialog-player' }, player),
     el('div', { class: 'dialog-stats' }, el('span', {}, downloads(m)), el('span', {}, stars(m)), el('span', {}, dur(m.duration_s)), m.remix_of ? el('span', {}, 'Version modifiée d’un autre clip') : null),
     el('div', { class: 'lib-actions' },
-      m.file_state === 'active' ? el('a', { class: 'btn small', href: `/api/library/clips/${m.id}/file?use=download`, download: '', onclick: () => setTimeout(() => openClip(c.id), 1500) }, 'Télécharger') : null,
+      m.file_state === 'active' ? el('button', { class: 'btn small', type: 'button', onclick: () => onDownload(m, msg) }, 'Télécharger') : null,
       el('button', { class: 'btn secondary small', type: 'button', onclick: () => share(m, msg) }, 'Partager'),
       el('a', { class: 'btn secondary small', href: `/?v=${encodeURIComponent(m.youtube_id)}&clip=${m.id}` }, 'Modifier'),
       !c.mine && write ? el('button', { class: 'btn secondary small', type: 'button', onclick: () => act(msg, async () => { await api('POST', `/clips/${m.id}/repost`); say(msg, 'Ajouté à « Mes clips ».'); }) }, 'Republier') : null),
@@ -280,6 +363,7 @@ function renderDialog() {
 
 dialog.addEventListener('close', () => {
   clearTimeout(pendingTimer);
+  stopUniq();
   dialog.querySelector('video')?.pause();
   const q = new URLSearchParams(location.search);
   q.delete('clip');
