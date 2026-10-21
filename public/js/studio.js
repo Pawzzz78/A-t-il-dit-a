@@ -1,6 +1,7 @@
 // Studio de clips : choix d'une interview, extraits (proposés par l'IA ou libres), sous-titres TikTok (style, police, couleurs,
 // contour, position, taille), musique, cadrage, puis création du MP4 sur le serveur. Aucun innerHTML : tout est posé en nœuds.
-import { BROLL, DESCRIPTION_MAX, END_CARD, LIMITS, MODELS, PRESETS, SIMILARITY_WARNING, ZOOM, draftFromClip, endCardContent, endCardSettings, fitDescription, modelFromState, parseModels, sanitizeModel, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
+import { CARD, PALETTES as EC_PALETTES, TEMPLATES as EC_TEMPLATES, cardBlob, drawEndCard, loadImage, needsPhoto } from './endcard.js';
+import { BROLL, DESCRIPTION_MAX, LIMITS, MODELS, PRESETS, SIMILARITY_WARNING, ZOOM, draftFromClip, endCardSettings, fitDescription, modelFromState, parseModels, sanitizeModel, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
 import { createPhone, el, outlineShadow, rgba } from './studio-preview.js';
 import { fmtDate } from './ui.js';
 
@@ -161,7 +162,7 @@ const savePrefs = (S) => {
     clearTimeout(prefsTimer);
     prefsTimer = 0;
     try {
-      localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror }, step: S.step, zoom: { strength: S.zoom.strength, focus: S.zoom.focus }, endCard: S.endCard }));
+      localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror }, step: S.step, zoom: { strength: S.zoom.strength, focus: S.zoom.focus }, endCard: { on: S.endCard.on, dur: S.endCard.dur, design: S.endCard.design } }));
       S.onSaved?.();
     } catch {
       // stockage indisponible : sans importance
@@ -1019,43 +1020,111 @@ async function openEditor(youtubeId) {
   const quality = (value, title, text) => el('label', { class: S.layout.quality === value ? 'st-opt on' : 'st-opt' },
     el('input', { type: 'radio', name: 'quality', value, 'data-k': `q:${value}`, checked: S.layout.quality === value, onchange: () => { S.layout.quality = value; savePrefs(S); renderCreate(); } }),
     el('strong', {}, title), el('small', {}, text));
-  const endCardChanged = () => {
+  // End card visual: drawn here in a canvas, uploaded as a JPEG when the video is created
+  const ec = { photo: null, photoUrl: '', canvas: el('canvas', { class: 'st-ec-canvas', width: '1080', height: '1920', role: 'img', 'aria-label': 'Aperçu de l’écran de fin' }), missing: [], timer: 0, base: null };
+  const ecSource = () => sourceText(S.video.title, S.video.published_at);
+  const ecMsg = el('p', { class: 'st-help warn', role: 'status' });
+  async function drawEc() {
+    if (!S.endCard.on) return;
+    if (S.endCard.fromClip && !S.endCard.dirty) {
+      ec.base ??= await loadImage(`/api/library/clips/${S.endCard.fromClip}/card`).catch(() => null);
+      if (ec.base) {
+        const ctx = ec.canvas.getContext('2d');
+        ctx.drawImage(ec.base, 0, 0, CARD.w, CARD.h);
+        ec.missing = [];
+        ecMsg.textContent = '';
+        return;
+      }
+    }
+    ec.missing = await drawEndCard(ec.canvas, S.endCard.design, { photo: ec.photo, sourceLine: ecSource() });
+    ecMsg.textContent = ec.missing.length ? `À compléter : ${ec.missing.join(', ')}.` : '';
+  }
+  const redrawEc = () => {
+    clearTimeout(ec.timer);
+    ec.timer = setTimeout(drawEc, 120);
+  };
+  const ecChanged = (rerender = true) => {
+    S.endCard.dirty = true;
     savePrefs(S);
     scheduleDraft();
-    renderCreate();
+    if (rerender) renderCreate();
+    else redrawEc();
   };
+  const setDesign = (patch, rerender = true) => {
+    S.endCard.design = { ...S.endCard.design, ...patch };
+    ecChanged(rerender);
+  };
+  async function pickPhoto(file) {
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return toast('Choisis une image JPG, PNG ou WebP.', true);
+    if (file.size > CARD.maxPhotoMb * 1024 * 1024) return toast(`Image trop lourde (${CARD.maxPhotoMb} Mo au maximum).`, true);
+    if (ec.photoUrl) URL.revokeObjectURL(ec.photoUrl);
+    ec.photoUrl = URL.createObjectURL(file);
+    ec.photo = await loadImage(ec.photoUrl).catch(() => null);
+    if (!ec.photo) return toast('Cette image n’a pas pu être lue.', true);
+    ecChanged();
+  }
+  async function endCardPayload() {
+    if (!S.endCard.on) return null;
+    await drawEc();
+    if (ec.missing.length) {
+      openTab('creer');
+      throw new Error(`Écran de fin : complète ${ec.missing.join(', ')}, ou décoche-le.`);
+    }
+    const blob = await cardBlob(ec.canvas);
+    const res = await fetch('/api/studio/endcard', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob }).catch(() => null);
+    const data = res ? await res.json().catch(() => ({})) : {};
+    if (!res?.ok) throw new Error(data.error || 'Le visuel de fin n’a pas pu être envoyé : réessaie.');
+    return { on: true, source: false, dur: S.endCard.dur, image: data.id, design: S.endCard.design };
+  }
   function endCardBox() {
     const c = S.endCard;
-    const content = c.on ? endCardContent(c, sourceText(S.video.title, S.video.published_at)) : null;
-    const text = el('input', { type: 'text', maxlength: String(END_CARD.maxText), value: c.text, 'data-k': 'ec:text', placeholder: 'Ex. : Partage si tu es d’accord !', 'aria-describedby': 'st-ec-count' });
-    const count = el('small', { id: 'st-ec-count', class: 'st-help inline' }, `${c.text.length} / ${END_CARD.maxText}`);
-    text.addEventListener('input', () => {
-      S.endCard.text = text.value.slice(0, END_CARD.maxText);
-      count.textContent = `${S.endCard.text.length} / ${END_CARD.maxText}`;
-      savePrefs(S);
-      scheduleDraft();
-      renderEndCardPreview();
-    });
-    text.addEventListener('change', endCardChanged);
-    const card = el('div', { class: 'st-endcard', 'aria-hidden': 'true' });
-    function renderEndCardPreview() {
-      const now = S.endCard.on ? endCardContent(S.endCard, sourceText(S.video.title, S.video.published_at)) : null;
-      put(card, now?.title ? [el('span', { class: 'st-ec-rule' }), el('strong', { class: now.small ? 'small' : '' }, now.small ? now.title : now.title.toLocaleUpperCase('fr-FR')), now.foot ? el('span', { class: 'st-ec-foot' }, now.foot) : null] : []);
-      card.hidden = !now?.title;
-    }
-    renderEndCardPreview();
+    const d = c.design;
+    const t = EC_TEMPLATES[d.template];
+    const head = el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: c.on, 'data-k': 'ec:on', onchange: (e) => { S.endCard.on = e.target.checked; ecChanged(); } }), 'Ajouter un écran de fin à la vidéo');
+    if (!c.on) return el('div', { class: 'st-ec' }, head, el('p', { class: 'st-help' }, 'Un visuel de 2 à 5 s après ton clip : message, citation, chiffre, événement, ta photo…'));
+    const chip = (on, label, onclick, k, extra = {}) => el('button', { type: 'button', class: on ? 'st-ec-chip on' : 'st-ec-chip', 'aria-pressed': String(on), 'data-k': k, onclick, ...extra }, label);
+    const field = (f) => {
+      const value = d.values[f.key] ?? '';
+      const input = f.area
+        ? el('textarea', { rows: '2', maxlength: String(f.max), placeholder: f.placeholder, 'data-k': `ec:f:${f.key}` }, value)
+        : el('input', { type: f.type, maxlength: String(f.max), placeholder: f.placeholder, value, 'data-k': `ec:f:${f.key}` });
+      input.addEventListener('input', () => setDesign({ values: { ...S.endCard.design.values, [f.key]: input.value.slice(0, f.max) } }, false));
+      input.addEventListener('change', () => renderCreate());
+      return el('label', { class: 'st-field' }, f.label, input);
+    };
+    const photoInput = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', class: 'st-ec-file', 'data-k': 'ec:photo', onchange: (e) => pickPhoto(e.target.files[0]) });
+    const wantsPhoto = needsPhoto(d);
+    redrawEc();
     return el('div', { class: 'st-ec' },
-      el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: c.on, 'data-k': 'ec:on', onchange: (e) => { S.endCard.on = e.target.checked; endCardChanged(); } }), 'Ajouter un écran de fin à la vidéo'),
-      c.on ? [
-        el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: c.source, 'data-k': 'ec:src', onchange: (e) => { S.endCard.source = e.target.checked; endCardChanged(); } }), 'Citer la source (interview et date)'),
-        el('label', { class: 'st-field' }, 'Ton message (facultatif)', text, count),
-        el('div', { class: 'st-ec-dur', role: 'group', 'aria-label': 'Durée de l’écran de fin' },
-          el('span', {}, 'Durée'),
-          [2, 3, 4, 5].map((n) => el('button', { type: 'button', class: 'btn small secondary', 'data-k': `ec:d${n}`, 'aria-pressed': String(c.dur === n), onclick: () => { S.endCard.dur = n; endCardChanged(); } }, `${n} s`))),
-        !content?.title ? el('p', { class: 'st-help warn' }, 'Coche la source ou écris un message : sinon il n’y aura pas d’écran de fin.') : null,
-        card,
-        el('p', { class: 'st-help' }, 'L’écran de fin s’ajoute après ton clip, en plus de sa durée. Il apparaît dans la vidéo créée, pas dans l’aperçu.'),
-      ] : null);
+      head,
+      el('div', { class: 'st-ec-grid' },
+        el('div', { class: 'st-ec-preview' }, ec.canvas, c.fromClip && !c.dirty ? el('p', { class: 'st-help' }, 'Visuel repris du clip d’origine : modifie-le librement.') : null),
+        el('div', { class: 'st-ec-form' },
+          el('p', { class: 'st-ec-label' }, 'Modèle'),
+          el('div', { class: 'st-ec-chips', role: 'group', 'aria-label': 'Modèle de visuel' },
+            Object.entries(EC_TEMPLATES).map(([id, x]) => chip(d.template === id, x.label, () => setDesign({ template: id }), `ec:t:${id}`, { title: x.hint }))),
+          el('p', { class: 'st-ec-label' }, 'Couleurs'),
+          el('div', { class: 'st-ec-chips', role: 'group', 'aria-label': 'Couleurs' },
+            Object.entries(EC_PALETTES).map(([id, p]) => chip(d.palette === id, el('span', { class: 'st-ec-swatch', style: `background:${p.bg};border-color:${p.accent}` }, ''), () => setDesign({ palette: id }), `ec:p:${id}`, { 'aria-label': p.label, title: p.label }))),
+          t.fields.map(field),
+          el('p', { class: 'st-ec-label' }, 'Photo'),
+          el('div', { class: 'st-ec-photo' },
+            el('label', { class: 'btn small secondary st-ec-upload' }, ec.photo ? 'Changer la photo' : 'Ajouter une photo', photoInput),
+            ec.photo ? el('button', { type: 'button', class: 'st-link', onclick: () => { URL.revokeObjectURL(ec.photoUrl); ec.photo = null; ec.photoUrl = ''; ecChanged(); } }, 'Retirer') : null,
+            !t.photo ? el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: d.photoBg, 'data-k': 'ec:pbg', onchange: (e) => setDesign({ photoBg: e.target.checked }) }), 'En fond, assombrie') : null),
+          wantsPhoto && !ec.photo ? el('p', { class: 'st-help' }, 'Ce modèle utilise ta photo (JPG, PNG ou WebP). Elle n’est pas gardée si tu recharges la page.') : null,
+          el('p', { class: 'st-ec-label' }, 'Options'),
+          el('div', { class: 'st-ec-opts' },
+            el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: d.align === 'center', 'data-k': 'ec:al', onchange: (e) => setDesign({ align: e.target.checked ? 'center' : 'left' }) }), 'Centrer'),
+            el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: d.upper, 'data-k': 'ec:up', onchange: (e) => setDesign({ upper: e.target.checked }) }), 'Majuscules'),
+            el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: d.logo, 'data-k': 'ec:lg', onchange: (e) => setDesign({ logo: e.target.checked }) }), 'Logo Projet Lisnard'),
+            el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: d.source, 'data-k': 'ec:src', onchange: (e) => setDesign({ source: e.target.checked }) }), 'Citer l’interview')),
+          el('div', { class: 'st-ec-dur', role: 'group', 'aria-label': 'Durée de l’écran de fin' },
+            el('span', {}, 'Durée'),
+            [2, 3, 4, 5].map((n) => el('button', { type: 'button', class: 'btn small secondary', 'data-k': `ec:d${n}`, 'aria-pressed': String(c.dur === n), onclick: () => { S.endCard.dur = n; savePrefs(S); scheduleDraft(); renderCreate(); } }, `${n} s`))),
+          ecMsg,
+          el('p', { class: 'st-help' }, 'S’ajoute après ton clip, en plus de sa durée ; visible dans la vidéo créée, pas dans l’aperçu.'))));
   }
 
   function renderCreate() {
@@ -1358,7 +1427,7 @@ async function openEditor(youtubeId) {
         zoom: S.zoom.on && S.zoom.events.length ? { strength: S.zoom.strength, focus: S.zoom.focus, events: S.zoom.events } : null,
         broll: S.broll.map(({ id, start, dur }) => ({ id, start, dur })),
         edits: Object.fromEntries(clipLines().filter((r) => S.edits.has(r.line.start_ms)).map((r) => [r.line.start_ms, S.edits.get(r.line.start_ms).text])),
-        end_card: S.endCard.on ? S.endCard : null,
+        end_card: await endCardPayload(),
       }));
       showJob();
       poll();
