@@ -1734,9 +1734,9 @@ async function openEditor(youtubeId) {
       el('span', { class: 'st-models-label' }, 'Modèles'),
       list.length ? pick : null,
       tools,
-      el('button', { type: 'button', class: 'btn small secondary', onclick: saveModel }, 'Enregistrer mes réglages'),
+      el('button', { type: 'button', class: 'st-link', title: 'Style, musique, format, zooms et écran de fin (pas les extraits)', onclick: saveModel }, '+ Enregistrer mes réglages'),
       undoModel ? el('button', { type: 'button', class: 'st-link', onclick: () => { const back = undoModel; undoModel = null; applySettings(back); renderModels(); toast('Réglages précédents rétablis.'); } }, 'Annuler le modèle') : null,
-      el('span', { class: 'st-help inline st-models-hint' }, 'Style, musique, format, zooms et écran de fin, gardés dans ce navigateur.'),
+      el('span', { class: 'st-help inline st-models-hint' }, 'Gardés dans ce navigateur'),
     );
   }
 
