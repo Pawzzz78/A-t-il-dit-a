@@ -210,6 +210,9 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
   const broll = kind === 'final' ? req.broll ?? [] : [];
   const imageIdx = musicIdx + (music ? 1 : 0);
   broll.forEach((b) => args.push('-loop', '1', '-framerate', String(FPS), '-t', String(b.dur), '-i', images[b.id] ?? path.join(stockDir(), `${b.id}.jpg`)));
+  const cardIdx = imageIdx + broll.length;
+  const cardImage = kind === 'final' && req.end_card?.image ? images.__card ?? cardFile(req.end_card.image) : null;
+  if (cardImage) args.push('-loop', '1', '-framerate', String(FPS), '-t', String(req.end_card.dur), '-i', cardImage);
 
   const f = [];
   req.extracts.forEach((e, i) => {
@@ -240,7 +243,9 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
     last = `vb${k}`;
   });
   if (kind === 'final' && req.end_card) {
-    f.push(`color=c=0x${END_CARD.bg.slice(1)}:s=${size.w}x${size.h}:r=30:d=${req.end_card.dur},format=yuv420p,setsar=1[ec]`);
+    f.push(cardImage
+      ? `[${cardIdx}:v]scale=${size.w}:${size.h}:force_original_aspect_ratio=increase,crop=${size.w}:${size.h},setsar=1,fps=${FPS},format=yuv420p[ec]`
+      : `color=c=0x${END_CARD.bg.slice(1)}:s=${size.w}x${size.h}:r=30:d=${req.end_card.dur},format=yuv420p,setsar=1[ec]`);
     f.push(`[${last}]format=yuv420p,setsar=1[vm];[vm][ec]concat=n=2:v=1:a=0[ve]`);
     last = 've';
   }
@@ -284,6 +289,7 @@ export async function assForRequest({ req, lines, video = null }) {
 }
 
 function endCardFor(req, video) {
+  if (req.end_card?.image) return null; // the uploaded visual already carries its text
   const content = endCardContent(req.end_card, sourceText(video?.title, video?.published_at));
   if (!content || !content.title) return null;
   const font = fontById.get('montserrat') ?? FONTS[0];
@@ -292,11 +298,13 @@ function endCardFor(req, video) {
 
 // --- exécution de ffmpeg ----------------------------------------------------------------------------
 
-const dirs = () => ({ renders: path.join(storageDir(), 'renders'), previews: path.join(storageDir(), 'previews'), stock: stockDir() });
+const dirs = () => ({ renders: path.join(storageDir(), 'renders'), previews: path.join(storageDir(), 'previews'), stock: stockDir(), cards: path.join(storageDir(), 'cards') });
+export const cardFile = (id) => (/^[0-9a-f]{40}$/.test(String(id)) ? path.join(dirs().cards, `${id}.jpg`) : null);
 async function ensureDirs() {
   const d = dirs();
   await fs.mkdir(d.renders, { recursive: true });
   await fs.mkdir(d.previews, { recursive: true });
+  await fs.mkdir(d.cards, { recursive: true });
   await fs.mkdir(d.stock, { recursive: true });
 }
 
@@ -344,6 +352,46 @@ const take = (kind, ip, max) => limiter.take(`${kind}:${ipKey(ip)}`, max);
 
 // Auto-framing is called on every extract change, hence a generous limit
 export const framingAllowed = (ip) => take('framing', ip, config().framingPerHour);
+
+// --- end card visual drawn in the browser ---
+
+const probeImage = (file) =>
+  new Promise((resolve) => {
+    const p = spawn('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name,width,height', '-of', 'json', file], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    p.stdout.on('data', (d) => (out += d));
+    p.on('error', () => resolve(null));
+    p.on('close', () => {
+      try {
+        resolve(JSON.parse(out).streams?.[0] ?? null);
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+
+// Named after its content hash, so the same visual is stored once
+export async function saveCard(buffer, ip = 'local') {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 1000 || buffer[0] !== 0xff || buffer[1] !== 0xd8) throw new HttpError(400, 'Visuel de fin illisible : il doit être une image JPEG.');
+  if (!take('card', ip, 120)) throw new HttpError(429, 'Trop de visuels envoyés pour le moment : réessaie dans quelques minutes.');
+  await ensureDirs();
+  const id = crypto.createHash('sha1').update(buffer).digest('hex');
+  const file = cardFile(id);
+  if (await fs.stat(file).then(() => true, () => false)) {
+    const now = new Date();
+    await fs.utimes(file, now, now).catch(() => {});
+    return id;
+  }
+  const tmp = `${file}.tmp.jpg`;
+  await fs.writeFile(tmp, buffer);
+  const st = await probeImage(tmp);
+  if (!st || st.codec_name !== 'mjpeg' || !(st.width >= 270 && st.width <= 4096 && st.height >= 480 && st.height <= 4096)) {
+    await fs.rm(tmp, { force: true });
+    throw new HttpError(400, 'Visuel de fin illisible : envoie une image JPEG verticale.');
+  }
+  await fs.rename(tmp, file);
+  return id;
+}
 
 // --- aperçu -------------------------------------------------------------------------------------------
 
@@ -448,6 +496,7 @@ export async function enqueueRender({ video, req, lines, ip: rawIp = 'local', ow
   const mine = [...jobs.values()].filter((j) => j.ip === ip && (j.status === 'queued' || j.status === 'running')).length;
   if (mine >= cfg.perIpActive) throw new HttpError(429, 'Tu as déjà des clips en cours de création : attends qu’ils soient prêts.');
   if (queue.length >= cfg.maxQueue) throw new HttpError(503, 'Le studio est très sollicité : réessaie dans quelques minutes.');
+  if (req.end_card?.image && !(await fs.stat(cardFile(req.end_card.image)).then(() => true, () => false))) throw new HttpError(409, 'Le visuel de fin a expiré : crée la vidéo à nouveau.');
   if (!take('render', ip, cfg.rendersPerHour)) throw new HttpError(429, `Limite atteinte : ${cfg.rendersPerHour} clips par heure. Réessaie plus tard.`);
   await ensureDirs();
   const id = crypto.randomBytes(12).toString('hex');

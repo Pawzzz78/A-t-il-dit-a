@@ -8,6 +8,7 @@
 // Repère unique des tailles (police, contour, position) : 1080 × 1920, quelle que soit la qualité de sortie.
 // La « taille » d'un style est la taille d'em du texte, comme une font-size CSS : libass, lui, dessine un texte de taille ASS N avec
 // une em de N × em_ratio (propre à chaque police, mesuré) : buildAss convertit, ce qui rend l'aperçu fidèle à la vidéo.
+import { sanitizeDesign } from './endcard.js';
 import { isStopWord } from './stopwords.js';
 
 export const OUT = { w: 1080, h: 1920 };
@@ -304,9 +305,13 @@ export function sanitizeEndCard(input) {
   if (!c || c.on !== true) return null;
   const text = String(c.text ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, END_CARD.maxText);
   const source = c.source !== false;
-  if (!text && !source) return null;
+  const image = typeof c.image === 'string' && /^[0-9a-f]{40}$/.test(c.image) ? c.image : null;
+  if (!text && !source && !image) return null;
   const d = Math.round(Number(c.dur));
-  return { on: true, source, text, dur: Number.isFinite(d) ? Math.min(END_CARD.maxS, Math.max(END_CARD.minS, d)) : END_CARD.defaultS };
+  const card = { on: true, source, text, dur: Number.isFinite(d) ? Math.min(END_CARD.maxS, Math.max(END_CARD.minS, d)) : END_CARD.defaultS };
+  // A visual drawn in the browser: the image is rendered as is, its settings are kept for « Modifier »
+  if (image) Object.assign(card, { image, design: c.design ? sanitizeDesign(c.design) : null });
+  return card;
 }
 
 // Without a custom message the source line becomes the main text
@@ -715,7 +720,7 @@ export function draftFromClip(req, remixOf = null) {
     zoom: zoom ? { on: true, auto: false, strength: zoom.strength, focus: zoom.focus, events: zoom.events } : { on: false },
     broll: (Array.isArray(r.broll) ? r.broll : []).map((b) => ({ id: String(b.id), start: b.start, dur: b.dur, thumb: `/api/studio/stock/image/${encodeURIComponent(b.id)}` })),
     edits: r.edits && typeof r.edits === 'object' && !Array.isArray(r.edits) ? r.edits : {},
-    endCard: r.end_card ? { ...r.end_card, on: true } : { on: false },
+    endCard: r.end_card ? { ...r.end_card, on: true, fromClip: r.end_card.image ? remixOf : null } : { on: false },
     jobId: null,
     delivered: false,
     remixOf,
@@ -728,8 +733,17 @@ export const DEFAULT_END_CARD = { on: false, source: true, text: '', dur: END_CA
 // Kept even when switched off so unticking loses nothing
 export function endCardSettings(input) {
   const c = input && typeof input === 'object' ? input : {};
-  const clean = sanitizeEndCard({ ...c, on: true, source: true });
-  return { on: c.on === true, source: c.source !== false, text: clean?.text ?? '', dur: clean?.dur ?? END_CARD.defaultS };
+  // Older settings only had a message and a source switch
+  const legacy = !c.design && typeof c.text === 'string' && c.text.trim() ? { template: 'headline', values: { title: c.text }, source: c.source !== false } : { source: c.source !== false };
+  const d = Math.round(Number(c.dur));
+  return {
+    on: c.on === true,
+    dur: Number.isFinite(d) ? Math.min(END_CARD.maxS, Math.max(END_CARD.minS, d)) : END_CARD.defaultS,
+    design: sanitizeDesign(c.design ?? legacy),
+    image: typeof c.image === 'string' && /^[0-9a-f]{40}$/.test(c.image) ? c.image : null,
+    fromClip: typeof c.fromClip === 'string' && /^[0-9a-f]{24}$/.test(c.fromClip) ? c.fromClip : null,
+    dirty: c.dirty === true,
+  };
 }
 
 // Model = every setting that does not depend on the interview (no extracts, text edits or b-roll)
@@ -740,7 +754,7 @@ export function modelFromState(S) {
     voice: S.voice,
     layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror, follow: { on: S.layout.follow.on, subject: S.layout.follow.subject } },
     zoom: { on: S.zoom.on, auto: S.zoom.auto, strength: S.zoom.strength, focus: S.zoom.focus },
-    endCard: S.endCard,
+    endCard: { on: S.endCard.on, dur: S.endCard.dur, design: S.endCard.design },
   };
 }
 

@@ -8,7 +8,7 @@ import { getClipSuggestions, prepareSegments, CLIP_LIMITS } from '../clip-sugges
 import { pool } from '../db.js';
 import { HttpError, ah, jsonErrors } from '../http-error.js';
 import { DEFAULT_STYLE, LIMITS, PRESETS } from '../../public/js/studio-core.js';
-import { cancelJob, config as studioConfig, createPreview, enqueueRender, FONTS, framingAllowed, getJob, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
+import { cancelJob, saveCard, config as studioConfig, createPreview, enqueueRender, FONTS, framingAllowed, getJob, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
 import { CATEGORIES, ensureMusic, libraryFile, publicTracks } from '../studio/music.js';
 import { facesStatus, framingForRequest } from '../studio/faces.js';
 import { recordEvent } from '../studio/stats.js';
@@ -156,6 +156,14 @@ studioRouter.post(
       reason: clip ? clip.reason : 'none',
       missing: clip ? clip.missing : request.extracts.length,
     });
+  }),
+);
+
+studioRouter.post(
+  '/endcard',
+  express.raw({ type: 'image/jpeg', limit: '6mb' }),
+  ah(async (req, res) => {
+    res.json({ id: await saveCard(req.body, req.ip) });
   }),
 );
 
