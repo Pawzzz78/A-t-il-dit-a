@@ -325,7 +325,7 @@ function reportForm(c, msg) {
 async function share(m, msg) {
   const url = `${location.origin}/bibliotheque/?clip=${m.id}`;
   try {
-    if (navigator.share) return await navigator.share({ title: 'Lisnard Studio', text: sourceText(m.video_title, m.video_published_at), url });
+    if (navigator.share) return await navigator.share({ title: 'Studio Lisnard', text: sourceText(m.video_title, m.video_published_at), url });
     await navigator.clipboard.writeText(url);
     say(msg, 'Lien copié.');
   } catch (e) {

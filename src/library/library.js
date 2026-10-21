@@ -252,7 +252,7 @@ export async function withoutEndCard(row) {
 }
 
 export const clipPoster = (row) => (row.has_poster ? posterOf(row.id) : null);
-export const downloadName = (row) => `lisnard-studio-${row.id.slice(0, 8)}.mp4`;
+export const downloadName = (row) => `studio-lisnard-${row.id.slice(0, 8)}.mp4`;
 
 export async function countDownload(row, { owner, ip }) {
   const hash = owner ? null : visitorHash(ipKey(ip));

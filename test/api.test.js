@@ -184,7 +184,7 @@ test('en-têtes de sécurité : CSP stricte sur les pages, HSTS seulement en HTT
 
 test('site réduit au studio : la racine est le studio, les anciennes pages renvoient vers lui', { skip: !enabled }, async () => {
   const home = await (await fetch(base + '/')).text();
-  assert.match(home, /<title>Lisnard Studio/);
+  assert.match(home, /<title>Studio Lisnard/);
   assert.match(home, /\/js\/studio\.js/);
   assert.doesNotMatch(home, /Vérifier une phrase|Tendances|Toutes les vidéos|Lisnard Facts/);
   const go = async (path) => {
@@ -201,7 +201,7 @@ test('site réduit au studio : la racine est le studio, les anciennes pages renv
   assert.equal((await fetch(base + '/api/studio/assets')).status, 200);
   assert.equal((await fetch(base + '/mentions-legales/')).status, 200);
   const legal = await (await fetch(base + '/mentions-legales/')).text();
-  assert.match(legal, /Lisnard Studio/);
+  assert.match(legal, /Studio Lisnard/);
   assert.doesNotMatch(legal, /Lisnard Facts|vérification des propos/);
 });
 

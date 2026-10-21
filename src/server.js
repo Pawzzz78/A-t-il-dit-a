@@ -89,7 +89,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.warn('ADMIN_PASSWORD / SESSION_SECRET (16+ caractères) manquants ou valeurs d\'exemple (change-me…) : l\'admin est désactivée.');
   }
   const port = Number(process.env.PORT) || 3000;
-  createApp().listen(port, () => console.log(`Lisnard Studio → http://localhost:${port}`));
+  createApp().listen(port, () => console.log(`Studio Lisnard → http://localhost:${port}`));
   ffmpegAvailable().then(async (ok) => {
     const cap = ok ? await studioCapabilities() : null;
     console.log(`Studio de clips : ffmpeg ${ok ? 'disponible' : 'ABSENT (dépôt de vidéos impossible)'}${cap ? ` · sous-titres (libass) ${cap.ass ? 'oui' : 'NON'} · H.264 ${cap.x264 ? 'oui' : 'NON'} · AAC ${cap.aac ? 'oui' : 'NON'} · zooms et images ${cap.zoom ? 'oui' : 'NON'}` : ''} · stockage ${storageDir()}`);

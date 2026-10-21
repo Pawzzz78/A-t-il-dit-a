@@ -1166,7 +1166,7 @@ async function openEditor(youtubeId) {
     const nativeShare = (withText) => {
       const file = fileReady();
       if (!file) return null;
-      return navigator.share({ files: [file], title: 'Lisnard Studio', ...(withText ? { text: sourceField.value.split('\n\n')[0] } : {}) });
+      return navigator.share({ files: [file], title: 'Studio Lisnard', ...(withText ? { text: sourceField.value.split('\n\n')[0] } : {}) });
     };
     share.addEventListener('click', async () => {
       if (needsPrepare()) return startPrepare();

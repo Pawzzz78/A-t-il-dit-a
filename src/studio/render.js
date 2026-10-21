@@ -461,7 +461,7 @@ export async function enqueueRender({ video, req, lines, ip: rawIp = 'local', ow
     status: 'queued',
     progress: 0,
     total: req.outTotal ?? req.total,
-    filename: `lisnard-studio-${slug(video.title)}-${id.slice(0, 6)}.mp4`,
+    filename: `studio-lisnard-${slug(video.title)}-${id.slice(0, 6)}.mp4`,
     out: path.join(dirs().renders, `${id}.mp4`),
     assPath: path.join(dirs().renders, `${id}.ass`),
     file: videoFilePath(video.file_name),
