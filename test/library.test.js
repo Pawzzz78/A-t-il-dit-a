@@ -360,3 +360,58 @@ test('effacer mes données : clips, notes et cookie supprimés', { skip: !enable
   assert.equal((await browser().call('GET', `/api/library/clips/${a.id}`)).status, 404);
   assert.equal((await bob.call('GET', `/api/library/clips/${b.id}`)).body.rating_count, 0);
 });
+
+test('écran de fin : téléchargeable avec ou sans, réglage conservé pour « Modifier »', { skip: !enabled }, async () => {
+  const alice = browser();
+  const plain = await publishAs(alice);
+  assert.equal(plain.end_card_s, 0);
+  assert.equal((await alice.call('GET', `/api/library/clips/${plain.id}/file?use=download&end=0`)).status, 404);
+  const job = await renderAs(alice, { end_card: { on: true, source: true, text: 'Partage', dur: 2 } });
+  const clip = (await alice.call('POST', '/api/library/clips', { job_id: job })).body;
+  assert.equal(clip.end_card_s, 2);
+  assert.ok(Math.abs(clip.duration_s - 5) < 0.01, `durée ${clip.duration_s}`);
+  const seconds = async (q) => {
+    const r = await browser().call('GET', `/api/library/clips/${clip.id}/file${q}`);
+    assert.equal(r.status, 200);
+    const f = path.join(dir, `dl-${Date.now()}.mp4`);
+    await fs.writeFile(f, r.body);
+    return { d: Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', f], { encoding: 'utf8' })), name: r.headers.get('content-disposition') };
+  };
+  const without = await seconds('?use=download&end=0');
+  assert.ok(Math.abs(without.d - 3) < 0.3, `sans : ${without.d}`);
+  assert.match(without.name, /-sans-fin\.mp4/);
+  assert.ok(Math.abs((await seconds('?end=0')).d - 3) < 0.3, 'même fichier, réutilisé');
+  const { body } = await browser().call('GET', `/api/library/clips/${clip.id}/request`);
+  assert.deepEqual(body.req.end_card, { on: true, source: true, text: 'Partage', dur: 2 });
+  await alice.call('DELETE', `/api/library/clips/${clip.id}`);
+  await assert.rejects(fs.stat(path.join(process.env.STORAGE_DIR, 'library', `${clip.id}.noend.mp4`)));
+});
+
+test('visuel de fin : gardé avec le clip, servi pour « Modifier », remis en place pour « Recréer »', { skip: !enabled }, async () => {
+  const alice = browser();
+  const jpg = path.join(dir, 'libcard.jpg');
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=green:s=1080x1920', '-frames:v', '1', jpg]);
+  const up = await (await fetch(`${base}/api/studio/endcard`, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: await fs.readFile(jpg) })).json();
+  const job = await renderAs(alice, { end_card: { on: true, source: false, image: up.id, dur: 2, design: { template: 'headline', values: { title: 'Bonjour' } } } });
+  const clip = (await alice.call('POST', '/api/library/clips', { job_id: job })).body;
+  const card = await browser().call('GET', `/api/library/clips/${clip.id}/card`);
+  assert.equal(card.status, 200);
+  assert.equal(card.headers.get('content-type'), 'image/jpeg');
+  const { body } = await browser().call('GET', `/api/library/clips/${clip.id}/request`);
+  assert.equal(body.req.end_card.image, up.id);
+  assert.deepEqual(body.req.end_card.design.values, { title: 'Bonjour' });
+  assert.equal((await browser().call('GET', `/api/library/clips/${'0'.repeat(24)}/card`)).status, 404);
+  // the temporary visual is gone, the clip expires, then is re-created from its own copy
+  await fs.rm(path.join(process.env.STORAGE_DIR, 'cards', `${up.id}.jpg`), { force: true });
+  await lib.libraryMaintenance(Date.now() + 31 * 86400_000);
+  assert.ok(await fs.stat(path.join(process.env.STORAGE_DIR, 'library', `${clip.id}.card.jpg`)), 'visuel gardé après l’archivage');
+  const rc = await alice.call('POST', `/api/library/clips/${clip.id}/recreate`);
+  assert.equal(rc.status, 202, JSON.stringify(rc.body));
+  const t0 = Date.now();
+  let st;
+  do {
+    await new Promise((x) => setTimeout(x, 200));
+    st = (await alice.call('GET', `/api/library/clips/${clip.id}`)).body;
+  } while (st.file_state === 'pending' && Date.now() - t0 < 60_000);
+  assert.equal(st.file_state, 'active');
+});

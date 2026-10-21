@@ -5,7 +5,7 @@ import { createLimiter, ipKey, trimMap } from '../ip.js';
 import { membersOnly } from '../members/oidc.js';
 import {
   SORTS, clipFile, clipPoster, clipRequest, countDownload, deleteClip, deleteOwnerData, downloadName, getClip, libraryConfig, listMine, listPublic,
-  mediaClip, present, publishFromJob, rate, recreate, report, repost, setVisibility,
+  mediaClip, present, withoutEndCard, cardOf, publishFromJob, rate, recreate, report, repost, setVisibility,
 } from '../library/library.js';
 import { ensureVariant, variantFile, variantState } from '../library/uniq.js';
 import { clearOwner, libraryConfigured, optionalOwner, requireOwner } from '../library/owner.js';
@@ -87,6 +87,18 @@ libraryRouter.get(
 );
 
 libraryRouter.get(
+  '/clips/:id/card',
+  optionalOwner,
+  ah(async (req, res) => {
+    const row = await mediaClip(req.params.id, req.owner?.key);
+    if (!row.req?.end_card?.image) throw new HttpError(404, "Ce clip n'a pas de visuel de fin.");
+    res.sendFile(cardOf(row.id), { headers: { 'Cache-Control': 'private, max-age=3600', 'Content-Type': 'image/jpeg' } }, (err) => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'Visuel introuvable.' });
+    });
+  }),
+);
+
+libraryRouter.get(
   '/clips/:id/poster',
   optionalOwner,
   ah(async (req, res) => {
@@ -110,8 +122,11 @@ libraryRouter.get(
     const before = socket.bytesWritten;
     res.on('close', () => addBytes(req.ip, Math.max(0, socket.bytesWritten - before)));
     const download = req.query.use === 'download';
-    let target = file;
-    if (download) {
+    const noEnd = req.query.end === '0';
+    let target = noEnd ? await withoutEndCard(row, req.ip) : file;
+    if (!target) throw new HttpError(404, "Ce clip n'a pas d'écran de fin.");
+    if (download && noEnd) await countDownload(row, { owner: req.owner?.key, ip: req.ip });
+    else if (download) {
       await countDownload(row, { owner: req.owner?.key, ip: req.ip });
       const who = whoOf(req);
       if (who) target = (await variantFile(row.id, who)) ?? file; // la version unique de la personne, sinon l'original
@@ -120,7 +135,7 @@ libraryRouter.get(
     const done = (err) => {
       if (err && !res.headersSent) res.status(404).json({ error: 'Clip introuvable.' });
     };
-    if (download) res.download(target, downloadName(row), { headers }, done);
+    if (download) res.download(target, noEnd ? downloadName(row).replace(/\.mp4$/, '-sans-fin.mp4') : downloadName(row), { headers }, done);
     else res.sendFile(target, { acceptRanges: true, headers }, done);
   }),
 );

@@ -11,7 +11,7 @@ import { stampOf, storageDir } from '../media.js';
 import { CLIPPABLE, COLS, linesOf } from '../routes/studio.js';
 import { framingForRequest } from '../studio/faces.js';
 import { ensureMusic } from '../studio/music.js';
-import { enqueueRender, normalizeRequest } from '../studio/render.js';
+import { cardFile, enqueueRender, normalizeRequest } from '../studio/render.js';
 import { visitorHash } from '../studio/stats.js';
 import { removeVariants, sweepVariants, variantsBytes } from './uniq.js';
 
@@ -32,6 +32,8 @@ export const libraryDir = () => path.join(storageDir(), 'library');
 const ID = /^[0-9a-f]{24}$/;
 const fileOf = (id) => path.join(libraryDir(), `${id}.mp4`);
 const posterOf = (id) => path.join(libraryDir(), `${id}.jpg`);
+const noEndOf = (id) => path.join(libraryDir(), `${id}.noend.mp4`);
+export const cardOf = (id) => path.join(libraryDir(), `${id}.card.jpg`);
 const validId = (id) => {
   if (!ID.test(String(id))) throw new HttpError(404, 'Clip introuvable.');
   return String(id);
@@ -65,6 +67,7 @@ export function present(r, owner = null) {
     file_state: r.file_state,
     file_version: r.file_version,
     has_poster: r.has_poster,
+    end_card_s: endCardSeconds(r),
     created_at: r.created_at,
     expires_at: r.file_state === 'active' ? r.file_expires_at : null,
     mine: Boolean(owner && r.owner_key === owner),
@@ -83,7 +86,9 @@ async function freeBytes() {
 
 export async function usedBytes() {
   const { rows } = await pool.query("SELECT COALESCE(sum(size_bytes), 0)::bigint AS n FROM library_clips WHERE file_state = 'active'");
-  return Number(rows[0].n);
+  let cuts = 0;
+  for (const name of await fs.readdir(libraryDir()).catch(() => [])) if (name.endsWith('.noend.mp4')) cuts += (await fs.stat(path.join(libraryDir(), name)).catch(() => null))?.size ?? 0;
+  return Number(rows[0].n) + cuts;
 }
 
 async function checkDisk(size) {
@@ -105,7 +110,7 @@ async function makePoster(id, duration) {
 
 // Stored as a studio request body so normalizeRequest can replay it
 export function storedRequest(req) {
-  const { framing: _f, total: _t, edits = [], ...rest } = req;
+  const { framing: _f, total: _t, outTotal: _o, edits = [], ...rest } = req;
   return { ...rest, edits: Object.fromEntries(edits.map((e) => [String(e.start_ms), e.text])) };
 }
 
@@ -139,6 +144,14 @@ export async function publishFromJob({ job, owner, ip, visibility = 'public', re
   const now = new Date();
   await fs.utimes(fileOf(id), now, now);
   const hasPoster = await makePoster(id, job.total);
+  // The end card visual stays with the clip so « Recréer » and « Modifier » can reuse it
+  if (job.req.end_card?.image) {
+    await fs.copyFile(job.card ?? cardFile(job.req.end_card.image), cardOf(id)).catch(async (e) => {
+      await removeFiles(id);
+      console.error(`Bibliothèque ${id} : visuel de fin introuvable (${e.message})`);
+      throw new HttpError(409, 'Ce clip a expiré : crée-le à nouveau pour le publier.');
+    });
+  }
   try {
     const { rows } = await pool.query(
       `INSERT INTO library_clips (id, owner_key, kind, remix_of, video_id, youtube_id, video_title, job_id, visibility, req, duration_s, quality,
@@ -161,6 +174,8 @@ export async function publishFromJob({ job, owner, ip, visibility = 'public', re
 
 async function removeFiles(id, { poster = true } = {}) {
   await fs.rm(fileOf(id), { force: true });
+  await fs.rm(noEndOf(id), { force: true });
+  if (poster) await fs.rm(cardOf(id), { force: true });
   if (poster) await fs.rm(posterOf(id), { force: true });
   await removeVariants(id);
 }
@@ -222,8 +237,36 @@ async function originalOf(r, owner) {
   return o;
 }
 export const clipFile = (row) => (row.file_state === 'active' ? fileOf(row.id) : null);
+const endCardSeconds = (r) => Number(r.req?.end_card?.dur) || 0;
+
+const cutting = new Map();
+// Copy of the clip without its end card, cut without re-encoding and kept next to it (rebuilt when the clip is re-created)
+export async function withoutEndCard(row, ip = '') {
+  const file = clipFile(row);
+  const keep = Number(row.duration_s) - endCardSeconds(row);
+  if (!file || !endCardSeconds(row) || !(keep > 0)) return null;
+  const out = noEndOf(row.id);
+  const [src, done] = await Promise.all([fs.stat(file).catch(() => null), fs.stat(out).catch(() => null)]);
+  if (src && done && done.mtimeMs >= src.mtimeMs) return out;
+  if (!cutting.has(row.id)) {
+    if (!limiter.take(`cut:${ipKey(ip)}`, 30)) throw new HttpError(429, 'Trop de demandes pour le moment : réessaie dans une heure.');
+    await checkDisk(Number(row.size_bytes) || 0);
+    const tmp = `${out}.tmp.mp4`;
+    cutting.set(row.id, run('ffmpeg', ['-v', 'error', '-y', '-i', file, '-t', String(keep), '-map', '0', '-c', 'copy', '-movflags', '+faststart', tmp], { timeout: 60_000 })
+      .then(() => fs.rename(tmp, out))
+      .catch(async (e) => {
+        console.error(`Bibliothèque ${row.id} : coupe de l'écran de fin impossible (${e.message})`);
+        await fs.rm(tmp, { force: true });
+        throw new HttpError(500, 'Version sans écran de fin indisponible pour le moment : réessaie, ou télécharge la version complète.');
+      })
+      .finally(() => cutting.delete(row.id)));
+  }
+  await cutting.get(row.id);
+  return out;
+}
+
 export const clipPoster = (row) => (row.has_poster ? posterOf(row.id) : null);
-export const downloadName = (row) => `lisnard-studio-${row.id.slice(0, 8)}.mp4`;
+export const downloadName = (row) => `studio-lisnard-${row.id.slice(0, 8)}.mp4`;
 
 export async function countDownload(row, { owner, ip }) {
   const hash = owner ? null : visitorHash(ipKey(ip));
@@ -351,6 +394,13 @@ export async function recreate(id, owner, ip) {
   }
   await checkDisk(Number(r.size_bytes) || 0);
   await ensureMusic();
+  const img = r.req?.end_card?.image;
+  if (img && !(await fs.stat(cardFile(img)).then(() => true, () => false))) {
+    await fs.mkdir(path.dirname(cardFile(img)), { recursive: true });
+    await fs.copyFile(cardOf(r.id), cardFile(img)).catch(() => {
+      throw new HttpError(409, "Le visuel de fin de ce clip n'est plus disponible : ouvre-le dans l'éditeur pour le refaire.", { edit: true });
+    });
+  }
   const request = normalizeRequest(r.req, video);
   request.framing = await framingForRequest(video, request);
   const { rowCount } = await pool.query("UPDATE library_clips SET file_state = 'pending', updated_at = now() WHERE id = $1 AND file_state = 'archived'", [r.id]);
@@ -388,6 +438,7 @@ export async function libraryMaintenance(now = Date.now()) {
   );
   for (const r of expired) {
     await fs.rm(fileOf(r.id), { force: true });
+    await fs.rm(noEndOf(r.id), { force: true });
     await removeVariants(r.id);
   }
   await pool.query("UPDATE library_clips SET file_state = 'archived' WHERE file_state = 'pending' AND updated_at < to_timestamp($1 / 1000.0) - interval '30 minutes'", [now]);
@@ -399,7 +450,7 @@ export async function libraryMaintenance(now = Date.now()) {
       const st = await fs.stat(path.join(libraryDir(), name)).catch(() => null);
       if (!st?.isFile()) continue; // « variants » est un sous-dossier : son propre entretien (sweepVariants)
       const [id, ext] = name.split('.');
-      const keep = ext === 'jpg' ? state.has(id) : state.get(id) === 'active' || state.get(id) === 'pending';
+      const keep = ext === 'jpg' || ext === 'card' ? state.has(id) : name.endsWith('.tmp.mp4') ? false : state.get(id) === 'active' || state.get(id) === 'pending';
       if (keep) continue;
       if (now - st.mtimeMs > 3600_000) await fs.rm(path.join(libraryDir(), name), { force: true });
     }

@@ -325,3 +325,35 @@
 
 .st-lib { margin: .6rem 0; }
 .st-lib:empty { display: none; }
+
+.st-models { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .8rem; padding: .55rem 1.2rem; border-bottom: 1px solid var(--color-hairline); background: #fff; }
+.st-models-label { font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--color-primary); }
+.st-models select { font: inherit; font-size: .85rem; min-height: 44px; padding: .4rem .8rem; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: #fff; color: var(--color-primary); max-width: 14rem; }
+.st-models-tools { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
+.st-models-tools:empty { display: none; }
+.st-models-hint { margin-left: auto; font-size: .75rem; }
+.st-models .st-link { min-height: 40px; }
+.st-ec { display: grid; gap: .5rem; margin-bottom: .6rem; }
+.st-ec .st-field { display: grid; gap: .3rem; font-size: .85rem; font-weight: 700; color: var(--color-primary); }
+.st-ec input[type="text"] { font: inherit; min-height: 44px; padding: .5rem .7rem; border: 1px solid var(--color-border); border-radius: 8px; }
+.st-ec-dur { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; font-size: .85rem; font-weight: 700; color: var(--color-primary); }
+.st-ec-dur [aria-pressed="true"] { background: var(--color-primary); color: #fff; }
+.st-ec-grid { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 1.4rem; align-items: start; margin-top: .6rem; }
+.st-ec-preview { position: sticky; top: .5rem; }
+.st-ec-canvas { display: block; width: 100%; height: auto; aspect-ratio: 9 / 16; border-radius: 10px; box-shadow: 0 4px 16px rgba(15, 23, 82, .18); background: #032F67; }
+.st-ec-form { display: grid; gap: .55rem; min-width: 0; }
+.st-ec-label { margin: .3rem 0 0; font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--color-muted); }
+.st-ec-chips { display: flex; flex-wrap: wrap; gap: .35rem; }
+.st-ec-chip { min-height: 40px; padding: .4rem .75rem; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: #fff; color: var(--color-primary); font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer; }
+.st-ec-chip.on { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.st-ec-chip:focus-visible { outline: 3px solid var(--color-ring); outline-offset: 2px; }
+.st-ec-swatch { display: inline-block; width: 1.4rem; height: 1.4rem; border-radius: 50%; border: 3px solid; vertical-align: middle; }
+.st-ec textarea { font: inherit; padding: .5rem .7rem; border: 1px solid var(--color-border); border-radius: 8px; resize: vertical; }
+.st-ec input[type="date"], .st-ec input[type="time"] { font: inherit; min-height: 44px; padding: .4rem .7rem; border: 1px solid var(--color-border); border-radius: 8px; }
+.st-ec-photo, .st-ec-opts { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .9rem; }
+.st-ec-upload { position: relative; overflow: hidden; cursor: pointer; }
+.st-ec-file { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.st-ec-upload:focus-within { outline: 3px solid var(--color-ring); outline-offset: 2px; }
+.st-panel-end { container-type: inline-size; }
+/* Stack once the panel itself gets narrow, whatever the screen width */
+@container (max-width: 40rem) { .st-ec-grid { grid-template-columns: minmax(0, 1fr); } .st-ec-preview { position: static; width: min(13rem, 62%); margin: 0 auto; } }

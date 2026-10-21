@@ -16,7 +16,6 @@
 .lib-more button[hidden] { display: none; }
 .lib-forget { margin-left: .8rem; }
 
-.lib-dialog { width: min(94vw, 27rem); }
 .lib-video { display: block; width: 100%; max-height: 60vh; background: #000; }
 .lib-archived { display: grid; gap: .6rem; justify-items: center; padding: 1rem; text-align: center; font-size: .85rem; color: var(--color-muted); }
 .lib-archived img { width: 8rem; border-radius: 4px; opacity: .55; }
@@ -37,3 +36,36 @@
 .st-msg:empty { display: none; }
 .st-msg.err { color: var(--color-danger); font-weight: 700; }
 .st-link { border: 0; background: none; color: var(--color-accent); font: inherit; font-weight: 700; font-size: .8rem; cursor: pointer; padding: .4rem; min-height: 44px; }
+
+/* Clip dialog: video on the left, one block per intent on the right (stacked on phones) */
+.lib-dialog { width: min(94vw, 27rem); transform: none; }
+.lib-head h2 { margin-bottom: .2rem; }
+.lib-head .dialog-text { margin-bottom: .5rem; }
+.lib-chipline { display: flex; flex-wrap: wrap; gap: .3rem; margin-bottom: .8rem; }
+.lib-chipline span { padding: .15rem .55rem; border-radius: var(--radius-pill); background: var(--color-surface-alt); color: var(--color-primary); font-size: .72rem; font-weight: 700; }
+.lib-body { display: grid; gap: 1rem; }
+.lib-body .dialog-player { max-height: none; min-height: 0; background: #000; border-radius: 8px; }
+.lib-body .lib-video { max-height: 62vh; object-fit: contain; }
+.lib-side { display: grid; gap: .8rem; align-content: start; }
+.lib-sec { padding: .8rem .9rem; border: 1px solid var(--color-border); border-radius: 10px; background: #fff; }
+.lib-sec h3 { margin: 0 0 .5rem; font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--color-muted); }
+.lib-sec-get { border-color: var(--color-primary); box-shadow: inset 4px 0 0 var(--color-primary); }
+.lib-sec-hint { margin: -.2rem 0 .6rem; font-size: .8rem; color: var(--color-muted); }
+.lib-choices { display: grid; gap: .5rem; }
+.lib-choice { display: grid; gap: .15rem; width: 100%; min-height: 44px; padding: .65rem .8rem; border: 1px solid var(--color-border); border-radius: 8px; background: var(--color-surface-alt); color: var(--color-primary); font: inherit; text-align: left; text-decoration: none; cursor: pointer; transition: border-color .15s, background .15s; }
+.lib-choice strong { font-size: .9rem; font-weight: 800; }
+.lib-choice span { font-size: .76rem; color: var(--color-muted); }
+.lib-choice:hover { border-color: var(--color-primary); }
+.lib-choice:focus-visible { outline: 3px solid var(--color-ring); outline-offset: 2px; }
+.lib-choice.dl { position: relative; padding-left: 2.9rem; background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.lib-choice.dl span { color: rgba(255, 255, 255, .82); }
+.lib-choice.dl:hover { background: var(--color-primary-dark); }
+.lib-choice.dl svg { position: absolute; left: .95rem; top: 50%; width: 1.15rem; height: 1.15rem; margin-top: -.575rem; }
+.lib-share { justify-self: start; margin-top: .3rem; padding-left: 0; }
+.lib-sec .lib-actions { margin: 0; }
+.lib-sec .lib-report { margin: .4rem 0 0; }
+@media (min-width: 760px) {
+  .lib-dialog { width: min(94vw, 50rem); }
+  .lib-body { grid-template-columns: minmax(0, 17rem) minmax(0, 1fr); align-items: start; }
+  .lib-body .dialog-player { position: sticky; top: 0; }
+}

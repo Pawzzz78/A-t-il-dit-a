@@ -1,6 +1,7 @@
 // Studio de clips : choix d'une interview, extraits (proposés par l'IA ou libres), sous-titres TikTok (style, police, couleurs,
 // contour, position, taille), musique, cadrage, puis création du MP4 sur le serveur. Aucun innerHTML : tout est posé en nœuds.
-import { BROLL, DESCRIPTION_MAX, LIMITS, PRESETS, SIMILARITY_WARNING, ZOOM, draftFromClip, fitDescription, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
+import { CARD, PALETTES as EC_PALETTES, TEMPLATES as EC_TEMPLATES, cardBlob, drawEndCard, loadImage, needsPhoto } from './endcard.js';
+import { BROLL, DESCRIPTION_MAX, LIMITS, MODELS, PRESETS, SIMILARITY_WARNING, ZOOM, draftFromClip, endCardSettings, fitDescription, modelFromState, parseModels, sanitizeModel, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
 import { createPhone, el, outlineShadow, rgba } from './studio-preview.js';
 import { fmtDate } from './ui.js';
 
@@ -8,6 +9,7 @@ const root = document.getElementById('studio');
 const params = new URLSearchParams(location.search);
 const SWATCHES = [['#FFFFFF', 'Blanc'], ['#FFE600', 'Jaune'], ['#25F4EE', 'Cyan'], ['#FE2C55', 'Rose'], ['#7CFF6B', 'Vert'], ['#FF9500', 'Orange'], ['#000000', 'Noir']];
 const PREF_KEY = 'studio.prefs.v1';
+const MODELS_KEY = 'studio.models.v1';
 
 // Native replaceChildren would print null/false children as text
 const put = (node, ...kids) => node.replaceChildren(...kids.flat(Infinity).filter(Boolean));
@@ -160,7 +162,7 @@ const savePrefs = (S) => {
     clearTimeout(prefsTimer);
     prefsTimer = 0;
     try {
-      localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror }, step: S.step, zoom: { strength: S.zoom.strength, focus: S.zoom.focus } }));
+      localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror }, step: S.step, zoom: { strength: S.zoom.strength, focus: S.zoom.focus }, endCard: { on: S.endCard.on, dur: S.endCard.dur, design: S.endCard.design } }));
       S.onSaved?.();
     } catch {
       // stockage indisponible : sans importance
@@ -230,6 +232,7 @@ async function openEditor(youtubeId) {
     stock: { q: '', photos: [], page: 0, next: false, busy: false, error: '' },
     ticket: 0,
     edits: new Map(), // corrections de texte : début de la ligne (ms) -> { orig, text }
+    endCard: { ...endCardSettings(prefs.endCard), on: false },
   };
   // corrections gardées dans le navigateur (un rechargement ne les perd pas) ; ignorées si la transcription a changé depuis
   const editsKey = `studio.edits.${S.video.youtube_id}`;
@@ -263,6 +266,7 @@ async function openEditor(youtubeId) {
           layout: { fit: S.layout.fit, cropX: S.layout.cropX, quality: S.layout.quality, mirror: S.layout.mirror, follow: { on: S.layout.follow.on, subject: S.layout.follow.subject } },
           zoom: { on: S.zoom.on, auto: S.zoom.auto, strength: S.zoom.strength, focus: S.zoom.focus, events: S.zoom.events },
           broll: S.broll,
+          endCard: S.endCard,
         }));
       }
     } catch {
@@ -313,6 +317,7 @@ async function openEditor(youtubeId) {
     S.zoom = { ...S.zoom, ...sanitizeZoom(d.zoom, total), on: d.zoom?.on === true, auto: d.zoom?.auto !== false };
     S.broll = (Array.isArray(d.broll) ? d.broll : []).filter((b) => typeof b?.id === 'string' && Number.isFinite(b.start) && Number.isFinite(b.dur) && typeof b.thumb === 'string').slice(0, BROLL.maxItems)
       .map((b) => ({ id: b.id, start: b.start, dur: b.dur, thumb: b.thumb, photographer: b.photographer, page: b.page, alt: b.alt }));
+    if (d.endCard) S.endCard = endCardSettings(d.endCard);
     S.jobId = typeof d.jobId === 'string' ? d.jobId : null;
     S.delivered = d.delivered === true;
     S.remixOf = typeof d.remixOf === 'string' && /^[0-9a-f]{24}$/.test(d.remixOf) ? d.remixOf : null;
@@ -944,6 +949,7 @@ async function openEditor(youtubeId) {
 
   // ============================================================ onglet Créer
   const panelCreate = el('div', { class: 'st-panel' });
+  const panelEnd = el('div', { class: 'st-panel st-panel-end' });
   const createSummary = el('div', {});
   const pledge = el('input', { type: 'checkbox' });
   const makeBtn = el('button', { class: 'btn', type: 'button' }, 'Créer la vidéo');
@@ -1006,6 +1012,7 @@ async function openEditor(youtubeId) {
       el('li', {}, el('strong', {}, 'Musique : '), track ? track.title : 'aucune'),
       editedInClip() ? el('li', {}, el('strong', {}, 'Texte : '), `${editedInClip()} ligne${editedInClip() > 1 ? 's' : ''} de sous-titres corrigée${editedInClip() > 1 ? 's' : ''}`) : null,
       (S.zoom.on && zoomsIn) || S.broll.length ? el('li', {}, el('strong', {}, 'Images & zooms : '), [S.zoom.on && zoomsIn ? `${zoomsIn} zoom${zoomsIn > 1 ? 's' : ''}` : '', S.broll.length ? `${S.broll.length} image${S.broll.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(', ')) : null,
+      S.endCard.on ? el('li', {}, el('strong', {}, 'Écran de fin : '), `${S.endCard.dur} s`) : null,
       el('li', {}, el('strong', {}, 'Format : '), `${S.layout.fit === 'blur' ? 'vidéo entière sur fond flou' : following() ? 'plein écran, suit le visage' : 'plein écran'}${S.layout.mirror ? ', en miroir' : ''}`)));
     const busy = jobActive();
     makeBtn.disabled = !S.extracts.length || !pledge.checked || busy;
@@ -1014,6 +1021,118 @@ async function openEditor(youtubeId) {
   const quality = (value, title, text) => el('label', { class: S.layout.quality === value ? 'st-opt on' : 'st-opt' },
     el('input', { type: 'radio', name: 'quality', value, 'data-k': `q:${value}`, checked: S.layout.quality === value, onchange: () => { S.layout.quality = value; savePrefs(S); renderCreate(); } }),
     el('strong', {}, title), el('small', {}, text));
+  // End card visual: drawn here in a canvas, uploaded as a JPEG when the video is created
+  const ec = { photo: null, photoUrl: '', canvas: el('canvas', { class: 'st-ec-canvas', width: '1080', height: '1920', role: 'img', 'aria-label': 'Aperçu de l’écran de fin' }), missing: [], timer: 0, base: null };
+  const ecSource = () => sourceText(S.video.title, S.video.published_at);
+  const ecMsg = el('p', { class: 'st-help warn', role: 'status' });
+  async function drawEc() {
+    if (!S.endCard.on) return;
+    if (S.endCard.fromClip && !S.endCard.dirty) {
+      ec.base ??= await loadImage(`/api/library/clips/${S.endCard.fromClip}/card`).catch(() => null);
+      if (ec.base) {
+        const ctx = ec.canvas.getContext('2d');
+        ctx.drawImage(ec.base, 0, 0, CARD.w, CARD.h);
+        ec.missing = [];
+        ecMsg.textContent = '';
+        return;
+      }
+    }
+    ec.missing = await drawEndCard(ec.canvas, S.endCard.design, { photo: ec.photo, sourceLine: ecSource() });
+    ecMsg.textContent = ec.missing.length ? `À compléter : ${ec.missing.join(', ')}.` : '';
+  }
+  const redrawEc = () => {
+    clearTimeout(ec.timer);
+    ec.timer = setTimeout(drawEc, 120);
+  };
+  const ecChanged = (rerender = true, design = false) => {
+    if (design) S.endCard.dirty = true;
+    savePrefs(S);
+    scheduleDraft();
+    renderCreateSummary();
+    if (rerender) renderEnd();
+    else redrawEc();
+  };
+  const setDesign = (patch, rerender = true) => {
+    S.endCard.design = { ...S.endCard.design, ...patch };
+    ecChanged(rerender, true);
+  };
+  async function pickPhoto(file) {
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return toast('Choisis une image JPG, PNG ou WebP.', true);
+    if (file.size > CARD.maxPhotoMb * 1024 * 1024) return toast(`Image trop lourde (${CARD.maxPhotoMb} Mo au maximum).`, true);
+    if (ec.photoUrl) URL.revokeObjectURL(ec.photoUrl);
+    ec.photoUrl = URL.createObjectURL(file);
+    ec.photo = await loadImage(ec.photoUrl).catch(() => null);
+    if (!ec.photo) return toast('Cette image n’a pas pu être lue.', true);
+    ecChanged(true, true);
+  }
+  async function endCardPayload() {
+    if (!S.endCard.on) return null;
+    await drawEc();
+    if (ec.missing.length) {
+      openTab('fin');
+      throw new Error(`Écran de fin : complète ${ec.missing.join(', ')}, ou décoche-le.`);
+    }
+    const blob = await cardBlob(ec.canvas);
+    const res = await fetch('/api/studio/endcard', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob }).catch(() => null);
+    const data = res ? await res.json().catch(() => ({})) : {};
+    if (!res?.ok) throw new Error(data.error || 'Le visuel de fin n’a pas pu être envoyé : réessaie.');
+    return { on: true, source: false, dur: S.endCard.dur, image: data.id, design: S.endCard.design };
+  }
+  function endCardBox() {
+    const c = S.endCard;
+    const d = c.design;
+    const t = EC_TEMPLATES[d.template];
+    const head = el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: c.on, 'data-k': 'ec:on', onchange: (e) => { S.endCard.on = e.target.checked; ecChanged(); } }), 'Ajouter un écran de fin à la vidéo');
+    if (!c.on) return el('div', { class: 'st-ec' }, head, el('p', { class: 'st-help' }, 'Un visuel de 2 à 5 s après ton clip : message, citation, chiffre, événement, ta photo…'));
+    const chip = (on, label, onclick, k, extra = {}) => el('button', { type: 'button', class: on ? 'st-ec-chip on' : 'st-ec-chip', 'aria-pressed': String(on), 'data-k': k, onclick, ...extra }, label);
+    const field = (f) => {
+      const value = d.values[f.key] ?? '';
+      const input = f.area
+        ? el('textarea', { rows: '2', maxlength: String(f.max), placeholder: f.placeholder, 'data-k': `ec:f:${f.key}` }, value)
+        : el('input', { type: f.type, maxlength: String(f.max), placeholder: f.placeholder, value, 'data-k': `ec:f:${f.key}` });
+      input.addEventListener('input', () => setDesign({ values: { ...S.endCard.design.values, [f.key]: input.value.slice(0, f.max) } }, false));
+      input.addEventListener('change', () => renderEnd());
+      return el('label', { class: 'st-field' }, f.label, input);
+    };
+    const photoInput = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', class: 'st-ec-file', 'data-k': 'ec:photo', onchange: (e) => pickPhoto(e.target.files[0]) });
+    const wantsPhoto = needsPhoto(d);
+    redrawEc();
+    return el('div', { class: 'st-ec' },
+      head,
+      el('div', { class: 'st-ec-grid' },
+        el('div', { class: 'st-ec-preview' }, ec.canvas, c.fromClip && !c.dirty ? el('p', { class: 'st-help' }, 'Visuel repris du clip d’origine : modifie-le librement.') : null),
+        el('div', { class: 'st-ec-form' },
+          el('p', { class: 'st-ec-label' }, 'Modèle'),
+          el('div', { class: 'st-ec-chips', role: 'group', 'aria-label': 'Modèle de visuel' },
+            Object.entries(EC_TEMPLATES).map(([id, x]) => chip(d.template === id, x.label, () => setDesign({ template: id }), `ec:t:${id}`, { title: x.hint }))),
+          el('p', { class: 'st-ec-label' }, 'Couleurs'),
+          el('div', { class: 'st-ec-chips', role: 'group', 'aria-label': 'Couleurs' },
+            Object.entries(EC_PALETTES).map(([id, p]) => chip(d.palette === id, el('span', { class: 'st-ec-swatch', style: `background:${p.bg};border-color:${p.accent}` }, ''), () => setDesign({ palette: id }), `ec:p:${id}`, { 'aria-label': p.label, title: p.label }))),
+          t.fields.map(field),
+          el('p', { class: 'st-ec-label' }, 'Photo'),
+          el('div', { class: 'st-ec-photo' },
+            el('label', { class: 'btn small secondary st-ec-upload' }, ec.photo ? 'Changer la photo' : 'Ajouter une photo', photoInput),
+            ec.photo ? el('button', { type: 'button', class: 'st-link', onclick: () => { URL.revokeObjectURL(ec.photoUrl); ec.photo = null; ec.photoUrl = ''; ecChanged(true, true); } }, 'Retirer') : null,
+            !t.photo ? el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: d.photoBg, 'data-k': 'ec:pbg', onchange: (e) => setDesign({ photoBg: e.target.checked }) }), 'En fond, assombrie') : null),
+          wantsPhoto && !ec.photo ? el('p', { class: 'st-help' }, 'Ce modèle utilise ta photo (JPG, PNG ou WebP). Elle n’est pas gardée si tu recharges la page.') : null,
+          el('p', { class: 'st-ec-label' }, 'Options'),
+          el('div', { class: 'st-ec-opts' },
+            el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: d.align === 'center', 'data-k': 'ec:al', onchange: (e) => setDesign({ align: e.target.checked ? 'center' : 'left' }) }), 'Centrer'),
+            el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: d.upper, 'data-k': 'ec:up', onchange: (e) => setDesign({ upper: e.target.checked }) }), 'Majuscules'),
+            el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: d.logo, 'data-k': 'ec:lg', onchange: (e) => setDesign({ logo: e.target.checked }) }), 'Logo Projet Lisnard'),
+            el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: d.source, 'data-k': 'ec:src', onchange: (e) => setDesign({ source: e.target.checked }) }), 'Citer l’interview')),
+          el('div', { class: 'st-ec-dur', role: 'group', 'aria-label': 'Durée de l’écran de fin' },
+            el('span', {}, 'Durée'),
+            [2, 3, 4, 5].map((n) => el('button', { type: 'button', class: 'btn small secondary', 'data-k': `ec:d${n}`, 'aria-pressed': String(c.dur === n), onclick: () => { S.endCard.dur = n; savePrefs(S); scheduleDraft(); renderEnd(); renderCreateSummary(); } }, `${n} s`))),
+          ecMsg,
+          el('p', { class: 'st-help' }, 'S’ajoute après ton clip, en plus de sa durée ; visible dans la vidéo créée, pas dans l’aperçu.'))));
+  }
+
+  function renderEnd() {
+    putKeep(panelEnd, el('h3', {}, 'Écran de fin'), endCardBox());
+  }
+
   function renderCreate() {
     putKeep(panelCreate,
       el('h3', {}, 'Ton clip'), createSummary,
@@ -1120,7 +1239,7 @@ async function openEditor(youtubeId) {
     const nativeShare = (withText) => {
       const file = fileReady();
       if (!file) return null;
-      return navigator.share({ files: [file], title: 'Lisnard Studio', ...(withText ? { text: sourceField.value.split('\n\n')[0] } : {}) });
+      return navigator.share({ files: [file], title: 'Studio Lisnard', ...(withText ? { text: sourceField.value.split('\n\n')[0] } : {}) });
     };
     share.addEventListener('click', async () => {
       if (needsPrepare()) return startPrepare();
@@ -1312,6 +1431,7 @@ async function openEditor(youtubeId) {
         zoom: S.zoom.on && S.zoom.events.length ? { strength: S.zoom.strength, focus: S.zoom.focus, events: S.zoom.events } : null,
         broll: S.broll.map(({ id, start, dur }) => ({ id, start, dur })),
         edits: Object.fromEntries(clipLines().filter((r) => S.edits.has(r.line.start_ms)).map((r) => [r.line.start_ms, S.edits.get(r.line.start_ms).text])),
+        end_card: await endCardPayload(),
       }));
       showJob();
       poll();
@@ -1558,7 +1678,7 @@ async function openEditor(youtubeId) {
   }
 
   // ============================================================ mise en page
-  const tabs = [['extraits', 'Extraits', panelExtracts], ['style', 'Sous-titres', panelStyle], ['musique', 'Musique', panelMusic], ['fx', 'Images & zooms', panelFx], ['cadrage', 'Format', panelFrame], ['creer', 'Créer', panelCreate]];
+  const tabs = [['extraits', 'Extraits', panelExtracts], ['style', 'Sous-titres', panelStyle], ['musique', 'Musique', panelMusic], ['fx', 'Images & zooms', panelFx], ['cadrage', 'Format', panelFrame], ['fin', 'Écran de fin', panelEnd], ['creer', 'Créer', panelCreate]];
   const tabBar = el('div', { class: 'st-tabs', role: 'tablist', 'aria-label': 'Étapes de création' });
   const stage = el('div', { class: 'st-stage card' });
   const nextBtn = el('button', { class: 'btn st-next', type: 'button' });
@@ -1578,6 +1698,7 @@ async function openEditor(youtubeId) {
     if (next) nextBtn.textContent = `Étape suivante : ${next[1]} →`;
     if (id !== 'musique' && auditionId) { audition.pause(); auditionId = null; renderMusic(); }
     if (id === 'creer') renderCreateSummary();
+    if (id === 'fin') renderEnd();
     if (id === 'fx') renderEffects();
     if (id !== 'fx' && S.zoom.picking) { S.zoom.picking = false; pushFx(); } // on ne reste pas bloqué en choix du point de zoom
   }
@@ -1599,7 +1720,103 @@ async function openEditor(youtubeId) {
     openTab(tabIds[tabIds.indexOf(root.dataset.tab) + 1], true);
     tabBar.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   });
-  stage.append(tabBar, ...tabs.map(([, , p]) => p), nextBar);
+  const modelsBar = el('div', { class: 'st-models' });
+  let undoModel = null;
+  const readModels = () => {
+    try {
+      return parseModels(localStorage.getItem(MODELS_KEY));
+    } catch {
+      return [];
+    }
+  };
+  const writeModels = (list) => {
+    try {
+      localStorage.setItem(MODELS_KEY, JSON.stringify(list));
+      return true;
+    } catch {
+      toast('Impossible d’enregistrer : le stockage du navigateur est indisponible.', true);
+      return false;
+    }
+  };
+  const modelContext = () => ({ fontIds, musicIds: assets.music.map((m) => m.id), framingReady: S.framing.ready, identified: S.framing.identified });
+  function applySettings(m) {
+    S.style = m.style;
+    S.music = { id: m.music.id, volume: m.music.volume };
+    S.voice = m.voice;
+    S.layout = { ...S.layout, fit: m.layout.fit, quality: m.layout.quality, mirror: m.layout.mirror, follow: { ...m.layout.follow } };
+    S.zoom = { ...S.zoom, on: m.zoom.on, auto: m.zoom.auto, strength: m.zoom.strength, focus: m.zoom.focus };
+    S.endCard = { ...m.endCard };
+    if (S.zoom.on && !S.zoom.events.length && S.extracts.length) autoZoom();
+    renderPresets();
+    renderFonts();
+    syncStyleControls();
+    rebuildSubtitles();
+    renderMusic();
+    applyAudio();
+    renderFrame();
+    pushFraming();
+    renderEffects();
+    pushFx();
+    renderCreate();
+    renderEnd();
+    savePrefs(S);
+    scheduleDraft();
+    requestPreview();
+  }
+  function applyModel(model) {
+    undoModel = { ...sanitizeModel(modelFromState(S), modelContext()), endCard: { ...S.endCard } };
+    applySettings(sanitizeModel(model.settings, modelContext()));
+    renderModels();
+    toast(`Modèle « ${model.name} » appliqué.`);
+  }
+  function saveModel() {
+    const list = readModels();
+    const name = (prompt('Nom du modèle (ex. « Débat punchy ») :') ?? '').trim().slice(0, MODELS.nameMax);
+    if (!name) return;
+    const same = list.find((m) => m.name.toLowerCase() === name.toLowerCase());
+    if (!same && list.length >= MODELS.max) return toast(`${MODELS.max} modèles au maximum : supprimes-en un d’abord.`, true);
+    if (same && !confirm(`Remplacer le modèle « ${same.name} » ?`)) return;
+    const entry = { id: same?.id ?? `m${Date.now().toString(36)}`, name, settings: modelFromState(S) };
+    if (writeModels([...list.filter((m) => m.id !== entry.id), entry])) {
+      toast(`Modèle « ${name} » enregistré.`);
+      renderModels(entry.id);
+    }
+  }
+  function renameModel(model) {
+    const name = (prompt('Nouveau nom :', model.name) ?? '').trim().slice(0, MODELS.nameMax);
+    if (!name) return;
+    if (writeModels(readModels().map((m) => (m.id === model.id ? { ...m, name } : m)))) renderModels(model.id);
+  }
+  function deleteModel(model) {
+    if (!confirm(`Supprimer le modèle « ${model.name} » ?`)) return;
+    if (writeModels(readModels().filter((m) => m.id !== model.id))) renderModels();
+  }
+  function renderModels(selected = '') {
+    const list = readModels();
+    const pick = el('select', { 'aria-label': 'Choisir un modèle', 'data-k': 'models' },
+      el('option', { value: '' }, list.length ? 'Mes modèles…' : 'Aucun modèle enregistré'),
+      list.map((m) => el('option', { value: m.id, selected: m.id === selected }, m.name)));
+    const current = () => list.find((m) => m.id === pick.value);
+    const tools = el('span', { class: 'st-models-tools' });
+    const sync = () => put(tools, current() ? [
+      el('button', { type: 'button', class: 'btn small', onclick: () => applyModel(current()) }, 'Appliquer'),
+      el('button', { type: 'button', class: 'st-link', onclick: () => renameModel(current()) }, 'Renommer'),
+      el('button', { type: 'button', class: 'st-link', onclick: () => deleteModel(current()) }, 'Supprimer'),
+    ] : []);
+    pick.addEventListener('change', sync);
+    sync();
+    putKeep(modelsBar,
+      el('span', { class: 'st-models-label' }, 'Modèles'),
+      list.length ? pick : null,
+      tools,
+      el('button', { type: 'button', class: 'st-link', title: 'Style, musique, format, zooms et écran de fin (pas les extraits)', onclick: saveModel }, '+ Enregistrer mes réglages'),
+      undoModel ? el('button', { type: 'button', class: 'st-link', onclick: () => { const back = undoModel; undoModel = null; applySettings(back); renderModels(); toast('Réglages précédents rétablis.'); } }, 'Annuler le modèle') : null,
+      el('span', { class: 'st-help inline st-models-hint' }, 'Gardés dans ce navigateur'),
+    );
+  }
+
+  stage.append(modelsBar, tabBar, ...tabs.map(([, , p]) => p), nextBar);
+  renderModels();
 
   // « ← Autres interviews » et le titre vont dans l'en-tête bleu : un titre long sur deux ou trois lignes (téléphone) ne déborde plus
   // en blanc sur le fond clair
@@ -1627,6 +1844,7 @@ async function openEditor(youtubeId) {
   renderMusic();
   renderFrame();
   renderCreate();
+  renderEnd();
   panelStyle.prepend(subNav, textWrap, lookWrap);
   openSub('look');
   syncStyleControls();

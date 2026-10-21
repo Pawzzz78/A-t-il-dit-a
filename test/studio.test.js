@@ -198,10 +198,10 @@ test('rendu complet : MP4 vertical avec sous-titres, musique et durée exacte', 
   assert.equal(done.status, 'done', JSON.stringify(done));
   assert.ok(seen.every((p, i) => !i || p >= seen[i - 1]), 'progression croissante');
   assert.equal(done.progress, 1);
-  assert.match(done.filename, /^lisnard-studio-interview-de-test-du-studio-[0-9a-f]{6}\.mp4$/);
+  assert.match(done.filename, /^studio-lisnard-interview-de-test-du-studio-[0-9a-f]{6}\.mp4$/);
   const res = await fetch(`${base}/api/studio/render/${id}/file`);
   assert.equal(res.status, 200);
-  assert.match(res.headers.get('content-disposition'), /attachment; filename="lisnard-studio-/);
+  assert.match(res.headers.get('content-disposition'), /attachment; filename="studio-lisnard-/);
   const out = path.join(dir, 'out.mp4');
   await fs.writeFile(out, Buffer.from(await res.arrayBuffer()));
   const info = probe(out);
@@ -817,4 +817,55 @@ test('mesure du fond : un ffmpeg bloqué est arrêté au bout du délai', { skip
   const groups = core.groupWords(core.wordsForExtracts(lns, req.extracts).words, req.style);
   const font = studio.FONTS.find((f) => f.id === req.style.font) ?? studio.FONTS[0];
   await assert.rejects(measureBoxes({ groups, style: req.style, font, fontsDir: studio.FONTS_DIR, timeoutMs: 1 }), /délai/);
+});
+
+test('écran de fin : carte bleue ajoutée après le clip, son prolongé, sous-titres arrêtés à la fin des extraits', { skip: !enabled }, async () => {
+  const card = { on: true, source: true, text: 'Partage la vidéo', dur: 3 };
+  const req = studio.normalizeRequest({ ...REQ(), end_card: card }, { file_duration_s: DURATION });
+  assert.deepEqual(req.end_card, card);
+  assert.equal(req.outTotal, req.total + 3);
+  const plain = studio.buildFfmpegArgs({ file: 'in.mp4', req: studio.normalizeRequest(REQ(), { file_duration_s: DURATION }), hasAudio: true, assPath: 'a.ass', out: 'o.mp4' });
+  assert.ok(!plain.join(' ').includes('color=c='), 'sans écran de fin, rien ne change');
+  const sent = await api('POST', '/api/studio/render', { ...REQ(), music: null, end_card: card });
+  assert.equal(sent.status, 202, JSON.stringify(sent.body));
+  const done = await waitFor(sent.body.id, (s) => s.status === 'done' || s.status === 'error');
+  assert.equal(done.status, 'done', JSON.stringify(done));
+  assert.ok(Math.abs(done.duration_s - 10.5) < 0.01);
+  const out = path.join(dir, 'endcard.mp4');
+  await fs.writeFile(out, Buffer.from(await (await fetch(`${base}/api/studio/render/${sent.body.id}/file`)).arrayBuffer()));
+  const info = probe(out);
+  assert.ok(Math.abs(Number(info.format.duration) - 10.5) < 0.3, `durée ${info.format.duration}`);
+  const a = info.streams.find((s) => s.codec_type === 'audio');
+  assert.ok(Math.abs(Number(a.duration) - 10.5) < 0.3, `audio ${a.duration}`);
+  // a corner far from the text is the card's navy blue
+  const px = execFileSync('ffmpeg', ['-v', 'error', '-ss', '9.5', '-i', out, '-frames:v', '1', '-vf', 'crop=20:20:680:20,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
+  assert.ok(px[0] < 30 && px[1] > 25 && px[1] < 75 && px[2] > 70 && px[2] < 140, `couleur ${[...px]}`);
+});
+
+test('écran de fin dessiné dans le navigateur : image validée, ajoutée telle quelle après le clip', { skip: !enabled }, async () => {
+  const jpg = path.join(dir, 'card.jpg');
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=1080x1920', '-frames:v', '1', jpg]);
+  const send = (body, type = 'image/jpeg') => fetch(`${base}/api/studio/endcard`, { method: 'POST', headers: { 'Content-Type': type }, body }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  assert.equal((await send(Buffer.from('pas une image'.repeat(100)))).status, 400);
+  const up = await send(await fs.readFile(jpg));
+  assert.equal(up.status, 200, JSON.stringify(up.body));
+  assert.match(up.body.id, /^[0-9a-f]{40}$/);
+  assert.equal((await send(await fs.readFile(jpg))).body.id, up.body.id, 'même image, même identifiant');
+  await fs.rm(path.join(process.env.STORAGE_DIR, 'cards', `${up.body.id}.jpg`));
+  const twice = await Promise.all([send(await fs.readFile(jpg)), send(await fs.readFile(jpg))]);
+  assert.deepEqual(twice.map((r) => r.status), [200, 200], 'deux envois simultanés du même visuel réussissent');
+  const missing = await api('POST', '/api/studio/render', { ...REQ(), music: null, end_card: { on: true, source: false, image: 'a'.repeat(40), dur: 2 } });
+  assert.equal(missing.status, 409);
+  const card = { on: true, source: false, image: up.body.id, dur: 2, design: { template: 'stat', values: { number: '42 %', evil: 'x' } } };
+  const sent = await api('POST', '/api/studio/render', { ...REQ(), music: null, end_card: card });
+  assert.equal(sent.status, 202, JSON.stringify(sent.body));
+  const done = await waitFor(sent.body.id, (s) => s.status === 'done' || s.status === 'error');
+  assert.equal(done.status, 'done', JSON.stringify(done));
+  const out = path.join(dir, 'cardclip.mp4');
+  await fs.writeFile(out, Buffer.from(await (await fetch(`${base}/api/studio/render/${sent.body.id}/file`)).arrayBuffer()));
+  assert.ok(Math.abs(Number(probe(out).format.duration) - 9.5) < 0.3);
+  const px = execFileSync('ffmpeg', ['-v', 'error', '-ss', '8.8', '-i', out, '-frames:v', '1', '-vf', 'crop=40:40:300:600,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
+  assert.ok(px[0] > 200 && px[1] < 60 && px[2] < 60, `couleur ${[...px]}`);
+  const req = studio.normalizeRequest({ ...REQ(), end_card: card }, { file_duration_s: DURATION });
+  assert.deepEqual(req.end_card.design.values, { number: '42 %' }, 'réglages du visuel validés');
 });

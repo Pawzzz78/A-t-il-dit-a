@@ -1,4 +1,4 @@
-# Lisnard Studio
+# Studio Lisnard
 
 **Plateforme dédiée à la création de TikTok / Reels** à partir d'extraits des interviews YouTube de David Lisnard : on choisit un extrait
 (proposé par l'IA ou libre), on ajoute des sous-titres, de la musique, des zooms et des images, puis on télécharge la vidéo verticale.
@@ -383,6 +383,20 @@ Deuxième section du site, `/mur/` : un mur des meilleurs TikToks publiés avec 
 - **Modération** (admin → « Mur ») : masquer un clip ou tous les clips d'un auteur ; le masquage survit aux actualisations. Les légendes sont affichées
   en texte brut.
 - Tables : `wall_clips`, `wall_hidden_authors` ; dernière actualisation dans `settings` (`wall_last_run`). Tests : `test/wall.test.js` (Apify simulé).
+
+### Modèles et écran de fin
+
+- **Modèles** : barre « Modèles » en haut de l'éditeur. « Enregistrer mes réglages » garde sous un nom le style des sous-titres, la musique et
+  les volumes, le format (fond flou ou plein écran, qualité, miroir, suivi du visage), les réglages de zoom et l'écran de fin ; pas les extraits,
+  les corrections ni les images, qui dépendent de l'interview. Jusqu'à 20 modèles, gardés **dans le navigateur** (`studio.models.v1`), rien sur
+  le serveur. Appliquer un modèle peut être annulé ; une police ou une musique disparue est ignorée.
+- **Écran de fin** (onglet « Écran de fin », désactivé par défaut) : un visuel de 2 à 5 s (3 par défaut) ajouté **après** le clip, hors limite de 90 s, dans l'esprit
+  des visuels PostLisnard. Modèles « Une idée forte », « Citation », « Un chiffre » (avec sa source), « Événement » (date, heure, lieu), « Image +
+  message » et « Appel à l'action » ; couleurs bleu, blanc ou kaki ; photo du visiteur (JPG, PNG, WebP, 10 Mo) en grand ou en fond assombri ; centré
+  ou aligné à gauche, majuscules, logo Projet Lisnard, citation de l'interview. Le visuel est **dessiné dans le navigateur** (canvas 1080 × 1920,
+  `public/js/endcard.js`) puis envoyé en JPEG (`POST /api/studio/endcard`, vérifié avec ffprobe, gardé une heure dans `<STORAGE_DIR>/cards`) ;
+  ffmpeg l'ajoute tel quel, la voix et la musique continuent. Publié dans la bibliothèque, le visuel est gardé avec le clip (`<id>.card.jpg`) pour
+  « Recréer » et « Modifier », et le clip se télécharge avec ou sans écran de fin.
 
 ## Bibliothèque de clips
 

@@ -27,6 +27,12 @@ import {
   sourceText,
   fitDescription,
   draftFromClip,
+  sanitizeEndCard,
+  modelFromState,
+  sanitizeModel,
+  parseModels,
+  endCardSettings,
+  endCardContent,
   DESCRIPTION_MAX,
   buildAss,
   fitScale,
@@ -470,6 +476,73 @@ test('draftFromClip : réglages d’un clip de la bibliothèque -> brouillon de 
   assert.deepEqual(d.edits, { 1000: 'Corrigé' });
   assert.equal(d.remixOf, 'a'.repeat(24));
   assert.deepEqual([d.jobId, d.delivered], [null, false]);
+  assert.equal(draftFromClip({ extracts: [] }).endCard.on, false, 'un clip sans écran de fin n’en hérite pas');
   const empty = draftFromClip(null);
   assert.deepEqual([empty.extracts, empty.music, empty.zoom.on, empty.edits], [[], { id: null }, false, {}]);
+});
+
+test('écran de fin : validation, contenu et événements ASS', () => {
+  assert.equal(sanitizeEndCard(null), null);
+  assert.equal(sanitizeEndCard({ on: false, text: 'x' }), null);
+  assert.equal(sanitizeEndCard({ on: true, source: false, text: '   ' }), null);
+  assert.deepEqual(sanitizeEndCard({ on: true }), { on: true, source: true, text: '', dur: 3 });
+  const c = sanitizeEndCard({ on: true, source: false, text: `a\nb${'x'.repeat(200)}`, dur: 9 });
+  assert.equal(c.dur, 5);
+  assert.equal(c.text.length, 120);
+  assert.ok(!c.text.includes('\n'));
+  assert.equal(sanitizeEndCard({ on: true, dur: 1 }).dur, 2);
+  assert.deepEqual(endCardContent({ source: true, text: 'Adhère' }, 'Source : X'), { title: 'Adhère', foot: 'Source : X' });
+  assert.deepEqual(endCardContent({ source: true, text: '' }, 'Source : X'), { title: 'Source : X', foot: '', small: true });
+  const style = sanitizeStyle({ preset: 'hormozi' }, ['anton']);
+  const ass = buildAss({ groups: [{ start: 0, end: 4, words: [{ start: 0, end: 4, text: 'bonjour' }] }], style, font: { ass_name: 'Anton', em_ratio: 1, cap_em: 0.7 },
+    endCard: { start: 4, end: 7, title: 'Adhère {vite}', foot: 'Source : X', font: { ass_name: 'Montserrat' } } });
+  assert.match(ass, /Style: EndTitle,Montserrat,/);
+  assert.match(ass, /Dialogue: 3,0:00:04\.00,0:00:07\.00,EndTitle,.*ADHÈRE VITE$/m);
+  assert.match(ass, /Dialogue: 3,0:00:04\.00,0:00:07\.00,EndFoot,.*Source : X$/m);
+  assert.ok(ass.indexOf('Style: EndFoot') < ass.indexOf('[Events]'));
+  assert.ok(!buildAss({ groups: [], style, font: { ass_name: 'Anton', em_ratio: 1, cap_em: 0.7 } }).includes('EndTitle'));
+});
+
+test('modèles : réglages sans l’interview, validés à l’application, liste du navigateur', () => {
+  const S = {
+    style: sanitizeStyle({ preset: 'hormozi' }, ['anton']), music: { id: 'lofi-doux', volume: 0.4 }, voice: 1.2,
+    layout: { fit: 'crop', cropX: 0.2, quality: 'fast', mirror: true, follow: { on: true, subject: 'lisnard' } },
+    zoom: { on: true, auto: false, strength: 1.3, focus: { x: 0.5, y: 0.4 }, events: [{ t: 1, kind: 'in' }] },
+    endCard: { on: true, dur: 4, design: { template: 'headline', values: { title: 'Adhère' }, source: false }, image: 'c'.repeat(40) },
+    extracts: [{ start_ms: 0, end_ms: 5000 }], broll: [{ id: '1' }], edits: new Map([[0, { text: 'x' }]]),
+  };
+  const m = modelFromState(S);
+  assert.deepEqual(Object.keys(m).sort(), ['endCard', 'layout', 'music', 'style', 'voice', 'zoom']);
+  assert.equal(m.layout.cropX, undefined, 'la position du cadrage dépend de la vidéo');
+  assert.equal(m.zoom.events, undefined);
+  const ok = sanitizeModel(JSON.parse(JSON.stringify(m)), { fontIds: ['anton'], musicIds: ['lofi-doux'], framingReady: true, identified: true });
+  assert.deepEqual([ok.music, ok.voice, ok.layout.follow, ok.zoom.strength], [{ id: 'lofi-doux', volume: 0.4 }, 1.2, { on: true, subject: 'lisnard' }, 1.3]);
+  assert.deepEqual([ok.endCard.on, ok.endCard.dur, ok.endCard.design.template, ok.endCard.design.values, ok.endCard.design.source], [true, 4, 'headline', { title: 'Adhère' }, false], 'visuel repris, sans l’image propre au clip');
+  assert.equal(m.endCard.image, undefined);
+  const elsewhere = sanitizeModel(m, { fontIds: ['bebas-neue'], musicIds: [], framingReady: false, identified: false });
+  assert.deepEqual([elsewhere.music.id, elsewhere.layout.follow, elsewhere.style.font], [null, { on: false, subject: 'auto' }, 'bebas-neue']);
+  const kept = endCardSettings({ on: false, text: 'garde', dur: 9 });
+  assert.deepEqual([kept.on, kept.dur, kept.design.values.title], [false, 5, 'garde']);
+  const fromLib = endCardSettings({ on: true, image: 'a'.repeat(40), fromClip: 'b'.repeat(24), design: { template: 'stat', palette: 'khaki', values: { number: '12' } } });
+  assert.deepEqual([fromLib.image, fromLib.fromClip, fromLib.design.palette, fromLib.dirty], ['a'.repeat(40), 'b'.repeat(24), 'khaki', false]);
+  assert.deepEqual([sanitizeModel(null).endCard.on, sanitizeModel(null).endCard.dur, sanitizeModel(null).endCard.design.template], [false, 3, 'headline']);
+  assert.deepEqual(parseModels('pas du json'), []);
+  assert.deepEqual(parseModels('{"a":1}'), []);
+  const list = parseModels(JSON.stringify([{ id: 'b', name: 'Zèbre', settings: {} }, { id: 'a', name: '  Alpha ', settings: {} }, { id: 'x', name: 'sans réglages' }]));
+  assert.deepEqual(list.map((x) => x.name), ['Alpha', 'Zèbre']);
+});
+
+test('visuel de fin : réglages validés, champs propres à chaque modèle, date de l’événement', async () => {
+  const { sanitizeDesign, needsPhoto, eventDateText, wrapText } = await import('../public/js/endcard.js');
+  const d = sanitizeDesign({ template: 'event', palette: 'pink', align: 'center', values: { title: 'Réunion', date: '2026-11-05', time: '18:30', number: 'x', location: 'Cannes' } });
+  assert.deepEqual([d.template, d.palette, d.align, d.upper, d.logo, d.source], ['event', 'navy', 'center', true, true, true]);
+  assert.deepEqual(d.values, { title: 'Réunion', date: '2026-11-05', time: '18:30', location: 'Cannes' });
+  assert.equal(sanitizeDesign({ template: 'event', values: { date: '05/11', time: '25:00' } }).values.date, undefined);
+  assert.equal(sanitizeDesign({ template: 'nope' }).template, 'headline');
+  assert.equal(sanitizeDesign({ values: { title: 'x'.repeat(500) } }).values.title.length, 110);
+  assert.equal(needsPhoto({ template: 'photo' }), true);
+  assert.equal(needsPhoto({ template: 'quote', photoBg: true }), true);
+  assert.equal(needsPhoto({ template: 'quote' }), false);
+  assert.match(eventDateText('2026-11-05', '18:30'), /5 novembre · 18 h 30$/);
+  assert.deepEqual(wrapText('un deux trois', 7, (s) => s.length), ['un deux', 'trois']);
 });

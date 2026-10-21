@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BROLL, FPS, LIMITS, OUT, buildAss, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
+import { BROLL, END_CARD, FPS, LIMITS, OUT, buildAss, endCardContent, sanitizeEndCard, sourceText, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
 import { ensureImage, stockDir, validPhotoId } from './stock.js';
 import { escFilterPath, measureBoxes } from './box-probe.js';
 import { cropXExpr } from '../../public/js/framing.js';
@@ -131,6 +131,7 @@ export function normalizeRequest(body, video) {
   const voice = Math.round(Math.min(1.5, Math.max(0, Number.isFinite(Number(b.voice)) ? Number(b.voice) : 1)) * 100) / 100;
   const clipTotal = Math.round(total * 1000) / 1000;
   const zoom = sanitizeZoom(b.zoom, clipTotal);
+  const endCard = sanitizeEndCard(b.end_card);
   return {
     extracts,
     layout,
@@ -140,7 +141,9 @@ export function normalizeRequest(body, video) {
     edits: normalizeEdits(b.edits),
     zoom: zoom.events.length ? zoom : null,
     broll: normalizeBroll(b.broll, clipTotal),
+    end_card: endCard,
     total: clipTotal,
+    outTotal: endCard ? Math.round((clipTotal + endCard.dur) * 1000) / 1000 : clipTotal,
   };
 }
 
@@ -202,10 +205,14 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
   req.extracts.forEach((e) => args.push('-ss', String(e.start_ms / 1000), '-t', String((e.end_ms - e.start_ms) / 1000), '-i', file));
   const music = kind === 'final' && req.music ? findTrack(req.music.id) : null;
   const musicIdx = req.extracts.length;
-  if (music) args.push('-stream_loop', '-1', '-t', String(req.total), '-i', music.path);
+  const outTotal = kind === 'final' ? req.outTotal ?? req.total : req.total;
+  if (music) args.push('-stream_loop', '-1', '-t', String(outTotal), '-i', music.path);
   const broll = kind === 'final' ? req.broll ?? [] : [];
   const imageIdx = musicIdx + (music ? 1 : 0);
   broll.forEach((b) => args.push('-loop', '1', '-framerate', String(FPS), '-t', String(b.dur), '-i', images[b.id] ?? path.join(stockDir(), `${b.id}.jpg`)));
+  const cardIdx = imageIdx + broll.length;
+  const cardImage = kind === 'final' && req.end_card?.image ? images.__card ?? cardFile(req.end_card.image) : null;
+  if (cardImage) args.push('-loop', '1', '-framerate', String(FPS), '-t', String(req.end_card.dur), '-i', cardImage);
 
   const f = [];
   req.extracts.forEach((e, i) => {
@@ -235,14 +242,22 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
     f.push(`[${last}][bk${k}]overlay=eof_action=pass:enable='between(t,${b.start},${b.start + b.dur})'[vb${k}]`);
     last = `vb${k}`;
   });
+  if (kind === 'final' && req.end_card) {
+    f.push(cardImage
+      ? `[${cardIdx}:v]scale=${size.w}:${size.h}:force_original_aspect_ratio=increase,crop=${size.w}:${size.h},setsar=1,fps=${FPS},format=yuv420p[ec]`
+      : `color=c=0x${END_CARD.bg.slice(1)}:s=${size.w}x${size.h}:r=30:d=${req.end_card.dur},format=yuv420p,setsar=1[ec]`);
+    f.push(`[${last}]format=yuv420p,setsar=1[vm];[vm][ec]concat=n=2:v=1:a=0[ve]`);
+    last = 've';
+  }
+  const pad = outTotal > req.total ? `,apad=whole_dur=${outTotal}` : '';
   f.push(kind === 'final' ? `[${last}]ass=${esc(assPath)}:fontsdir=${esc(FONTS_DIR)}[vo]` : `[${last}]null[vo]`);
   if (music) {
-    const fadeOut = Math.max(0, req.total - 1.8);
-    f.push(`[ac]volume=${req.voice}[av]`);
+    const fadeOut = Math.max(0, outTotal - 1.8);
+    f.push(`[ac]volume=${req.voice}${pad}[av]`);
     f.push(`[${musicIdx}:a]aresample=48000,aformat=channel_layouts=stereo,volume=${req.music.volume},afade=t=in:st=0:d=0.6,afade=t=out:st=${fadeOut}:d=1.8[m]`);
     f.push('[av][m]amix=inputs=2:duration=first:dropout_transition=0,volume=2,alimiter=limit=0.95[ao]');
   } else {
-    f.push(`[ac]volume=${req.voice},alimiter=limit=0.95[ao]`);
+    f.push(`[ac]volume=${req.voice}${pad},alimiter=limit=0.95[ao]`);
   }
   args.push('-filter_complex', f.join(';'), '-map', '[vo]', '-map', '[ao]');
   if (kind === 'preview' && previewExt() === 'webm') {
@@ -251,7 +266,7 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
   }
   args.push('-c:v', 'libx264', '-preset', size.preset, '-crf', String(size.crf), '-pix_fmt', 'yuv420p', '-r', '30');
   if (kind === 'final') args.push('-profile:v', 'high', '-level', '4.1');
-  args.push('-c:a', 'aac', '-b:a', kind === 'final' ? '160k' : '64k', '-ar', '48000', '-t', String(req.total), '-movflags', '+faststart', out);
+  args.push('-c:a', 'aac', '-b:a', kind === 'final' ? '160k' : '64k', '-ar', '48000', '-t', String(outTotal), '-movflags', '+faststart', out);
   return args;
 }
 
@@ -259,7 +274,7 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
  * Fichier ASS du clip : mots horodatés des lignes de la transcription (avec les corrections de texte), groupés selon le style.
  * Un fond arrondi demande de mesurer chaque ligne de texte avec libass (box-probe.js) : d'où la fonction asynchrone.
  */
-export async function assForRequest({ req, lines }) {
+export async function assForRequest({ req, lines, video = null }) {
   const { words } = wordsForExtracts(applyEdits(lines, req.edits), req.extracts);
   const groups = groupWords(words, req.style);
   const font = fontById.get(req.style.font) ?? FONTS[0];
@@ -269,16 +284,27 @@ export async function assForRequest({ req, lines }) {
     style: req.style,
     font: { ass_name: font.ass_name, em_ratio: font.em_ratio, cap_em: font.cap_em },
     boxes,
+    endCard: endCardFor(req, video),
   });
+}
+
+function endCardFor(req, video) {
+  if (req.end_card?.image) return null; // the uploaded visual already carries its text
+  const content = endCardContent(req.end_card, sourceText(video?.title, video?.published_at));
+  if (!content || !content.title) return null;
+  const font = fontById.get('montserrat') ?? FONTS[0];
+  return { ...content, start: req.total, end: req.outTotal, font: { ass_name: font.ass_name } };
 }
 
 // --- exécution de ffmpeg ----------------------------------------------------------------------------
 
-const dirs = () => ({ renders: path.join(storageDir(), 'renders'), previews: path.join(storageDir(), 'previews'), stock: stockDir() });
+const dirs = () => ({ renders: path.join(storageDir(), 'renders'), previews: path.join(storageDir(), 'previews'), stock: stockDir(), cards: path.join(storageDir(), 'cards') });
+export const cardFile = (id) => (/^[0-9a-f]{40}$/.test(String(id)) ? path.join(dirs().cards, `${id}.jpg`) : null);
 async function ensureDirs() {
   const d = dirs();
   await fs.mkdir(d.renders, { recursive: true });
   await fs.mkdir(d.previews, { recursive: true });
+  await fs.mkdir(d.cards, { recursive: true });
   await fs.mkdir(d.stock, { recursive: true });
 }
 
@@ -326,6 +352,59 @@ const take = (kind, ip, max) => limiter.take(`${kind}:${ipKey(ip)}`, max);
 
 // Auto-framing is called on every extract change, hence a generous limit
 export const framingAllowed = (ip) => take('framing', ip, config().framingPerHour);
+
+// --- end card visual drawn in the browser ---
+
+const probeImage = (file) =>
+  new Promise((resolve) => {
+    const p = spawn('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_name,width,height', '-of', 'json', file], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let out = '';
+    p.stdout.on('data', (d) => (out += d));
+    p.on('error', () => resolve(null));
+    p.on('close', () => {
+      try {
+        resolve(JSON.parse(out).streams?.[0] ?? null);
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+
+// Named after its content hash, so the same visual is stored once
+export async function saveCard(buffer, ip = 'local') {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 1000 || buffer[0] !== 0xff || buffer[1] !== 0xd8) throw new HttpError(400, 'Visuel de fin illisible : il doit être une image JPEG.');
+  if (!take('card', ip, 40)) throw new HttpError(429, 'Trop de visuels envoyés pour le moment : réessaie dans quelques minutes.');
+  await ensureDirs();
+  if ((await dirBytes(dirs().cards)) > CARDS_MAX_BYTES) throw new HttpError(503, 'Le studio est très sollicité : réessaie dans quelques minutes.');
+  const id = crypto.createHash('sha1').update(buffer).digest('hex');
+  const file = cardFile(id);
+  if (await fs.stat(file).then(() => true, () => false)) {
+    const now = new Date();
+    await fs.utimes(file, now, now).catch(() => {});
+    return id;
+  }
+  const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp.jpg`;
+  await fs.writeFile(tmp, buffer);
+  while (probesRunning >= 2) await new Promise((r) => setTimeout(r, 50));
+  probesRunning++;
+  const st = await probeImage(tmp).finally(() => probesRunning--);
+  if (!st || st.codec_name !== 'mjpeg' || !(st.width >= 270 && st.width <= 4096 && st.height >= 480 && st.height <= 4096)) {
+    await fs.rm(tmp, { force: true });
+    // A concurrent upload of the same bytes may have stored it meanwhile
+    if (await fs.stat(file).then(() => true, () => false)) return id;
+    throw new HttpError(400, 'Visuel de fin illisible : envoie une image JPEG verticale.');
+  }
+  await fs.rename(tmp, file);
+  return id;
+}
+
+const CARDS_MAX_BYTES = 300 * 1024 * 1024;
+let probesRunning = 0;
+async function dirBytes(dir) {
+  let total = 0;
+  for (const name of await fs.readdir(dir).catch(() => [])) total += (await fs.stat(path.join(dir, name)).catch(() => null))?.size ?? 0;
+  return total;
+}
 
 // --- aperçu -------------------------------------------------------------------------------------------
 
@@ -433,21 +512,27 @@ export async function enqueueRender({ video, req, lines, ip: rawIp = 'local', ow
   if (!take('render', ip, cfg.rendersPerHour)) throw new HttpError(429, `Limite atteinte : ${cfg.rendersPerHour} clips par heure. Réessaie plus tard.`);
   await ensureDirs();
   const id = crypto.randomBytes(12).toString('hex');
+  // The job keeps its own copy of the card: cleanup protects job files, not the shared upload
+  const card = req.end_card?.image ? path.join(dirs().renders, `${id}.card.jpg`) : null;
+  if (card) await fs.copyFile(cardFile(req.end_card.image), card).catch(() => {
+    throw new HttpError(409, 'Le visuel de fin a expiré : crée la vidéo à nouveau.');
+  });
   const job = {
     id,
     ip,
     owner,
     onDone,
     youtube_id: video.youtube_id,
-    video: { id: video.id, title: video.title, stamp: stampOf(video), text_hash: video.text_hash ?? null },
+    video: { id: video.id, title: video.title, published_at: video.published_at ?? null, stamp: stampOf(video), text_hash: video.text_hash ?? null },
     status: 'queued',
     progress: 0,
-    total: req.total,
-    filename: `lisnard-studio-${slug(video.title)}-${id.slice(0, 6)}.mp4`,
+    total: req.outTotal ?? req.total,
+    filename: `studio-lisnard-${slug(video.title)}-${id.slice(0, 6)}.mp4`,
     out: path.join(dirs().renders, `${id}.mp4`),
     assPath: path.join(dirs().renders, `${id}.ass`),
     file: videoFilePath(video.file_name),
     hasAudio: video.file_has_audio,
+    card,
     req,
     lines,
     createdAt: Date.now(),
@@ -472,17 +557,19 @@ function pump() {
 async function runJob(job) {
   job.status = 'running';
   try {
-    await fs.writeFile(job.assPath, await assForRequest({ req: job.req, lines: job.lines })); // (mesure du fond arrondi comprise : dans la file, pas avant)
+    await fs.writeFile(job.assPath, await assForRequest({ req: job.req, lines: job.lines, video: job.video })); // (mesure du fond arrondi comprise : dans la file, pas avant)
     if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true }); // pendant la mesure du fond ; onDone doit tout de même suivre
     const images = {};
     for (const b of job.req.broll) images[b.id] = await ensureImage(b.id, 'full', { ip: job.ip });
     if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true });
+    if (job.card) images.__card = job.card;
     const args = buildFfmpegArgs({ file: job.file, req: job.req, hasAudio: job.hasAudio, assPath: job.assPath, out: job.out, kind: 'final', images });
     const run = runFfmpeg(args, job.total, { onProgress: (p) => (job.progress = p), timeoutMs: config().timeoutMs });
     job.cancel = run.cancel;
     await run.promise;
     if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true }); // cancelled just after ffmpeg ended
     job.size = (await fs.stat(job.out)).size;
+    if (job.card) await fs.utimes(job.card, new Date(), new Date()).catch(() => {}); // kept as long as the finished clip
     job.status = 'done';
     job.progress = 1;
   } catch (e) {
