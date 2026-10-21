@@ -32,6 +32,7 @@ export const libraryDir = () => path.join(storageDir(), 'library');
 const ID = /^[0-9a-f]{24}$/;
 const fileOf = (id) => path.join(libraryDir(), `${id}.mp4`);
 const posterOf = (id) => path.join(libraryDir(), `${id}.jpg`);
+const noEndOf = (id) => path.join(libraryDir(), `${id}.noend.mp4`);
 const validId = (id) => {
   if (!ID.test(String(id))) throw new HttpError(404, 'Clip introuvable.');
   return String(id);
@@ -65,6 +66,7 @@ export function present(r, owner = null) {
     file_state: r.file_state,
     file_version: r.file_version,
     has_poster: r.has_poster,
+    end_card_s: endCardSeconds(r),
     created_at: r.created_at,
     expires_at: r.file_state === 'active' ? r.file_expires_at : null,
     mine: Boolean(owner && r.owner_key === owner),
@@ -161,6 +163,7 @@ export async function publishFromJob({ job, owner, ip, visibility = 'public', re
 
 async function removeFiles(id, { poster = true } = {}) {
   await fs.rm(fileOf(id), { force: true });
+  await fs.rm(noEndOf(id), { force: true });
   if (poster) await fs.rm(posterOf(id), { force: true });
   await removeVariants(id);
 }
@@ -222,6 +225,32 @@ async function originalOf(r, owner) {
   return o;
 }
 export const clipFile = (row) => (row.file_state === 'active' ? fileOf(row.id) : null);
+const endCardSeconds = (r) => Number(r.req?.end_card?.dur) || 0;
+
+const cutting = new Map();
+// Copy of the clip without its end card, cut without re-encoding and kept next to it (rebuilt when the clip is re-created)
+export async function withoutEndCard(row) {
+  const file = clipFile(row);
+  const keep = Number(row.duration_s) - endCardSeconds(row);
+  if (!file || !endCardSeconds(row) || !(keep > 0)) return null;
+  const out = noEndOf(row.id);
+  const [src, done] = await Promise.all([fs.stat(file).catch(() => null), fs.stat(out).catch(() => null)]);
+  if (src && done && done.mtimeMs >= src.mtimeMs) return out;
+  if (!cutting.has(row.id)) {
+    const tmp = `${out}.tmp.mp4`;
+    cutting.set(row.id, run('ffmpeg', ['-v', 'error', '-y', '-i', file, '-t', String(keep), '-map', '0', '-c', 'copy', '-movflags', '+faststart', tmp], { timeout: 60_000 })
+      .then(() => fs.rename(tmp, out))
+      .catch(async (e) => {
+        console.error(`Bibliothèque ${row.id} : coupe de l'écran de fin impossible (${e.message})`);
+        await fs.rm(tmp, { force: true });
+        throw new HttpError(500, 'Version sans écran de fin indisponible pour le moment : réessaie, ou télécharge la version complète.');
+      })
+      .finally(() => cutting.delete(row.id)));
+  }
+  await cutting.get(row.id);
+  return out;
+}
+
 export const clipPoster = (row) => (row.has_poster ? posterOf(row.id) : null);
 export const downloadName = (row) => `lisnard-studio-${row.id.slice(0, 8)}.mp4`;
 
@@ -388,6 +417,7 @@ export async function libraryMaintenance(now = Date.now()) {
   );
   for (const r of expired) {
     await fs.rm(fileOf(r.id), { force: true });
+    await fs.rm(noEndOf(r.id), { force: true });
     await removeVariants(r.id);
   }
   await pool.query("UPDATE library_clips SET file_state = 'archived' WHERE file_state = 'pending' AND updated_at < to_timestamp($1 / 1000.0) - interval '30 minutes'", [now]);
@@ -399,7 +429,7 @@ export async function libraryMaintenance(now = Date.now()) {
       const st = await fs.stat(path.join(libraryDir(), name)).catch(() => null);
       if (!st?.isFile()) continue; // « variants » est un sous-dossier : son propre entretien (sweepVariants)
       const [id, ext] = name.split('.');
-      const keep = ext === 'jpg' ? state.has(id) : state.get(id) === 'active' || state.get(id) === 'pending';
+      const keep = ext === 'jpg' ? state.has(id) : name.endsWith('.tmp.mp4') ? false : state.get(id) === 'active' || state.get(id) === 'pending';
       if (keep) continue;
       if (now - st.mtimeMs > 3600_000) await fs.rm(path.join(libraryDir(), name), { force: true });
     }
