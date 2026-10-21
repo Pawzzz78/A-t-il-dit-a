@@ -390,10 +390,13 @@ Deuxième section du site, `/mur/` : un mur des meilleurs TikToks publiés avec 
   les volumes, le format (fond flou ou plein écran, qualité, miroir, suivi du visage), les réglages de zoom et l'écran de fin ; pas les extraits,
   les corrections ni les images, qui dépendent de l'interview. Jusqu'à 20 modèles, gardés **dans le navigateur** (`studio.models.v1`), rien sur
   le serveur. Appliquer un modèle peut être annulé ; une police ou une musique disparue est ignorée.
-- **Écran de fin** (onglet « Créer », facultatif) : carte de 2 à 5 s (3 par défaut) ajoutée **après** le clip, hors limite de 90 s : fond bleu
-  `#032F67`, filets kaki `#A0A37E` (palette des visuels PostLisnard), message libre en capitales (120 caractères) et/ou la source de l'interview.
-  Fond uni généré par ffmpeg, texte dessiné par libass (Montserrat) ; la voix et la musique continuent jusqu'à la fin de la carte. Absente de
-  l'aperçu (un aperçu fixe est affiché dans l'onglet), présente dans la vidéo, la bibliothèque, « Modifier » et « Recréer ».
+- **Écran de fin** (onglet « Créer », facultatif) : un visuel de 2 à 5 s (3 par défaut) ajouté **après** le clip, hors limite de 90 s, dans l'esprit
+  des visuels PostLisnard. Modèles « Une idée forte », « Citation », « Un chiffre » (avec sa source), « Événement » (date, heure, lieu), « Image +
+  message » et « Appel à l'action » ; couleurs bleu, blanc ou kaki ; photo du visiteur (JPG, PNG, WebP, 10 Mo) en grand ou en fond assombri ; centré
+  ou aligné à gauche, majuscules, logo Projet Lisnard, citation de l'interview. Le visuel est **dessiné dans le navigateur** (canvas 1080 × 1920,
+  `public/js/endcard.js`) puis envoyé en JPEG (`POST /api/studio/endcard`, vérifié avec ffprobe, gardé une heure dans `<STORAGE_DIR>/cards`) ;
+  ffmpeg l'ajoute tel quel, la voix et la musique continuent. Publié dans la bibliothèque, le visuel est gardé avec le clip (`<id>.card.jpg`) pour
+  « Recréer » et « Modifier », et le clip se télécharge avec ou sans écran de fin.
 
 ## Bibliothèque de clips
 
