@@ -376,10 +376,24 @@ Troisième section du site, `/bibliotheque/` : les clips créés dans le studio,
 
 - **Publication** : sur l'écran « vidéo prête » du studio, la case « Publier dans la bibliothèque » (cochée par défaut, mémorisée) publie le clip,
   public par défaut ; il peut passer en privé (visible seulement dans « Mes clips ») ou être retiré. Pas de validation préalable : l'admin masque après coup.
-- **Réutilisation** : télécharger le MP4 tel quel, **Republier** (le clip apparaît dans « Mes clips », sans copie du fichier), **Modifier** (ouvre
+- **Réutilisation** : télécharger le MP4, **Republier** (le clip apparaît dans « Mes clips », sans copie du fichier), **Modifier** (ouvre
   l'éditeur avec les réglages du clip : extraits, style, musique, cadrage, corrections ; la nouvelle version est liée à l'original). Note de 1 à 5 étoiles
   (une par personne, pas sur son propre clip), nombre de téléchargements (une fois par personne), tri récents / plus téléchargés / mieux notés
   (moyenne bayésienne), filtre par interview. Chaque clip affiche sa source.
+- **Vidéos uniques pour les algorithmes** : un clip n'est jamais distribué tel quel à tout le monde. Quand sa fiche s'ouvre dans la bibliothèque,
+  le serveur prépare pour la personne qui l'ouvre une **deuxième passe** ffmpeg rapide (quelques secondes) avec des micro-transforms
+  imperceptibles : couleur très légèrement modifiée (luminosité/contraste/gamma/saturation), micro-recadrage de 1 à 3 px, léger grain,
+  hauteur de l'audio décalée de quelques cents, EQ subtil. Le seed est tiré de la paire **(clip, personne)** : la même personne re-télécharge
+  toujours le même fichier (mis en cache sur le volume), une autre personne obtient un autre fichier — chaque dépôt sur un réseau social est donc
+  unique pour les algorithmes, tandis que la vidéo reste **identique pour le spectateur** (aucun retournement, aucune rotation, aucun changement
+  de vitesse : les sous-titres incrustés restent lisibles et synchrones). Les valeurs sont tirées au hasard dans des bandes calibrées d'après le
+  profil « soft » de https://github.com/Hostlife22/video-uniquifier (niveau `gentle` par défaut, `medium` possible). Les versions préparées sont
+  dans `<STORAGE_DIR>/library/variants/` : `LIBRARY_UNIQ_MAX_PER_CLIP` par clip (25, les plus anciennes partent), supprimées avec le clip,
+  comptées dans le budget de stockage de la bibliothèque. La préparation suit la lecture du clip (la personne regarde l'aperçu pendant que sa
+  version se prépare) ; au clic sur « Télécharger », si la version n'est pas encore prête, un court délai l'annonce. Si la deuxième passe n'est
+  pas prête ou est impossible (file pleine, ffmpeg absent), le fichier original est servi — **un téléchargement n'échoue jamais**.
+  `LIBRARY_UNIQ=off` la désactive. La « personne » est identifiée par sa clé d'adhérente ou, anonyme, par l'empreinte de sa connexion — la même
+  approximation que pour les compteurs de téléchargements.
 - **Propriétaire, sans compte** : adhérent connecté (empreinte de son identifiant SSO) ou, si le studio est ouvert à tous, un cookie signé `own`
   posé à la première action. Seule une empreinte HMAC (`OWNER_KEY_SECRET`, sinon `SESSION_SECRET`) est stockée ; elle n'est jamais renvoyée au public.
   En mode adhérents, consulter et télécharger restent ouverts à tous ; publier, noter, republier et signaler demandent la connexion.
@@ -390,8 +404,10 @@ Troisième section du site, `/bibliotheque/` : les clips créés dans le studio,
 - **Modération** (admin → « Bibliothèque ») : signalements (un par personne, masquage automatique à `LIBRARY_AUTOHIDE_REPORTS`, 0 pour jamais),
   masquer un clip ou tous les clips d'un auteur, archiver la vidéo, supprimer. « Effacer mes données » (onglet « Mes clips ») supprime tout ce qui se
   rattache à la personne.
-- Tables : `library_clips`, `library_downloads`, `library_ratings`, `library_reports`, `library_hidden_owners`. Code : `src/library/`,
-  `src/routes/library.js`, `public/js/library.js`. Tests : `test/library.test.js`.
+- Tables : `library_clips`, `library_downloads`, `library_ratings`, `library_reports`, `library_hidden_owners` (les variantes n'ont pas de
+  table : fichiers + sidecars suivis par readdir, comme les aperçus). Code : `src/library/` (+ `src/library/uniq.js`), `src/studio/uniquify.js`,
+  `src/routes/library.js`, `public/js/library.js`. Tests : `test/library.test.js`, `test/library-uniq.test.js` (e2e, base + ffmpeg),
+  `test/uniq.test.js` (cycle de vie des variantes, ffmpeg), `test/uniquify.test.js` (paramètres, pur).
 
 ## Structure
 
