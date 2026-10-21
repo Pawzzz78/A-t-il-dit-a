@@ -198,10 +198,10 @@ test('rendu complet : MP4 vertical avec sous-titres, musique et durée exacte', 
   assert.equal(done.status, 'done', JSON.stringify(done));
   assert.ok(seen.every((p, i) => !i || p >= seen[i - 1]), 'progression croissante');
   assert.equal(done.progress, 1);
-  assert.match(done.filename, /^lisnard-studio-interview-de-test-du-studio-[0-9a-f]{6}\.mp4$/);
+  assert.match(done.filename, /^studio-lisnard-interview-de-test-du-studio-[0-9a-f]{6}\.mp4$/);
   const res = await fetch(`${base}/api/studio/render/${id}/file`);
   assert.equal(res.status, 200);
-  assert.match(res.headers.get('content-disposition'), /attachment; filename="lisnard-studio-/);
+  assert.match(res.headers.get('content-disposition'), /attachment; filename="studio-lisnard-/);
   const out = path.join(dir, 'out.mp4');
   await fs.writeFile(out, Buffer.from(await res.arrayBuffer()));
   const info = probe(out);

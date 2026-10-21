@@ -1,4 +1,4 @@
-# Lisnard Studio
+# Studio Lisnard
 
 **Plateforme dédiée à la création de TikTok / Reels** à partir d'extraits des interviews YouTube de David Lisnard : on choisit un extrait
 (proposé par l'IA ou libre), on ajoute des sous-titres, de la musique, des zooms et des images, puis on télécharge la vidéo verticale.

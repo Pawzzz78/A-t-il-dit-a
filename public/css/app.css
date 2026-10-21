@@ -21,13 +21,14 @@ a { color: var(--color-primary); }
 
 .site-header { background: #fff; border-bottom: 1px solid var(--color-hairline); }
 .site-header .wrap { display: flex; align-items: center; justify-content: space-between; gap: .6rem 1rem; padding-block: .8rem; flex-wrap: wrap; }
-.brand { display: flex; align-items: center; gap: .9rem; color: var(--color-primary); text-decoration: none; font-family: var(--font-display); font-weight: var(--font-weight-display); text-transform: uppercase; letter-spacing: var(--tracking-title); font-size: 1.15rem; line-height: 1.1; }
-/* Logotype « Lisnard Studio » : Fraunces (serif d'affichage), « Lisnard » droit en bleu, « Studio » en italique rose */
-.brand-logo { display: block; height: 3.1rem; width: auto; flex: none; }
-.wordmark { display: inline-flex; align-items: baseline; font-family: Fraunces, Georgia, "Times New Roman", serif; font-weight: 700; font-size: 2.2rem; line-height: 1; letter-spacing: -.025em; text-transform: none; white-space: nowrap; }
-.wordmark .wm-a { color: var(--color-primary); }
-.wordmark .wm-b { font-style: italic; color: var(--color-accent); margin-left: .06em; padding-right: .06em; position: relative; }
-.wordmark .wm-b::after { content: ""; position: absolute; left: .08em; right: .1em; bottom: -.14em; height: .09em; border-radius: 99px; background: var(--ne-chamois); }
+.brand { display: flex; align-items: center; gap: 1.1rem; color: var(--color-primary); text-decoration: none; font-family: var(--font-display); font-weight: var(--font-weight-display); text-transform: uppercase; letter-spacing: var(--tracking-title); font-size: 1.15rem; line-height: 1.1; }
+/* « Studio Lisnard » wordmark: navy STUDIO over a tracked khaki LISNARD between blue and red bars, as in the Projet Lisnard logo */
+.brand-logo { display: block; height: 3.9rem; width: auto; flex: none; }
+.wordmark { display: inline-grid; gap: .26em; justify-items: start; font-family: Montserrat, Arial, sans-serif; font-size: 2rem; line-height: 1; letter-spacing: 0; text-transform: uppercase; white-space: nowrap; }
+.wordmark .wm-a { font-weight: 900; color: #032F67; letter-spacing: .01em; }
+.wordmark .wm-b { display: flex; align-items: center; gap: .55em; font-size: .34em; font-weight: 800; letter-spacing: .42em; margin-right: -.42em; color: #A0A37E; }
+.wordmark .wm-b::before, .wordmark .wm-b::after { content: ""; width: 1.7em; height: .32em; background: #032F67; }
+.wordmark .wm-b::after { background: #D0141F; margin-left: -.42em; }
 .site-header nav { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem 1.5rem; font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-caps); }
 .site-header nav a:not(.btn) { color: var(--color-primary); text-decoration: none; }
 .site-header nav a:not(.btn):hover { text-decoration: underline; }
@@ -94,14 +95,15 @@ mark { background: var(--color-highlight); color: var(--ne-blue-dark); font-weig
 .site-footer { background: var(--color-primary-dark); color: #fff; padding: 2rem 0; font-size: .85rem; }
 .site-footer .wrap { display: flex; gap: 1.5rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .site-footer .footer-brand { display: inline-block; }
-.site-footer .wordmark { font-size: 1.7rem; }
+.site-footer .wordmark { font-size: 1.6rem; }
 .site-footer .wordmark .wm-a { color: #fff; }
 .site-footer .wordmark .wm-b { color: var(--ne-chamois); }
+.site-footer .wordmark .wm-b::before { background: #fff; }
 .site-footer a { color: #fff; }
 .site-footer p { margin: 0; opacity: .85; }
 
 @media (max-width: 640px) {
-  .brand-logo { height: 2.5rem; }
+  .brand-logo { height: 3.1rem; }
   .brand { gap: .6rem; }
   .site-header nav a.btn { display: none; }
   .search form { flex-direction: column; }
