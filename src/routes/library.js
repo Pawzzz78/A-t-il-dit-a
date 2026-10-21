@@ -5,7 +5,7 @@ import { createLimiter, ipKey, trimMap } from '../ip.js';
 import { membersOnly } from '../members/oidc.js';
 import {
   SORTS, clipFile, clipPoster, clipRequest, countDownload, deleteClip, deleteOwnerData, downloadName, getClip, libraryConfig, listMine, listPublic,
-  mediaClip, present, withoutEndCard, publishFromJob, rate, recreate, report, repost, setVisibility,
+  mediaClip, present, withoutEndCard, cardOf, publishFromJob, rate, recreate, report, repost, setVisibility,
 } from '../library/library.js';
 import { ensureVariant, variantFile, variantState } from '../library/uniq.js';
 import { clearOwner, libraryConfigured, optionalOwner, requireOwner } from '../library/owner.js';
@@ -83,6 +83,18 @@ libraryRouter.get(
   ah(async (req, res) => {
     res.set('Cache-Control', 'no-store');
     res.json(await clipRequest(req.params.id, req.owner?.key));
+  }),
+);
+
+libraryRouter.get(
+  '/clips/:id/card',
+  optionalOwner,
+  ah(async (req, res) => {
+    const row = await mediaClip(req.params.id, req.owner?.key);
+    if (!row.req?.end_card?.image) throw new HttpError(404, "Ce clip n'a pas de visuel de fin.");
+    res.sendFile(cardOf(row.id), { headers: { 'Cache-Control': 'private, max-age=3600', 'Content-Type': 'image/jpeg' } }, (err) => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'Visuel introuvable.' });
+    });
   }),
 );
 

@@ -386,3 +386,32 @@ test('écran de fin : téléchargeable avec ou sans, réglage conservé pour « 
   await alice.call('DELETE', `/api/library/clips/${clip.id}`);
   await assert.rejects(fs.stat(path.join(process.env.STORAGE_DIR, 'library', `${clip.id}.noend.mp4`)));
 });
+
+test('visuel de fin : gardé avec le clip, servi pour « Modifier », remis en place pour « Recréer »', { skip: !enabled }, async () => {
+  const alice = browser();
+  const jpg = path.join(dir, 'libcard.jpg');
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=green:s=1080x1920', '-frames:v', '1', jpg]);
+  const up = await (await fetch(`${base}/api/studio/endcard`, { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: await fs.readFile(jpg) })).json();
+  const job = await renderAs(alice, { end_card: { on: true, source: false, image: up.id, dur: 2, design: { template: 'headline', values: { title: 'Bonjour' } } } });
+  const clip = (await alice.call('POST', '/api/library/clips', { job_id: job })).body;
+  const card = await browser().call('GET', `/api/library/clips/${clip.id}/card`);
+  assert.equal(card.status, 200);
+  assert.equal(card.headers.get('content-type'), 'image/jpeg');
+  const { body } = await browser().call('GET', `/api/library/clips/${clip.id}/request`);
+  assert.equal(body.req.end_card.image, up.id);
+  assert.deepEqual(body.req.end_card.design.values, { title: 'Bonjour' });
+  assert.equal((await browser().call('GET', `/api/library/clips/${'0'.repeat(24)}/card`)).status, 404);
+  // the temporary visual is gone, the clip expires, then is re-created from its own copy
+  await fs.rm(path.join(process.env.STORAGE_DIR, 'cards', `${up.id}.jpg`), { force: true });
+  await lib.libraryMaintenance(Date.now() + 31 * 86400_000);
+  assert.ok(await fs.stat(path.join(process.env.STORAGE_DIR, 'library', `${clip.id}.card.jpg`)), 'visuel gardé après l’archivage');
+  const rc = await alice.call('POST', `/api/library/clips/${clip.id}/recreate`);
+  assert.equal(rc.status, 202, JSON.stringify(rc.body));
+  const t0 = Date.now();
+  let st;
+  do {
+    await new Promise((x) => setTimeout(x, 200));
+    st = (await alice.call('GET', `/api/library/clips/${clip.id}`)).body;
+  } while (st.file_state === 'pending' && Date.now() - t0 < 60_000);
+  assert.equal(st.file_state, 'active');
+});
