@@ -338,7 +338,7 @@
 .st-ec input[type="text"] { font: inherit; min-height: 44px; padding: .5rem .7rem; border: 1px solid var(--color-border); border-radius: 8px; }
 .st-ec-dur { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; font-size: .85rem; font-weight: 700; color: var(--color-primary); }
 .st-ec-dur [aria-pressed="true"] { background: var(--color-primary); color: #fff; }
-.st-ec-grid { display: grid; grid-template-columns: minmax(0, 11rem) minmax(0, 1fr); gap: 1rem; align-items: start; }
+.st-ec-grid { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 1.4rem; align-items: start; margin-top: .6rem; }
 .st-ec-preview { position: sticky; top: .5rem; }
 .st-ec-canvas { display: block; width: 100%; height: auto; aspect-ratio: 9 / 16; border-radius: 10px; box-shadow: 0 4px 16px rgba(15, 23, 82, .18); background: #032F67; }
 .st-ec-form { display: grid; gap: .55rem; min-width: 0; }
@@ -354,4 +354,6 @@
 .st-ec-upload { position: relative; overflow: hidden; cursor: pointer; }
 .st-ec-file { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .st-ec-upload:focus-within { outline: 3px solid var(--color-ring); outline-offset: 2px; }
-@media (max-width: 640px) { .st-ec-grid { grid-template-columns: minmax(0, 1fr); } .st-ec-preview { position: static; width: min(12rem, 60%); } }
+.st-panel-end { container-type: inline-size; }
+/* Stack once the panel itself gets narrow, whatever the screen width */
+@container (max-width: 40rem) { .st-ec-grid { grid-template-columns: minmax(0, 1fr); } .st-ec-preview { position: static; width: min(13rem, 62%); margin: 0 auto; } }

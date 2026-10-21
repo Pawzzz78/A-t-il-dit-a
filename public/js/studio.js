@@ -232,7 +232,7 @@ async function openEditor(youtubeId) {
     stock: { q: '', photos: [], page: 0, next: false, busy: false, error: '' },
     ticket: 0,
     edits: new Map(), // corrections de texte : début de la ligne (ms) -> { orig, text }
-    endCard: endCardSettings(prefs.endCard),
+    endCard: { ...endCardSettings(prefs.endCard), on: false },
   };
   // corrections gardées dans le navigateur (un rechargement ne les perd pas) ; ignorées si la transcription a changé depuis
   const editsKey = `studio.edits.${S.video.youtube_id}`;
@@ -949,6 +949,7 @@ async function openEditor(youtubeId) {
 
   // ============================================================ onglet Créer
   const panelCreate = el('div', { class: 'st-panel' });
+  const panelEnd = el('div', { class: 'st-panel st-panel-end' });
   const createSummary = el('div', {});
   const pledge = el('input', { type: 'checkbox' });
   const makeBtn = el('button', { class: 'btn', type: 'button' }, 'Créer la vidéo');
@@ -1047,7 +1048,8 @@ async function openEditor(youtubeId) {
     S.endCard.dirty = true;
     savePrefs(S);
     scheduleDraft();
-    if (rerender) renderCreate();
+    renderCreateSummary();
+    if (rerender) renderEnd();
     else redrawEc();
   };
   const setDesign = (patch, rerender = true) => {
@@ -1068,7 +1070,7 @@ async function openEditor(youtubeId) {
     if (!S.endCard.on) return null;
     await drawEc();
     if (ec.missing.length) {
-      openTab('creer');
+      openTab('fin');
       throw new Error(`Écran de fin : complète ${ec.missing.join(', ')}, ou décoche-le.`);
     }
     const blob = await cardBlob(ec.canvas);
@@ -1090,7 +1092,7 @@ async function openEditor(youtubeId) {
         ? el('textarea', { rows: '2', maxlength: String(f.max), placeholder: f.placeholder, 'data-k': `ec:f:${f.key}` }, value)
         : el('input', { type: f.type, maxlength: String(f.max), placeholder: f.placeholder, value, 'data-k': `ec:f:${f.key}` });
       input.addEventListener('input', () => setDesign({ values: { ...S.endCard.design.values, [f.key]: input.value.slice(0, f.max) } }, false));
-      input.addEventListener('change', () => renderCreate());
+      input.addEventListener('change', () => renderEnd());
       return el('label', { class: 'st-field' }, f.label, input);
     };
     const photoInput = el('input', { type: 'file', accept: 'image/jpeg,image/png,image/webp', class: 'st-ec-file', 'data-k': 'ec:photo', onchange: (e) => pickPhoto(e.target.files[0]) });
@@ -1122,9 +1124,13 @@ async function openEditor(youtubeId) {
             el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: d.source, 'data-k': 'ec:src', onchange: (e) => setDesign({ source: e.target.checked }) }), 'Citer l’interview')),
           el('div', { class: 'st-ec-dur', role: 'group', 'aria-label': 'Durée de l’écran de fin' },
             el('span', {}, 'Durée'),
-            [2, 3, 4, 5].map((n) => el('button', { type: 'button', class: 'btn small secondary', 'data-k': `ec:d${n}`, 'aria-pressed': String(c.dur === n), onclick: () => { S.endCard.dur = n; savePrefs(S); scheduleDraft(); renderCreate(); } }, `${n} s`))),
+            [2, 3, 4, 5].map((n) => el('button', { type: 'button', class: 'btn small secondary', 'data-k': `ec:d${n}`, 'aria-pressed': String(c.dur === n), onclick: () => { S.endCard.dur = n; savePrefs(S); scheduleDraft(); renderEnd(); renderCreateSummary(); } }, `${n} s`))),
           ecMsg,
           el('p', { class: 'st-help' }, 'S’ajoute après ton clip, en plus de sa durée ; visible dans la vidéo créée, pas dans l’aperçu.'))));
+  }
+
+  function renderEnd() {
+    putKeep(panelEnd, el('h3', {}, 'Écran de fin'), endCardBox());
   }
 
   function renderCreate() {
@@ -1133,8 +1139,6 @@ async function openEditor(youtubeId) {
       el('h3', {}, 'Description à copier-coller'),
       captionHelp,
       sourceBox,
-      el('h3', {}, 'Écran de fin'),
-      endCardBox(),
       el('h3', {}, 'Qualité'),
       el('div', { class: 'st-opts' }, quality('hd', 'HD 1080 × 1920', 'Meilleure qualité, un peu plus long à créer'), quality('fast', 'Rapide 720 × 1280', 'Création plus rapide, fichier plus léger')),
       el('label', { class: 'st-check pledge' }, pledge, 'Je m’engage à ne pas déformer le sens des propos de cette interview, y compris dans les sous-titres que j’ai corrigés.'),
@@ -1674,7 +1678,7 @@ async function openEditor(youtubeId) {
   }
 
   // ============================================================ mise en page
-  const tabs = [['extraits', 'Extraits', panelExtracts], ['style', 'Sous-titres', panelStyle], ['musique', 'Musique', panelMusic], ['fx', 'Images & zooms', panelFx], ['cadrage', 'Format', panelFrame], ['creer', 'Créer', panelCreate]];
+  const tabs = [['extraits', 'Extraits', panelExtracts], ['style', 'Sous-titres', panelStyle], ['musique', 'Musique', panelMusic], ['fx', 'Images & zooms', panelFx], ['cadrage', 'Format', panelFrame], ['fin', 'Écran de fin', panelEnd], ['creer', 'Créer', panelCreate]];
   const tabBar = el('div', { class: 'st-tabs', role: 'tablist', 'aria-label': 'Étapes de création' });
   const stage = el('div', { class: 'st-stage card' });
   const nextBtn = el('button', { class: 'btn st-next', type: 'button' });
@@ -1694,6 +1698,7 @@ async function openEditor(youtubeId) {
     if (next) nextBtn.textContent = `Étape suivante : ${next[1]} →`;
     if (id !== 'musique' && auditionId) { audition.pause(); auditionId = null; renderMusic(); }
     if (id === 'creer') renderCreateSummary();
+    if (id === 'fin') renderEnd();
     if (id === 'fx') renderEffects();
     if (id !== 'fx' && S.zoom.picking) { S.zoom.picking = false; pushFx(); } // on ne reste pas bloqué en choix du point de zoom
   }
@@ -1753,6 +1758,7 @@ async function openEditor(youtubeId) {
     renderEffects();
     pushFx();
     renderCreate();
+    renderEnd();
     savePrefs(S);
     scheduleDraft();
     requestPreview();
@@ -1838,6 +1844,7 @@ async function openEditor(youtubeId) {
   renderMusic();
   renderFrame();
   renderCreate();
+  renderEnd();
   panelStyle.prepend(subNav, textWrap, lookWrap);
   openSub('look');
   syncStyleControls();
