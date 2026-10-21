@@ -476,6 +476,7 @@ test('draftFromClip : réglages d’un clip de la bibliothèque -> brouillon de 
   assert.deepEqual(d.edits, { 1000: 'Corrigé' });
   assert.equal(d.remixOf, 'a'.repeat(24));
   assert.deepEqual([d.jobId, d.delivered], [null, false]);
+  assert.equal(draftFromClip({ extracts: [] }).endCard.on, false, 'un clip sans écran de fin n’en hérite pas');
   const empty = draftFromClip(null);
   assert.deepEqual([empty.extracts, empty.music, empty.zoom.on, empty.edits], [[], { id: null }, false, {}]);
 });

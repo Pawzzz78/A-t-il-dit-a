@@ -1670,7 +1670,7 @@ async function openEditor(youtubeId) {
     S.music = { id: m.music.id, volume: m.music.volume };
     S.voice = m.voice;
     S.layout = { ...S.layout, fit: m.layout.fit, quality: m.layout.quality, mirror: m.layout.mirror, follow: { ...m.layout.follow } };
-    S.zoom = { ...S.zoom, on: m.zoom.on && S.zoom.events.length > 0 ? true : m.zoom.on, auto: m.zoom.auto, strength: m.zoom.strength, focus: m.zoom.focus };
+    S.zoom = { ...S.zoom, on: m.zoom.on, auto: m.zoom.auto, strength: m.zoom.strength, focus: m.zoom.focus };
     S.endCard = { ...m.endCard };
     if (S.zoom.on && !S.zoom.events.length && S.extracts.length) autoZoom();
     renderPresets();

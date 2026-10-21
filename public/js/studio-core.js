@@ -715,7 +715,7 @@ export function draftFromClip(req, remixOf = null) {
     zoom: zoom ? { on: true, auto: false, strength: zoom.strength, focus: zoom.focus, events: zoom.events } : { on: false },
     broll: (Array.isArray(r.broll) ? r.broll : []).map((b) => ({ id: String(b.id), start: b.start, dur: b.dur, thumb: `/api/studio/stock/image/${encodeURIComponent(b.id)}` })),
     edits: r.edits && typeof r.edits === 'object' && !Array.isArray(r.edits) ? r.edits : {},
-    endCard: r.end_card ? { ...r.end_card, on: true } : null,
+    endCard: r.end_card ? { ...r.end_card, on: true } : { on: false },
     jobId: null,
     delivered: false,
     remixOf,
