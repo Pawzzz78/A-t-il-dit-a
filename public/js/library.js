@@ -144,15 +144,139 @@ async function forgetMe() {
 const dialog = $('dialog');
 let current = null;
 let pendingTimer = 0;
+let refreshTimer = 0; // rafraîchissement des compteurs après un téléchargement : annulé si la fiche change
+let openTicket = 0; // seule la dernière ouverture demandée s'affiche
+
+// Version unique du clip pour la personne qui l'ouvre : le serveur prépare une copie (deuxième passe avec
+// micro-transforms invisibles) pendant la lecture ; le téléchargement la sert, sinon l'original.
+// `retrying` : la personne a déjà le fichier standard, un nouvel échec ne relance pas de téléchargement
+const uniq = { key: null, state: 'idle', progress: 0, timer: 0, want: false, error: '', retry: true, retrying: false };
+const uniqKey = (m) => `${m.id}:${m.file_version}`;
+const stopUniq = () => {
+  clearTimeout(uniq.timer);
+  uniq.timer = 0;
+  uniq.want = false;
+  uniq.retrying = false;
+};
+const readUniq = (st) => {
+  uniq.state = st.state;
+  uniq.progress = st.progress ?? 0;
+  uniq.error = st.error ?? '';
+  uniq.retry = st.retry !== false;
+};
+
+function prepUniq(m) {
+  const key = uniqKey(m);
+  if (uniq.key === key) return;
+  uniq.key = key;
+  uniq.state = 'idle';
+  uniq.progress = 0;
+  api('POST', `/clips/${m.id}/variant`)
+    .then((st) => {
+      if (uniq.key !== key) return;
+      readUniq(st);
+      uniqTick(m);
+    })
+    .catch(() => {
+      if (uniq.key !== key) return;
+      uniq.state = 'error'; // préparation indisponible : le téléchargement servira l'original
+      uniqTick(m);
+    });
+}
+
+function uniqTick(m) {
+  const key = uniqKey(m);
+  clearTimeout(uniq.timer);
+  uniq.timer = setTimeout(async () => {
+    if (!dialog.open || !current || uniq.key !== key || uniqKey(media(current)) !== key) return;
+    let st;
+    try {
+      st = await api('GET', `/clips/${m.id}/variant`);
+    } catch {
+      return uniqTick(m); // à-coup réseau : on réessaie
+    }
+    if (uniq.key !== key) return;
+    readUniq(st);
+    if (uniq.want) {
+      if (['ready', 'disabled', 'skipped', 'error'].includes(uniq.state)) {
+        uniqDownload(m, $('dialog-msg'));
+        return;
+      }
+      const msg = $('dialog-msg');
+      if (msg) say(msg, `Préparation de ta version unique ${uniq.progress >= 0.99 ? '' : `${Math.round(uniq.progress * 100)} %` + ' '}…`);
+    }
+    if (['queued', 'running'].includes(uniq.state)) uniqTick(m);
+  }, 1500);
+}
+
+function uniqDownload(m, msg) {
+  const { state, retrying } = uniq;
+  stopUniq();
+  // réessai raté : la version standard est déjà téléchargée, on l'annonce sans la relancer
+  if (!(retrying && state !== 'ready')) {
+    const a = el('a', { href: `/api/library/clips/${m.id}/file?use=download`, download: '' });
+    document.body.append(a);
+    a.click();
+    a.remove();
+  }
+  if (msg) {
+    if (state === 'error') {
+      const why = `Ta version unique n'a pas pu être préparée${uniq.error ? ` : ${uniq.error}` : ''}.`;
+      say(msg, retrying ? `${why} Tu gardes la version standard déjà téléchargée.` : `${why} Tu télécharges la version standard du clip.`, true);
+      if (uniq.retry) msg.append(' ', el('button', { class: 'btn secondary small', type: 'button', onclick: () => retryUniq(m, msg) }, 'Réessayer'));
+    } else if (state === 'skipped') {
+      say(msg, 'La version unique est momentanément indisponible (file d’attente pleine) : tu télécharges la version standard du clip.');
+    } else {
+      say(msg, state === 'ready' ? 'Version unique : téléchargement lancé.' : 'Téléchargement lancé.');
+    }
+  }
+  // en cas d'échec le message reste visible (pas de rafraîchissement) ; sinon les compteurs se rafraîchissent
+  if (state !== 'error' && state !== 'skipped') {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => current?.id === m.id && dialog.open && openClip(m.id), 1500);
+  }
+}
+
+function retryUniq(m, msg) {
+  stopUniq();
+  uniq.key = null; // le serveur remet en file le job raté
+  uniq.state = 'idle';
+  uniq.progress = 0;
+  uniq.error = '';
+  uniq.want = true; // comme au premier clic : quand la version est prête (ou qu'elle échoue), on conclut tout seul
+  uniq.retrying = true;
+  if (msg) say(msg, 'Nouvelle préparation de ta version unique…');
+  prepUniq(m);
+}
+
+function onDownload(m, msg) {
+  const key = uniqKey(m);
+  if (uniq.key !== key) {
+    uniq.key = key;
+    uniq.state = 'idle';
+  }
+  if (['ready', 'disabled', 'skipped', 'error'].includes(uniq.state)) return uniqDownload(m, msg);
+  uniq.want = true;
+  say(msg, 'Préparation de ta version unique…');
+  if (uniq.state === 'idle') prepUniq(m);
+  else uniqTick(m);
+}
 
 async function openClip(id) {
+  const ticket = ++openTicket;
   clearTimeout(pendingTimer);
+  clearTimeout(refreshTimer);
+  stopUniq();
+  uniq.key = null;
+  let clip;
   try {
-    current = await api('GET', `/clips/${id}`);
+    clip = await api('GET', `/clips/${id}`);
   } catch (e) {
-    alert(e.message);
+    if (ticket === openTicket) alert(e.message);
     return;
   }
+  if (ticket !== openTicket) return; // une autre fiche a été demandée entre-temps
+  current = clip;
   renderDialog();
   if (!dialog.open) dialog.showModal();
   const q = new URLSearchParams(location.search);
@@ -252,13 +376,14 @@ function renderDialog() {
       msg);
     return;
   }
+  if (m.file_state === 'active') prepUniq(m); // pendant que la personne regarde, sa version se prépare
   $('dialog-body').replaceChildren(...[
     el('h2', { id: 'dialog-title' }, m.video_title || 'Clip'),
     el('p', { class: 'dialog-text' }, src),
     el('div', { class: 'dialog-player' }, player),
     el('div', { class: 'dialog-stats' }, el('span', {}, downloads(m)), el('span', {}, stars(m)), el('span', {}, dur(m.duration_s)), m.remix_of ? el('span', {}, 'Version modifiée d’un autre clip') : null),
     el('div', { class: 'lib-actions' },
-      m.file_state === 'active' ? el('a', { class: 'btn small', href: `/api/library/clips/${m.id}/file?use=download`, download: '', onclick: () => setTimeout(() => openClip(c.id), 1500) }, 'Télécharger') : null,
+      m.file_state === 'active' ? el('button', { class: 'btn small', type: 'button', onclick: () => onDownload(m, msg) }, 'Télécharger') : null,
       el('button', { class: 'btn secondary small', type: 'button', onclick: () => share(m, msg) }, 'Partager'),
       el('a', { class: 'btn secondary small', href: `/?v=${encodeURIComponent(m.youtube_id)}&clip=${m.id}` }, 'Modifier'),
       !c.mine && write ? el('button', { class: 'btn secondary small', type: 'button', onclick: () => act(msg, async () => { await api('POST', `/clips/${m.id}/repost`); say(msg, 'Ajouté à « Mes clips ».'); }) }, 'Republier') : null),
@@ -279,7 +404,10 @@ function renderDialog() {
 }
 
 dialog.addEventListener('close', () => {
+  openTicket++; // une ouverture encore en vol ne rouvre pas la fiche
   clearTimeout(pendingTimer);
+  clearTimeout(refreshTimer);
+  stopUniq();
   dialog.querySelector('video')?.pause();
   const q = new URLSearchParams(location.search);
   q.delete('clip');

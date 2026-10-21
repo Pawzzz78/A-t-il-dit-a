@@ -149,9 +149,11 @@ test('publication : fichier et affiche, liste publique sans empreinte, privé vi
   assert.equal(stored.rows[0].has_poster, true);
   assert.equal(stored.rows[0].req.framing, undefined);
   const anon = browser();
-  const list = await anon.call('GET', '/api/library');
+  // list filtrée sur la vidéo du test : d'autres clips publics (base de dev partagée) ne faussent pas les comptes
+  const list = await anon.call('GET', `/api/library?v=${YT}`);
   assert.equal(list.body.total, 1);
-  assert.equal(list.body.interviews[0].youtube_id, YT);
+  // « interviews » est un widget global (top clips) : on ne contrôle que la présence de la vidéo du test
+  assert.ok(list.body.interviews.some((i) => i.youtube_id === YT), 'l’interview du test est proposée');
   const raw = JSON.stringify(list.body);
   assert.ok(!raw.includes(stored.rows[0].owner_key) && !raw.includes('owner_key') && !raw.includes('127.0.0.1'));
   assert.equal(list.body.clips[0].mine, false);
@@ -160,7 +162,7 @@ test('publication : fichier et affiche, liste publique sans empreinte, privé vi
   assert.equal(poster.headers.get('content-type'), 'image/jpeg');
 
   assert.equal((await alice.call('PATCH', `/api/library/clips/${clip.id}`, { visibility: 'private' })).status, 200);
-  assert.equal((await anon.call('GET', '/api/library')).body.total, 0);
+  assert.equal((await anon.call('GET', `/api/library?v=${YT}`)).body.total, 0);
   assert.equal((await anon.call('GET', `/api/library/clips/${clip.id}`)).status, 404);
   assert.equal((await alice.call('GET', `/api/library/clips/${clip.id}`)).status, 200);
   const mine = await alice.call('GET', '/api/library/mine');
@@ -197,7 +199,7 @@ test('notes : pas sur son propre clip, une par personne, modifiable, classement 
   const r = await bob.call('PUT', `/api/library/clips/${a.id}/rating`, { stars: 5 });
   assert.deepEqual([r.body.rating, r.body.rating_count, r.body.my_rating], [5, 1, 5]);
   await alice.call('PUT', `/api/library/clips/${b.id}/rating`, { stars: 3 });
-  const top = await browser().call('GET', '/api/library?sort=rating');
+  const top = await browser().call('GET', `/api/library?sort=rating&v=${YT}`);
   assert.deepEqual(top.body.clips.map((c) => c.id), [a.id, b.id]);
   const cleared = await bob.call('DELETE', `/api/library/clips/${a.id}/rating`);
   assert.deepEqual([cleared.body.rating, cleared.body.rating_count], [null, 0]);
@@ -210,14 +212,14 @@ test('signalements : toujours 204, masquage automatique au-delà du seuil', { sk
   await renderAs(one); // pose un cookie de propriétaire
   assert.equal((await one.call('POST', `/api/library/clips/${clip.id}/report`, { reason: 'test' })).status, 204);
   assert.equal((await one.call('POST', `/api/library/clips/${clip.id}/report`, { reason: 'encore' })).status, 204);
-  assert.equal((await browser().call('GET', '/api/library')).body.total, 1, 'un même visiteur ne compte qu’une fois');
+  assert.equal((await browser().call('GET', `/api/library?v=${YT}`)).body.total, 1, 'un même visiteur ne compte qu’une fois');
   const sameNet = browser();
   await sameNet.call('POST', `/api/library/clips/${clip.id}/report`, {});
-  assert.equal((await browser().call('GET', '/api/library')).body.total, 1, 'un nouveau cookie sur la même connexion ne compte pas');
+  assert.equal((await browser().call('GET', `/api/library?v=${YT}`)).body.total, 1, 'un nouveau cookie sur la même connexion ne compte pas');
   const two = browser('10.0.0.2');
   assert.equal((await two.call('POST', `/api/library/clips/${'f'.repeat(24)}/report`, {})).status, 204);
   await two.call('POST', `/api/library/clips/${clip.id}/report`, {});
-  assert.equal((await browser().call('GET', '/api/library')).body.total, 0);
+  assert.equal((await browser().call('GET', `/api/library?v=${YT}`)).body.total, 0);
 });
 
 test('republication : dans « Mes clips » seulement, fichier de l’original, retirée avec lui', { skip: !enabled }, async () => {
@@ -228,7 +230,7 @@ test('republication : dans « Mes clips » seulement, fichier de l’original, r
   const rp = await bob.call('POST', `/api/library/clips/${clip.id}/repost`);
   assert.equal(rp.status, 201);
   assert.equal((await bob.call('POST', `/api/library/clips/${clip.id}/repost`)).body.id, rp.body.id);
-  assert.equal((await browser().call('GET', '/api/library')).body.total, 1);
+  assert.equal((await browser().call('GET', `/api/library?v=${YT}`)).body.total, 1);
   const mine = await bob.call('GET', '/api/library/mine');
   assert.equal(mine.body.clips[0].original.id, clip.id);
   assert.equal(mine.body.active, 0, 'une republication ne compte pas dans le plafond');
@@ -337,10 +339,10 @@ test('admin : vue d’ensemble, masquage d’un auteur, archivage, suppression',
   const row = o.body.clips.find((c) => c.id === clip.id);
   assert.ok(row && o.body.counts.clips >= 1 && o.body.disk.used > 0);
   await admin.call('PUT', `/api/admin/library/owners/${row.owner}`, { hidden: true });
-  assert.equal((await browser().call('GET', '/api/library')).body.total, 0);
+  assert.equal((await browser().call('GET', `/api/library?v=${YT}`)).body.total, 0);
   await admin.call('PUT', `/api/admin/library/owners/${row.owner}`, { hidden: false });
   await admin.call('PATCH', `/api/admin/library/clips/${clip.id}`, { hidden: true });
-  assert.equal((await browser().call('GET', '/api/library')).body.total, 0);
+  assert.equal((await browser().call('GET', `/api/library?v=${YT}`)).body.total, 0);
   await admin.call('DELETE', `/api/admin/library/clips/${clip.id}/file`);
   assert.equal((await alice.call('GET', `/api/library/clips/${clip.id}`)).body.file_state, 'archived');
   await admin.call('DELETE', `/api/admin/library/clips/${clip.id}`);

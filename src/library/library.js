@@ -13,6 +13,7 @@ import { framingForRequest } from '../studio/faces.js';
 import { ensureMusic } from '../studio/music.js';
 import { enqueueRender, normalizeRequest } from '../studio/render.js';
 import { visitorHash } from '../studio/stats.js';
+import { removeVariants, sweepVariants, variantsBytes } from './uniq.js';
 
 const run = promisify(execFile);
 const num = (v, d) => (Number.isFinite(Number(v)) && v !== '' && v != null ? Number(v) : d);
@@ -87,7 +88,7 @@ export async function usedBytes() {
 
 async function checkDisk(size) {
   const cfg = libraryConfig();
-  if ((await usedBytes()) + size > cfg.maxMb * 1024 * 1024) throw new HttpError(507, 'La bibliothèque est pleine pour le moment : réessaie dans quelques jours.');
+  if ((await usedBytes()) + (await variantsBytes()) + size > cfg.maxMb * 1024 * 1024) throw new HttpError(507, 'La bibliothèque est pleine pour le moment : réessaie dans quelques jours.');
   if ((await freeBytes()) - size < cfg.minFreeMb * 1024 * 1024) throw new HttpError(507, "Pas assez d'espace libre sur le serveur pour publier ce clip.");
 }
 
@@ -134,6 +135,9 @@ export async function publishFromJob({ job, owner, ip, visibility = 'public', re
   await fs.mkdir(libraryDir(), { recursive: true });
   // A hard link keeps the file when the hourly studio cleanup removes the render
   await fs.link(job.out, fileOf(id)).catch(() => fs.copyFile(job.out, fileOf(id)));
+  // le lien garde la date du rendu (jusqu'à 1 h) : sans ça l'épuration des orphelins peut le prendre avant l'INSERT
+  const now = new Date();
+  await fs.utimes(fileOf(id), now, now);
   const hasPoster = await makePoster(id, job.total);
   try {
     const { rows } = await pool.query(
@@ -158,6 +162,7 @@ export async function publishFromJob({ job, owner, ip, visibility = 'public', re
 async function removeFiles(id, { poster = true } = {}) {
   await fs.rm(fileOf(id), { force: true });
   if (poster) await fs.rm(posterOf(id), { force: true });
+  await removeVariants(id);
 }
 
 export async function listPublic({ sort = 'recent', youtube = null, limit = 24, offset = 0, owner = null } = {}) {
@@ -366,6 +371,7 @@ async function adoptRender(id, job) {
   }
   await fs.mkdir(libraryDir(), { recursive: true });
   await fs.rename(job.out, fileOf(id)).catch(() => fs.copyFile(job.out, fileOf(id)));
+  await removeVariants(id); // nouveau fichier canonique : les variantes, dérivées de l'ancien, sont invalidées
   const hasPoster = (await fs.stat(posterOf(id)).then(() => true, () => false)) || (await makePoster(id, job.total));
   const { rowCount } = await pool.query(
     `UPDATE library_clips SET file_state = 'active', file_version = file_version + 1, size_bytes = $2, has_poster = $3,
@@ -380,19 +386,27 @@ export async function libraryMaintenance(now = Date.now()) {
     "UPDATE library_clips SET file_state = 'archived', updated_at = now() WHERE file_state = 'active' AND file_expires_at < to_timestamp($1 / 1000.0) RETURNING id",
     [now],
   );
-  for (const r of expired) await fs.rm(fileOf(r.id), { force: true });
+  for (const r of expired) {
+    await fs.rm(fileOf(r.id), { force: true });
+    await removeVariants(r.id);
+  }
   await pool.query("UPDATE library_clips SET file_state = 'archived' WHERE file_state = 'pending' AND updated_at < to_timestamp($1 / 1000.0) - interval '30 minutes'", [now]);
   const names = await fs.readdir(libraryDir()).catch(() => []);
-  if (!names.length) return { expired: expired.length };
-  const { rows } = await pool.query('SELECT id, file_state FROM library_clips WHERE id = ANY($1)', [[...new Set(names.map((n) => n.split('.')[0]))]]);
-  const state = new Map(rows.map((r) => [r.id, r.file_state]));
-  for (const name of names) {
-    const [id, ext] = name.split('.');
-    const keep = ext === 'jpg' ? state.has(id) : state.get(id) === 'active' || state.get(id) === 'pending';
-    if (keep) continue;
-    const st = await fs.stat(path.join(libraryDir(), name)).catch(() => null);
-    if (st && now - st.mtimeMs > 3600_000) await fs.rm(path.join(libraryDir(), name), { force: true });
+  if (names.length) {
+    const { rows } = await pool.query('SELECT id, file_state FROM library_clips WHERE id = ANY($1)', [[...new Set(names.map((n) => n.split('.')[0]).filter((id) => /^[0-9a-f]{24}$/.test(id)))]]);
+    const state = new Map(rows.map((r) => [r.id, r.file_state]));
+    for (const name of names) {
+      const st = await fs.stat(path.join(libraryDir(), name)).catch(() => null);
+      if (!st?.isFile()) continue; // « variants » est un sous-dossier : son propre entretien (sweepVariants)
+      const [id, ext] = name.split('.');
+      const keep = ext === 'jpg' ? state.has(id) : state.get(id) === 'active' || state.get(id) === 'pending';
+      if (keep) continue;
+      if (now - st.mtimeMs > 3600_000) await fs.rm(path.join(libraryDir(), name), { force: true });
+    }
   }
+  // variantes gardées seulement pour les clips dont le fichier existe : un clip archivé ne garde pas d'empreintes
+  const { rows: active } = await pool.query("SELECT id FROM library_clips WHERE file_state = 'active'");
+  await sweepVariants(new Set(active.map((r) => r.id)));
   return { expired: expired.length };
 }
 
@@ -454,6 +468,7 @@ export async function adminArchive(id) {
   const { rows } = await pool.query("UPDATE library_clips SET file_state = 'archived', updated_at = now() WHERE id = $1 AND kind = 'clip' RETURNING id", [validId(id)]);
   if (!rows[0]) throw new HttpError(404, 'Clip introuvable.');
   await fs.rm(fileOf(rows[0].id), { force: true });
+  await removeVariants(rows[0].id);
 }
 
 export async function adminDelete(id) {
