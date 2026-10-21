@@ -384,6 +384,17 @@ Deuxième section du site, `/mur/` : un mur des meilleurs TikToks publiés avec 
   en texte brut.
 - Tables : `wall_clips`, `wall_hidden_authors` ; dernière actualisation dans `settings` (`wall_last_run`). Tests : `test/wall.test.js` (Apify simulé).
 
+### Modèles et écran de fin
+
+- **Modèles** : barre « Modèles » en haut de l'éditeur. « Enregistrer mes réglages » garde sous un nom le style des sous-titres, la musique et
+  les volumes, le format (fond flou ou plein écran, qualité, miroir, suivi du visage), les réglages de zoom et l'écran de fin ; pas les extraits,
+  les corrections ni les images, qui dépendent de l'interview. Jusqu'à 20 modèles, gardés **dans le navigateur** (`studio.models.v1`), rien sur
+  le serveur. Appliquer un modèle peut être annulé ; une police ou une musique disparue est ignorée.
+- **Écran de fin** (onglet « Créer », facultatif) : carte de 2 à 5 s (3 par défaut) ajoutée **après** le clip, hors limite de 90 s : fond bleu
+  `#032F67`, filets kaki `#A0A37E` (palette des visuels PostLisnard), message libre en capitales (120 caractères) et/ou la source de l'interview.
+  Fond uni généré par ffmpeg, texte dessiné par libass (Montserrat) ; la voix et la musique continuent jusqu'à la fin de la carte. Absente de
+  l'aperçu (un aperçu fixe est affiché dans l'onglet), présente dans la vidéo, la bibliothèque, « Modifier » et « Recréer ».
+
 ## Bibliothèque de clips
 
 Troisième section du site, `/bibliotheque/` : les clips créés dans le studio, partagés par la communauté.
