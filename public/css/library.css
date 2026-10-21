@@ -57,8 +57,10 @@
 .lib-choice span { font-size: .76rem; color: var(--color-muted); }
 .lib-choice:hover { border-color: var(--color-primary); }
 .lib-choice:focus-visible { outline: 3px solid var(--color-ring); outline-offset: 2px; }
-.lib-choice.primary { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
-.lib-choice.primary span { color: rgba(255, 255, 255, .82); }
+.lib-choice.dl { position: relative; padding-left: 2.9rem; background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+.lib-choice.dl span { color: rgba(255, 255, 255, .82); }
+.lib-choice.dl:hover { background: var(--color-primary-dark); }
+.lib-choice.dl svg { position: absolute; left: .95rem; top: 50%; width: 1.15rem; height: 1.15rem; margin-top: -.575rem; }
 .lib-share { justify-self: start; margin-top: .3rem; padding-left: 0; }
 .lib-sec .lib-actions { margin: 0; }
 .lib-sec .lib-report { margin: .4rem 0 0; }

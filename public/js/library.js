@@ -379,13 +379,23 @@ function renderDialog() {
   if (m.file_state === 'active') prepUniq(m); // pendant que la personne regarde, sa version se prépare
   const active = m.file_state === 'active';
   const section = (cls, title, hint, ...kids) => el('section', { class: `lib-sec ${cls}` }, el('h3', {}, title), hint ? el('p', { class: 'lib-sec-hint' }, hint) : null, ...kids);
-  const choice = (props, title, text, tag = 'button') => el(tag, { class: 'lib-choice', ...(tag === 'button' ? { type: 'button' } : {}), ...props }, el('strong', {}, title), el('span', {}, text));
+  // Download arrow: both options read as actions, not as a choice to tick
+  const arrow = () => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    for (const [k, v] of Object.entries({ d: 'M12 4v11M7 10l5 5 5-5M5 20h14', fill: 'none', stroke: 'currentColor', 'stroke-width': '2.4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) path.setAttribute(k, v);
+    svg.append(path);
+    return svg;
+  };
+  const choice = (props, title, text, tag = 'button') => el(tag, { class: 'lib-choice', ...(tag === 'button' ? { type: 'button' } : {}), ...props }, String(props.class ?? '').includes('dl') ? arrow() : null, el('strong', {}, title), el('span', {}, text));
   const getIt = active ? section('lib-sec-get', 'Récupérer la vidéo', null,
     m.end_card_s
       ? el('div', { class: 'lib-choices' },
-        choice({ class: 'lib-choice primary', onclick: () => onDownload(m, msg) }, 'Avec l’écran de fin', `${dur(m.duration_s)} · se termine sur la carte et la source`),
-        choice({ href: `/api/library/clips/${m.id}/file?use=download&end=0`, download: '', onclick: () => say(msg, 'Téléchargement sans l’écran de fin lancé.') }, 'Sans l’écran de fin', `${dur(m.duration_s - m.end_card_s)} · le clip seul`, 'a'))
-      : el('div', { class: 'lib-choices' }, choice({ class: 'lib-choice primary', onclick: () => onDownload(m, msg) }, 'Télécharger', `${dur(m.duration_s)} · la vidéo telle quelle, prête à publier`)),
+        choice({ class: 'lib-choice dl', onclick: () => onDownload(m, msg) }, 'Télécharger avec l’écran de fin', `${dur(m.duration_s)} · finit sur la carte et la source`),
+        choice({ class: 'lib-choice dl', href: `/api/library/clips/${m.id}/file?use=download&end=0`, download: '', onclick: () => say(msg, 'Téléchargement sans l’écran de fin lancé.') }, 'Télécharger sans l’écran de fin', `${dur(m.duration_s - m.end_card_s)} · le clip seul`, 'a'))
+      : el('div', { class: 'lib-choices' }, choice({ class: 'lib-choice dl', onclick: () => onDownload(m, msg) }, 'Télécharger', `${dur(m.duration_s)} · la vidéo telle quelle, prête à publier`)),
     el('button', { class: 'st-link lib-share', type: 'button', onclick: () => share(m, msg) }, 'Partager le lien de ce clip')) : null;
   const reuse = section('lib-sec-reuse', 'Le réutiliser', null,
     el('div', { class: 'lib-choices' },
