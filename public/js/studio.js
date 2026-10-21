@@ -1,6 +1,6 @@
 // Studio de clips : choix d'une interview, extraits (proposés par l'IA ou libres), sous-titres TikTok (style, police, couleurs,
 // contour, position, taille), musique, cadrage, puis création du MP4 sur le serveur. Aucun innerHTML : tout est posé en nœuds.
-import { BROLL, DESCRIPTION_MAX, LIMITS, PRESETS, SIMILARITY_WARNING, ZOOM, draftFromClip, fitDescription, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
+import { BROLL, DESCRIPTION_MAX, END_CARD, LIMITS, MODELS, PRESETS, SIMILARITY_WARNING, ZOOM, draftFromClip, endCardContent, endCardSettings, fitDescription, modelFromState, parseModels, sanitizeModel, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
 import { createPhone, el, outlineShadow, rgba } from './studio-preview.js';
 import { fmtDate } from './ui.js';
 
@@ -8,6 +8,7 @@ const root = document.getElementById('studio');
 const params = new URLSearchParams(location.search);
 const SWATCHES = [['#FFFFFF', 'Blanc'], ['#FFE600', 'Jaune'], ['#25F4EE', 'Cyan'], ['#FE2C55', 'Rose'], ['#7CFF6B', 'Vert'], ['#FF9500', 'Orange'], ['#000000', 'Noir']];
 const PREF_KEY = 'studio.prefs.v1';
+const MODELS_KEY = 'studio.models.v1';
 
 // Native replaceChildren would print null/false children as text
 const put = (node, ...kids) => node.replaceChildren(...kids.flat(Infinity).filter(Boolean));
@@ -160,7 +161,7 @@ const savePrefs = (S) => {
     clearTimeout(prefsTimer);
     prefsTimer = 0;
     try {
-      localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror }, step: S.step, zoom: { strength: S.zoom.strength, focus: S.zoom.focus } }));
+      localStorage.setItem(PREF_KEY, JSON.stringify({ style: S.style, music: S.music, voice: S.voice, layout: { fit: S.layout.fit, quality: S.layout.quality, mirror: S.layout.mirror }, step: S.step, zoom: { strength: S.zoom.strength, focus: S.zoom.focus }, endCard: S.endCard }));
       S.onSaved?.();
     } catch {
       // stockage indisponible : sans importance
@@ -230,6 +231,7 @@ async function openEditor(youtubeId) {
     stock: { q: '', photos: [], page: 0, next: false, busy: false, error: '' },
     ticket: 0,
     edits: new Map(), // corrections de texte : début de la ligne (ms) -> { orig, text }
+    endCard: endCardSettings(prefs.endCard),
   };
   // corrections gardées dans le navigateur (un rechargement ne les perd pas) ; ignorées si la transcription a changé depuis
   const editsKey = `studio.edits.${S.video.youtube_id}`;
@@ -263,6 +265,7 @@ async function openEditor(youtubeId) {
           layout: { fit: S.layout.fit, cropX: S.layout.cropX, quality: S.layout.quality, mirror: S.layout.mirror, follow: { on: S.layout.follow.on, subject: S.layout.follow.subject } },
           zoom: { on: S.zoom.on, auto: S.zoom.auto, strength: S.zoom.strength, focus: S.zoom.focus, events: S.zoom.events },
           broll: S.broll,
+          endCard: S.endCard,
         }));
       }
     } catch {
@@ -313,6 +316,7 @@ async function openEditor(youtubeId) {
     S.zoom = { ...S.zoom, ...sanitizeZoom(d.zoom, total), on: d.zoom?.on === true, auto: d.zoom?.auto !== false };
     S.broll = (Array.isArray(d.broll) ? d.broll : []).filter((b) => typeof b?.id === 'string' && Number.isFinite(b.start) && Number.isFinite(b.dur) && typeof b.thumb === 'string').slice(0, BROLL.maxItems)
       .map((b) => ({ id: b.id, start: b.start, dur: b.dur, thumb: b.thumb, photographer: b.photographer, page: b.page, alt: b.alt }));
+    if (d.endCard) S.endCard = endCardSettings(d.endCard);
     S.jobId = typeof d.jobId === 'string' ? d.jobId : null;
     S.delivered = d.delivered === true;
     S.remixOf = typeof d.remixOf === 'string' && /^[0-9a-f]{24}$/.test(d.remixOf) ? d.remixOf : null;
@@ -1006,6 +1010,7 @@ async function openEditor(youtubeId) {
       el('li', {}, el('strong', {}, 'Musique : '), track ? track.title : 'aucune'),
       editedInClip() ? el('li', {}, el('strong', {}, 'Texte : '), `${editedInClip()} ligne${editedInClip() > 1 ? 's' : ''} de sous-titres corrigée${editedInClip() > 1 ? 's' : ''}`) : null,
       (S.zoom.on && zoomsIn) || S.broll.length ? el('li', {}, el('strong', {}, 'Images & zooms : '), [S.zoom.on && zoomsIn ? `${zoomsIn} zoom${zoomsIn > 1 ? 's' : ''}` : '', S.broll.length ? `${S.broll.length} image${S.broll.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(', ')) : null,
+      S.endCard.on ? el('li', {}, el('strong', {}, 'Écran de fin : '), `${S.endCard.dur} s`) : null,
       el('li', {}, el('strong', {}, 'Format : '), `${S.layout.fit === 'blur' ? 'vidéo entière sur fond flou' : following() ? 'plein écran, suit le visage' : 'plein écran'}${S.layout.mirror ? ', en miroir' : ''}`)));
     const busy = jobActive();
     makeBtn.disabled = !S.extracts.length || !pledge.checked || busy;
@@ -1014,12 +1019,53 @@ async function openEditor(youtubeId) {
   const quality = (value, title, text) => el('label', { class: S.layout.quality === value ? 'st-opt on' : 'st-opt' },
     el('input', { type: 'radio', name: 'quality', value, 'data-k': `q:${value}`, checked: S.layout.quality === value, onchange: () => { S.layout.quality = value; savePrefs(S); renderCreate(); } }),
     el('strong', {}, title), el('small', {}, text));
+  const endCardChanged = () => {
+    savePrefs(S);
+    scheduleDraft();
+    renderCreate();
+  };
+  function endCardBox() {
+    const c = S.endCard;
+    const content = c.on ? endCardContent(c, sourceText(S.video.title, S.video.published_at)) : null;
+    const text = el('input', { type: 'text', maxlength: String(END_CARD.maxText), value: c.text, 'data-k': 'ec:text', placeholder: 'Ex. : Partage si tu es d’accord !', 'aria-describedby': 'st-ec-count' });
+    const count = el('small', { id: 'st-ec-count', class: 'st-help inline' }, `${c.text.length} / ${END_CARD.maxText}`);
+    text.addEventListener('input', () => {
+      S.endCard.text = text.value.slice(0, END_CARD.maxText);
+      count.textContent = `${S.endCard.text.length} / ${END_CARD.maxText}`;
+      savePrefs(S);
+      scheduleDraft();
+      renderEndCardPreview();
+    });
+    text.addEventListener('change', endCardChanged);
+    const card = el('div', { class: 'st-endcard', 'aria-hidden': 'true' });
+    function renderEndCardPreview() {
+      const now = S.endCard.on ? endCardContent(S.endCard, sourceText(S.video.title, S.video.published_at)) : null;
+      put(card, now?.title ? [el('span', { class: 'st-ec-rule' }), el('strong', { class: now.small ? 'small' : '' }, now.small ? now.title : now.title.toLocaleUpperCase('fr-FR')), now.foot ? el('span', { class: 'st-ec-foot' }, now.foot) : null] : []);
+      card.hidden = !now?.title;
+    }
+    renderEndCardPreview();
+    return el('div', { class: 'st-ec' },
+      el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: c.on, 'data-k': 'ec:on', onchange: (e) => { S.endCard.on = e.target.checked; endCardChanged(); } }), 'Ajouter un écran de fin à la vidéo'),
+      c.on ? [
+        el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: c.source, 'data-k': 'ec:src', onchange: (e) => { S.endCard.source = e.target.checked; endCardChanged(); } }), 'Citer la source (interview et date)'),
+        el('label', { class: 'st-field' }, 'Ton message (facultatif)', text, count),
+        el('div', { class: 'st-ec-dur', role: 'group', 'aria-label': 'Durée de l’écran de fin' },
+          el('span', {}, 'Durée'),
+          [2, 3, 4, 5].map((n) => el('button', { type: 'button', class: 'btn small secondary', 'data-k': `ec:d${n}`, 'aria-pressed': String(c.dur === n), onclick: () => { S.endCard.dur = n; endCardChanged(); } }, `${n} s`))),
+        !content?.title ? el('p', { class: 'st-help warn' }, 'Coche la source ou écris un message : sinon il n’y aura pas d’écran de fin.') : null,
+        card,
+        el('p', { class: 'st-help' }, 'L’écran de fin s’ajoute après ton clip, en plus de sa durée. Il apparaît dans la vidéo créée, pas dans l’aperçu.'),
+      ] : null);
+  }
+
   function renderCreate() {
     putKeep(panelCreate,
       el('h3', {}, 'Ton clip'), createSummary,
       el('h3', {}, 'Description à copier-coller'),
       captionHelp,
       sourceBox,
+      el('h3', {}, 'Écran de fin'),
+      endCardBox(),
       el('h3', {}, 'Qualité'),
       el('div', { class: 'st-opts' }, quality('hd', 'HD 1080 × 1920', 'Meilleure qualité, un peu plus long à créer'), quality('fast', 'Rapide 720 × 1280', 'Création plus rapide, fichier plus léger')),
       el('label', { class: 'st-check pledge' }, pledge, 'Je m’engage à ne pas déformer le sens des propos de cette interview, y compris dans les sous-titres que j’ai corrigés.'),
@@ -1312,6 +1358,7 @@ async function openEditor(youtubeId) {
         zoom: S.zoom.on && S.zoom.events.length ? { strength: S.zoom.strength, focus: S.zoom.focus, events: S.zoom.events } : null,
         broll: S.broll.map(({ id, start, dur }) => ({ id, start, dur })),
         edits: Object.fromEntries(clipLines().filter((r) => S.edits.has(r.line.start_ms)).map((r) => [r.line.start_ms, S.edits.get(r.line.start_ms).text])),
+        end_card: S.endCard.on ? S.endCard : null,
       }));
       showJob();
       poll();
@@ -1599,7 +1646,102 @@ async function openEditor(youtubeId) {
     openTab(tabIds[tabIds.indexOf(root.dataset.tab) + 1], true);
     tabBar.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   });
-  stage.append(tabBar, ...tabs.map(([, , p]) => p), nextBar);
+  const modelsBar = el('div', { class: 'st-models' });
+  let undoModel = null;
+  const readModels = () => {
+    try {
+      return parseModels(localStorage.getItem(MODELS_KEY));
+    } catch {
+      return [];
+    }
+  };
+  const writeModels = (list) => {
+    try {
+      localStorage.setItem(MODELS_KEY, JSON.stringify(list));
+      return true;
+    } catch {
+      toast('Impossible d’enregistrer : le stockage du navigateur est indisponible.', true);
+      return false;
+    }
+  };
+  const modelContext = () => ({ fontIds, musicIds: assets.music.map((m) => m.id), framingReady: S.framing.ready, identified: S.framing.identified });
+  function applySettings(m) {
+    S.style = m.style;
+    S.music = { id: m.music.id, volume: m.music.volume };
+    S.voice = m.voice;
+    S.layout = { ...S.layout, fit: m.layout.fit, quality: m.layout.quality, mirror: m.layout.mirror, follow: { ...m.layout.follow } };
+    S.zoom = { ...S.zoom, on: m.zoom.on && S.zoom.events.length > 0 ? true : m.zoom.on, auto: m.zoom.auto, strength: m.zoom.strength, focus: m.zoom.focus };
+    S.endCard = { ...m.endCard };
+    if (S.zoom.on && !S.zoom.events.length && S.extracts.length) autoZoom();
+    renderPresets();
+    renderFonts();
+    syncStyleControls();
+    rebuildSubtitles();
+    renderMusic();
+    applyAudio();
+    renderFrame();
+    pushFraming();
+    renderEffects();
+    pushFx();
+    renderCreate();
+    savePrefs(S);
+    scheduleDraft();
+    requestPreview();
+  }
+  function applyModel(model) {
+    undoModel = sanitizeModel(modelFromState(S), modelContext());
+    applySettings(sanitizeModel(model.settings, modelContext()));
+    renderModels();
+    toast(`Modèle « ${model.name} » appliqué.`);
+  }
+  function saveModel() {
+    const list = readModels();
+    const name = (prompt('Nom du modèle (ex. « Débat punchy ») :') ?? '').trim().slice(0, MODELS.nameMax);
+    if (!name) return;
+    const same = list.find((m) => m.name.toLowerCase() === name.toLowerCase());
+    if (!same && list.length >= MODELS.max) return toast(`${MODELS.max} modèles au maximum : supprimes-en un d’abord.`, true);
+    if (same && !confirm(`Remplacer le modèle « ${same.name} » ?`)) return;
+    const entry = { id: same?.id ?? `m${Date.now().toString(36)}`, name, settings: modelFromState(S) };
+    if (writeModels([...list.filter((m) => m.id !== entry.id), entry])) {
+      toast(`Modèle « ${name} » enregistré.`);
+      renderModels(entry.id);
+    }
+  }
+  function renameModel(model) {
+    const name = (prompt('Nouveau nom :', model.name) ?? '').trim().slice(0, MODELS.nameMax);
+    if (!name) return;
+    if (writeModels(readModels().map((m) => (m.id === model.id ? { ...m, name } : m)))) renderModels(model.id);
+  }
+  function deleteModel(model) {
+    if (!confirm(`Supprimer le modèle « ${model.name} » ?`)) return;
+    if (writeModels(readModels().filter((m) => m.id !== model.id))) renderModels();
+  }
+  function renderModels(selected = '') {
+    const list = readModels();
+    const pick = el('select', { 'aria-label': 'Choisir un modèle', 'data-k': 'models' },
+      el('option', { value: '' }, list.length ? 'Mes modèles…' : 'Aucun modèle enregistré'),
+      list.map((m) => el('option', { value: m.id, selected: m.id === selected }, m.name)));
+    const current = () => list.find((m) => m.id === pick.value);
+    const tools = el('span', { class: 'st-models-tools' });
+    const sync = () => put(tools, current() ? [
+      el('button', { type: 'button', class: 'btn small', onclick: () => applyModel(current()) }, 'Appliquer'),
+      el('button', { type: 'button', class: 'st-link', onclick: () => renameModel(current()) }, 'Renommer'),
+      el('button', { type: 'button', class: 'st-link', onclick: () => deleteModel(current()) }, 'Supprimer'),
+    ] : []);
+    pick.addEventListener('change', sync);
+    sync();
+    putKeep(modelsBar,
+      el('span', { class: 'st-models-label' }, 'Modèles'),
+      list.length ? pick : null,
+      tools,
+      el('button', { type: 'button', class: 'btn small secondary', onclick: saveModel }, 'Enregistrer mes réglages'),
+      undoModel ? el('button', { type: 'button', class: 'st-link', onclick: () => { const back = undoModel; undoModel = null; applySettings(back); renderModels(); toast('Réglages précédents rétablis.'); } }, 'Annuler le modèle') : null,
+      el('span', { class: 'st-help inline st-models-hint' }, 'Style, musique, format, zooms et écran de fin, gardés dans ce navigateur.'),
+    );
+  }
+
+  stage.append(modelsBar, tabBar, ...tabs.map(([, , p]) => p), nextBar);
+  renderModels();
 
   // « ← Autres interviews » et le titre vont dans l'en-tête bleu : un titre long sur deux ou trois lignes (téléphone) ne déborde plus
   // en blanc sur le fond clair

@@ -325,3 +325,22 @@
 
 .st-lib { margin: .6rem 0; }
 .st-lib:empty { display: none; }
+
+.st-models { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .6rem; padding: 0 0 .8rem; margin-bottom: .6rem; border-bottom: 1px dashed var(--color-border); }
+.st-models-label { font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--color-primary); }
+.st-models select { font: inherit; font-size: .85rem; min-height: 44px; padding: .4rem .8rem; border: 1px solid var(--color-border); border-radius: var(--radius-pill); background: #fff; color: var(--color-primary); max-width: 14rem; }
+.st-models-tools { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
+.st-models-tools:empty { display: none; }
+.st-models-hint { flex-basis: 100%; font-size: .75rem; }
+.st-ec { display: grid; gap: .5rem; margin-bottom: .6rem; }
+.st-ec .st-field { display: grid; gap: .3rem; font-size: .85rem; font-weight: 700; color: var(--color-primary); }
+.st-ec input[type="text"] { font: inherit; min-height: 44px; padding: .5rem .7rem; border: 1px solid var(--color-border); border-radius: 8px; }
+.st-ec-dur { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; font-size: .85rem; font-weight: 700; color: var(--color-primary); }
+.st-ec-dur [aria-pressed="true"] { background: var(--color-primary); color: #fff; }
+/* Mirrors the rendered card: navy background, khaki rules, title under the top rule, source at the bottom */
+.st-endcard { position: relative; width: 9rem; aspect-ratio: 9 / 16; padding: 0 .9rem; border-radius: 8px; background: #032F67; color: #fff; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-start; padding-top: 34%; font-family: 'ST-montserrat', Montserrat, sans-serif; }
+.st-endcard[hidden] { display: none; }
+.st-endcard strong { font-weight: 800; font-size: .82rem; line-height: 1.15; overflow-wrap: anywhere; }
+.st-endcard strong.small { font-size: .55rem; font-weight: 700; }
+.st-ec-rule { position: absolute; top: 29%; left: .9rem; width: 1.4rem; height: .1rem; background: #A0A37E; }
+.st-ec-foot { position: absolute; left: .9rem; right: .9rem; bottom: 12%; font-size: .38rem; opacity: .85; border-top: .1rem solid #A0A37E; padding-top: .3rem; }
