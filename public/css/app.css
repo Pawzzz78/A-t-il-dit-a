@@ -95,6 +95,13 @@ mark { background: var(--color-highlight); color: var(--ne-blue-dark); font-weig
 .site-footer { background: var(--color-primary-dark); color: #fff; padding: 2rem 0; font-size: .85rem; }
 .site-footer .wrap { display: flex; gap: 1.5rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .site-footer .footer-brand { display: inline-block; }
+.site-footer .footer-id { display: inline-flex; align-items: center; gap: .9rem; }
+/* The logo's navy lettering needs a light chip on the navy footer */
+.site-footer .footer-logo { display: block; height: 3.4rem; width: auto; padding: .3rem .4rem; border-radius: 10px; background: #fff; }
+.footer-partner { padding: 0 0 1.6rem; margin-bottom: 1.6rem; border-bottom: 1px solid rgba(255, 255, 255, .15); }
+.footer-partner .wrap { justify-content: center; gap: .8rem 1.6rem; }
+.footer-partner-label { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: var(--tracking-caps); color: var(--ne-chamois); }
+.footer-partner img { display: block; height: 9rem; width: auto; }
 .site-footer .wordmark { font-size: 1.6rem; }
 .site-footer .wordmark .wm-a { color: #fff; }
 .site-footer .wordmark .wm-b { color: var(--ne-chamois); }
