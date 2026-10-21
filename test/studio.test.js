@@ -851,6 +851,9 @@ test('écran de fin dessiné dans le navigateur : image validée, ajoutée telle
   assert.equal(up.status, 200, JSON.stringify(up.body));
   assert.match(up.body.id, /^[0-9a-f]{40}$/);
   assert.equal((await send(await fs.readFile(jpg))).body.id, up.body.id, 'même image, même identifiant');
+  await fs.rm(path.join(process.env.STORAGE_DIR, 'cards', `${up.body.id}.jpg`));
+  const twice = await Promise.all([send(await fs.readFile(jpg)), send(await fs.readFile(jpg))]);
+  assert.deepEqual(twice.map((r) => r.status), [200, 200], 'deux envois simultanés du même visuel réussissent');
   const missing = await api('POST', '/api/studio/render', { ...REQ(), music: null, end_card: { on: true, source: false, image: 'a'.repeat(40), dur: 2 } });
   assert.equal(missing.status, 409);
   const card = { on: true, source: false, image: up.body.id, dur: 2, design: { template: 'stat', values: { number: '42 %', evil: 'x' } } };

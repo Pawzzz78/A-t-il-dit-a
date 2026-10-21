@@ -123,7 +123,7 @@ libraryRouter.get(
     res.on('close', () => addBytes(req.ip, Math.max(0, socket.bytesWritten - before)));
     const download = req.query.use === 'download';
     const noEnd = req.query.end === '0';
-    let target = noEnd ? await withoutEndCard(row) : file;
+    let target = noEnd ? await withoutEndCard(row, req.ip) : file;
     if (!target) throw new HttpError(404, "Ce clip n'a pas d'écran de fin.");
     if (download && noEnd) await countDownload(row, { owner: req.owner?.key, ip: req.ip });
     else if (download) {

@@ -373,8 +373,9 @@ const probeImage = (file) =>
 // Named after its content hash, so the same visual is stored once
 export async function saveCard(buffer, ip = 'local') {
   if (!Buffer.isBuffer(buffer) || buffer.length < 1000 || buffer[0] !== 0xff || buffer[1] !== 0xd8) throw new HttpError(400, 'Visuel de fin illisible : il doit être une image JPEG.');
-  if (!take('card', ip, 120)) throw new HttpError(429, 'Trop de visuels envoyés pour le moment : réessaie dans quelques minutes.');
+  if (!take('card', ip, 40)) throw new HttpError(429, 'Trop de visuels envoyés pour le moment : réessaie dans quelques minutes.');
   await ensureDirs();
+  if ((await dirBytes(dirs().cards)) > CARDS_MAX_BYTES) throw new HttpError(503, 'Le studio est très sollicité : réessaie dans quelques minutes.');
   const id = crypto.createHash('sha1').update(buffer).digest('hex');
   const file = cardFile(id);
   if (await fs.stat(file).then(() => true, () => false)) {
@@ -382,15 +383,27 @@ export async function saveCard(buffer, ip = 'local') {
     await fs.utimes(file, now, now).catch(() => {});
     return id;
   }
-  const tmp = `${file}.tmp.jpg`;
+  const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp.jpg`;
   await fs.writeFile(tmp, buffer);
-  const st = await probeImage(tmp);
+  while (probesRunning >= 2) await new Promise((r) => setTimeout(r, 50));
+  probesRunning++;
+  const st = await probeImage(tmp).finally(() => probesRunning--);
   if (!st || st.codec_name !== 'mjpeg' || !(st.width >= 270 && st.width <= 4096 && st.height >= 480 && st.height <= 4096)) {
     await fs.rm(tmp, { force: true });
+    // A concurrent upload of the same bytes may have stored it meanwhile
+    if (await fs.stat(file).then(() => true, () => false)) return id;
     throw new HttpError(400, 'Visuel de fin illisible : envoie une image JPEG verticale.');
   }
   await fs.rename(tmp, file);
   return id;
+}
+
+const CARDS_MAX_BYTES = 300 * 1024 * 1024;
+let probesRunning = 0;
+async function dirBytes(dir) {
+  let total = 0;
+  for (const name of await fs.readdir(dir).catch(() => [])) total += (await fs.stat(path.join(dir, name)).catch(() => null))?.size ?? 0;
+  return total;
 }
 
 // --- aperçu -------------------------------------------------------------------------------------------
@@ -496,10 +509,14 @@ export async function enqueueRender({ video, req, lines, ip: rawIp = 'local', ow
   const mine = [...jobs.values()].filter((j) => j.ip === ip && (j.status === 'queued' || j.status === 'running')).length;
   if (mine >= cfg.perIpActive) throw new HttpError(429, 'Tu as déjà des clips en cours de création : attends qu’ils soient prêts.');
   if (queue.length >= cfg.maxQueue) throw new HttpError(503, 'Le studio est très sollicité : réessaie dans quelques minutes.');
-  if (req.end_card?.image && !(await fs.stat(cardFile(req.end_card.image)).then(() => true, () => false))) throw new HttpError(409, 'Le visuel de fin a expiré : crée la vidéo à nouveau.');
   if (!take('render', ip, cfg.rendersPerHour)) throw new HttpError(429, `Limite atteinte : ${cfg.rendersPerHour} clips par heure. Réessaie plus tard.`);
   await ensureDirs();
   const id = crypto.randomBytes(12).toString('hex');
+  // The job keeps its own copy of the card: cleanup protects job files, not the shared upload
+  const card = req.end_card?.image ? path.join(dirs().renders, `${id}.card.jpg`) : null;
+  if (card) await fs.copyFile(cardFile(req.end_card.image), card).catch(() => {
+    throw new HttpError(409, 'Le visuel de fin a expiré : crée la vidéo à nouveau.');
+  });
   const job = {
     id,
     ip,
@@ -515,6 +532,7 @@ export async function enqueueRender({ video, req, lines, ip: rawIp = 'local', ow
     assPath: path.join(dirs().renders, `${id}.ass`),
     file: videoFilePath(video.file_name),
     hasAudio: video.file_has_audio,
+    card,
     req,
     lines,
     createdAt: Date.now(),
@@ -544,12 +562,14 @@ async function runJob(job) {
     const images = {};
     for (const b of job.req.broll) images[b.id] = await ensureImage(b.id, 'full', { ip: job.ip });
     if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true });
+    if (job.card) images.__card = job.card;
     const args = buildFfmpegArgs({ file: job.file, req: job.req, hasAudio: job.hasAudio, assPath: job.assPath, out: job.out, kind: 'final', images });
     const run = runFfmpeg(args, job.total, { onProgress: (p) => (job.progress = p), timeoutMs: config().timeoutMs });
     job.cancel = run.cancel;
     await run.promise;
     if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true }); // cancelled just after ffmpeg ended
     job.size = (await fs.stat(job.out)).size;
+    if (job.card) await fs.utimes(job.card, new Date(), new Date()).catch(() => {}); // kept as long as the finished clip
     job.status = 'done';
     job.progress = 1;
   } catch (e) {

@@ -86,7 +86,9 @@ async function freeBytes() {
 
 export async function usedBytes() {
   const { rows } = await pool.query("SELECT COALESCE(sum(size_bytes), 0)::bigint AS n FROM library_clips WHERE file_state = 'active'");
-  return Number(rows[0].n);
+  let cuts = 0;
+  for (const name of await fs.readdir(libraryDir()).catch(() => [])) if (name.endsWith('.noend.mp4')) cuts += (await fs.stat(path.join(libraryDir(), name)).catch(() => null))?.size ?? 0;
+  return Number(rows[0].n) + cuts;
 }
 
 async function checkDisk(size) {
@@ -143,7 +145,13 @@ export async function publishFromJob({ job, owner, ip, visibility = 'public', re
   await fs.utimes(fileOf(id), now, now);
   const hasPoster = await makePoster(id, job.total);
   // The end card visual stays with the clip so « Recréer » and « Modifier » can reuse it
-  if (job.req.end_card?.image) await fs.copyFile(cardFile(job.req.end_card.image), cardOf(id)).catch(() => {});
+  if (job.req.end_card?.image) {
+    await fs.copyFile(job.card ?? cardFile(job.req.end_card.image), cardOf(id)).catch(async (e) => {
+      await removeFiles(id);
+      console.error(`Bibliothèque ${id} : visuel de fin introuvable (${e.message})`);
+      throw new HttpError(409, 'Ce clip a expiré : crée-le à nouveau pour le publier.');
+    });
+  }
   try {
     const { rows } = await pool.query(
       `INSERT INTO library_clips (id, owner_key, kind, remix_of, video_id, youtube_id, video_title, job_id, visibility, req, duration_s, quality,
@@ -233,7 +241,7 @@ const endCardSeconds = (r) => Number(r.req?.end_card?.dur) || 0;
 
 const cutting = new Map();
 // Copy of the clip without its end card, cut without re-encoding and kept next to it (rebuilt when the clip is re-created)
-export async function withoutEndCard(row) {
+export async function withoutEndCard(row, ip = '') {
   const file = clipFile(row);
   const keep = Number(row.duration_s) - endCardSeconds(row);
   if (!file || !endCardSeconds(row) || !(keep > 0)) return null;
@@ -241,6 +249,8 @@ export async function withoutEndCard(row) {
   const [src, done] = await Promise.all([fs.stat(file).catch(() => null), fs.stat(out).catch(() => null)]);
   if (src && done && done.mtimeMs >= src.mtimeMs) return out;
   if (!cutting.has(row.id)) {
+    if (!limiter.take(`cut:${ipKey(ip)}`, 30)) throw new HttpError(429, 'Trop de demandes pour le moment : réessaie dans une heure.');
+    await checkDisk(Number(row.size_bytes) || 0);
     const tmp = `${out}.tmp.mp4`;
     cutting.set(row.id, run('ffmpeg', ['-v', 'error', '-y', '-i', file, '-t', String(keep), '-map', '0', '-c', 'copy', '-movflags', '+faststart', tmp], { timeout: 60_000 })
       .then(() => fs.rename(tmp, out))

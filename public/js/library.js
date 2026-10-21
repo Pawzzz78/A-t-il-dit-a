@@ -349,6 +349,28 @@ function pollPending(id) {
   }, 2500);
 }
 
+// Fetched first so a refusal (archived, hourly limit) is shown instead of saving an error page as a video
+async function downloadWithoutEnd(m, msg, btn) {
+  btn.disabled = true;
+  say(msg, 'Préparation de la version sans l’écran de fin…');
+  try {
+    const res = await fetch(`/api/library/clips/${m.id}/file?use=download&end=0`);
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Erreur ${res.status}`);
+    const name = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') ?? '')?.[1] ?? 'studio-lisnard-sans-fin.mp4';
+    const url = URL.createObjectURL(await res.blob());
+    const a = el('a', { href: url, download: name });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    say(msg, 'Téléchargement sans l’écran de fin lancé.');
+  } catch (e) {
+    say(msg, e.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function renderDialog() {
   const c = current;
   const m = media(c);
@@ -394,7 +416,7 @@ function renderDialog() {
     m.end_card_s
       ? el('div', { class: 'lib-choices' },
         choice({ class: 'lib-choice dl', onclick: () => onDownload(m, msg) }, 'Télécharger avec l’écran de fin', `${dur(m.duration_s)} · finit sur la carte et la source`),
-        choice({ class: 'lib-choice dl', href: `/api/library/clips/${m.id}/file?use=download&end=0`, download: '', onclick: () => say(msg, 'Téléchargement sans l’écran de fin lancé.') }, 'Télécharger sans l’écran de fin', `${dur(m.duration_s - m.end_card_s)} · le clip seul`, 'a'))
+        choice({ class: 'lib-choice dl', onclick: (e) => downloadWithoutEnd(m, msg, e.currentTarget) }, 'Télécharger sans l’écran de fin', `${dur(m.duration_s - m.end_card_s)} · le clip seul`))
       : el('div', { class: 'lib-choices' }, choice({ class: 'lib-choice dl', onclick: () => onDownload(m, msg) }, 'Télécharger', `${dur(m.duration_s)} · la vidéo telle quelle, prête à publier`)),
     el('button', { class: 'st-link lib-share', type: 'button', onclick: () => share(m, msg) }, 'Partager le lien de ce clip')) : null;
   const reuse = section('lib-sec-reuse', 'Le réutiliser', null,

@@ -1044,8 +1044,8 @@ async function openEditor(youtubeId) {
     clearTimeout(ec.timer);
     ec.timer = setTimeout(drawEc, 120);
   };
-  const ecChanged = (rerender = true) => {
-    S.endCard.dirty = true;
+  const ecChanged = (rerender = true, design = false) => {
+    if (design) S.endCard.dirty = true;
     savePrefs(S);
     scheduleDraft();
     renderCreateSummary();
@@ -1054,7 +1054,7 @@ async function openEditor(youtubeId) {
   };
   const setDesign = (patch, rerender = true) => {
     S.endCard.design = { ...S.endCard.design, ...patch };
-    ecChanged(rerender);
+    ecChanged(rerender, true);
   };
   async function pickPhoto(file) {
     if (!file) return;
@@ -1064,7 +1064,7 @@ async function openEditor(youtubeId) {
     ec.photoUrl = URL.createObjectURL(file);
     ec.photo = await loadImage(ec.photoUrl).catch(() => null);
     if (!ec.photo) return toast('Cette image n’a pas pu être lue.', true);
-    ecChanged();
+    ecChanged(true, true);
   }
   async function endCardPayload() {
     if (!S.endCard.on) return null;
@@ -1113,7 +1113,7 @@ async function openEditor(youtubeId) {
           el('p', { class: 'st-ec-label' }, 'Photo'),
           el('div', { class: 'st-ec-photo' },
             el('label', { class: 'btn small secondary st-ec-upload' }, ec.photo ? 'Changer la photo' : 'Ajouter une photo', photoInput),
-            ec.photo ? el('button', { type: 'button', class: 'st-link', onclick: () => { URL.revokeObjectURL(ec.photoUrl); ec.photo = null; ec.photoUrl = ''; ecChanged(); } }, 'Retirer') : null,
+            ec.photo ? el('button', { type: 'button', class: 'st-link', onclick: () => { URL.revokeObjectURL(ec.photoUrl); ec.photo = null; ec.photoUrl = ''; ecChanged(true, true); } }, 'Retirer') : null,
             !t.photo ? el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: d.photoBg, 'data-k': 'ec:pbg', onchange: (e) => setDesign({ photoBg: e.target.checked }) }), 'En fond, assombrie') : null),
           wantsPhoto && !ec.photo ? el('p', { class: 'st-help' }, 'Ce modèle utilise ta photo (JPG, PNG ou WebP). Elle n’est pas gardée si tu recharges la page.') : null,
           el('p', { class: 'st-ec-label' }, 'Options'),
@@ -1764,7 +1764,7 @@ async function openEditor(youtubeId) {
     requestPreview();
   }
   function applyModel(model) {
-    undoModel = sanitizeModel(modelFromState(S), modelContext());
+    undoModel = { ...sanitizeModel(modelFromState(S), modelContext()), endCard: { ...S.endCard } };
     applySettings(sanitizeModel(model.settings, modelContext()));
     renderModels();
     toast(`Modèle « ${model.name} » appliqué.`);
