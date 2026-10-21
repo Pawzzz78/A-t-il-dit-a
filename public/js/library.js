@@ -144,15 +144,25 @@ async function forgetMe() {
 const dialog = $('dialog');
 let current = null;
 let pendingTimer = 0;
+let refreshTimer = 0; // rafraîchissement des compteurs après un téléchargement : annulé si la fiche change
+let openTicket = 0; // seule la dernière ouverture demandée s'affiche
 
 // Version unique du clip pour la personne qui l'ouvre : le serveur prépare une copie (deuxième passe avec
 // micro-transforms invisibles) pendant la lecture ; le téléchargement la sert, sinon l'original.
-const uniq = { key: null, state: 'idle', progress: 0, timer: 0, want: false };
+// `retrying` : la personne a déjà le fichier standard, un nouvel échec ne relance pas de téléchargement
+const uniq = { key: null, state: 'idle', progress: 0, timer: 0, want: false, error: '', retry: true, retrying: false };
 const uniqKey = (m) => `${m.id}:${m.file_version}`;
 const stopUniq = () => {
   clearTimeout(uniq.timer);
   uniq.timer = 0;
   uniq.want = false;
+  uniq.retrying = false;
+};
+const readUniq = (st) => {
+  uniq.state = st.state;
+  uniq.progress = st.progress ?? 0;
+  uniq.error = st.error ?? '';
+  uniq.retry = st.retry !== false;
 };
 
 function prepUniq(m) {
@@ -164,8 +174,7 @@ function prepUniq(m) {
   api('POST', `/clips/${m.id}/variant`)
     .then((st) => {
       if (uniq.key !== key) return;
-      uniq.state = st.state;
-      uniq.progress = st.progress ?? 0;
+      readUniq(st);
       uniqTick(m);
     })
     .catch(() => {
@@ -187,11 +196,10 @@ function uniqTick(m) {
       return uniqTick(m); // à-coup réseau : on réessaie
     }
     if (uniq.key !== key) return;
-    uniq.state = st.state;
-    uniq.progress = st.progress ?? 0;
+    readUniq(st);
     if (uniq.want) {
       if (['ready', 'disabled', 'skipped', 'error'].includes(uniq.state)) {
-        uniqDownload(m, uniq.state === 'ready' ? $('dialog-msg') : undefined);
+        uniqDownload(m, $('dialog-msg'));
         return;
       }
       const msg = $('dialog-msg');
@@ -202,14 +210,43 @@ function uniqTick(m) {
 }
 
 function uniqDownload(m, msg) {
-  const ready = uniq.state === 'ready';
+  const { state, retrying } = uniq;
   stopUniq();
-  const a = el('a', { href: `/api/library/clips/${m.id}/file?use=download`, download: '' });
-  document.body.append(a);
-  a.click();
-  a.remove();
-  if (msg) say(msg, ready ? 'Version unique : téléchargement lancé.' : 'Téléchargement lancé.');
-  setTimeout(() => openClip(m.id), 1500); // comme avant : les compteurs se rafraîchissent
+  // réessai raté : la version standard est déjà téléchargée, on l'annonce sans la relancer
+  if (!(retrying && state !== 'ready')) {
+    const a = el('a', { href: `/api/library/clips/${m.id}/file?use=download`, download: '' });
+    document.body.append(a);
+    a.click();
+    a.remove();
+  }
+  if (msg) {
+    if (state === 'error') {
+      const why = `Ta version unique n'a pas pu être préparée${uniq.error ? ` : ${uniq.error}` : ''}.`;
+      say(msg, retrying ? `${why} Tu gardes la version standard déjà téléchargée.` : `${why} Tu télécharges la version standard du clip.`, true);
+      if (uniq.retry) msg.append(' ', el('button', { class: 'btn secondary small', type: 'button', onclick: () => retryUniq(m, msg) }, 'Réessayer'));
+    } else if (state === 'skipped') {
+      say(msg, 'La version unique est momentanément indisponible (file d’attente pleine) : tu télécharges la version standard du clip.');
+    } else {
+      say(msg, state === 'ready' ? 'Version unique : téléchargement lancé.' : 'Téléchargement lancé.');
+    }
+  }
+  // en cas d'échec le message reste visible (pas de rafraîchissement) ; sinon les compteurs se rafraîchissent
+  if (state !== 'error' && state !== 'skipped') {
+    clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(() => current?.id === m.id && dialog.open && openClip(m.id), 1500);
+  }
+}
+
+function retryUniq(m, msg) {
+  stopUniq();
+  uniq.key = null; // le serveur remet en file le job raté
+  uniq.state = 'idle';
+  uniq.progress = 0;
+  uniq.error = '';
+  uniq.want = true; // comme au premier clic : quand la version est prête (ou qu'elle échoue), on conclut tout seul
+  uniq.retrying = true;
+  if (msg) say(msg, 'Nouvelle préparation de ta version unique…');
+  prepUniq(m);
 }
 
 function onDownload(m, msg) {
@@ -218,7 +255,7 @@ function onDownload(m, msg) {
     uniq.key = key;
     uniq.state = 'idle';
   }
-  if (['ready', 'disabled', 'skipped', 'error'].includes(uniq.state)) return uniqDownload(m, uniq.state === 'ready' ? msg : undefined);
+  if (['ready', 'disabled', 'skipped', 'error'].includes(uniq.state)) return uniqDownload(m, msg);
   uniq.want = true;
   say(msg, 'Préparation de ta version unique…');
   if (uniq.state === 'idle') prepUniq(m);
@@ -226,15 +263,20 @@ function onDownload(m, msg) {
 }
 
 async function openClip(id) {
+  const ticket = ++openTicket;
   clearTimeout(pendingTimer);
+  clearTimeout(refreshTimer);
   stopUniq();
   uniq.key = null;
+  let clip;
   try {
-    current = await api('GET', `/clips/${id}`);
+    clip = await api('GET', `/clips/${id}`);
   } catch (e) {
-    alert(e.message);
+    if (ticket === openTicket) alert(e.message);
     return;
   }
+  if (ticket !== openTicket) return; // une autre fiche a été demandée entre-temps
+  current = clip;
   renderDialog();
   if (!dialog.open) dialog.showModal();
   const q = new URLSearchParams(location.search);
@@ -362,7 +404,9 @@ function renderDialog() {
 }
 
 dialog.addEventListener('close', () => {
+  openTicket++; // une ouverture encore en vol ne rouvre pas la fiche
   clearTimeout(pendingTimer);
+  clearTimeout(refreshTimer);
   stopUniq();
   dialog.querySelector('video')?.pause();
   const q = new URLSearchParams(location.search);
