@@ -9,7 +9,7 @@ const DRAG_PX = 6;
 
 /**
  * options : { durationMs, lines: [{ start_ms, end_ms }], suggestions: [{ start_ms, end_ms, title, score }], minMs, maxMs, fmt(ms),
- *             textAt(ms, edge) -> string (edge : 'start' | 'end'), onChange(zone, how), onLimit(kind), onPick(suggestion) }
+ *             textAt(ms) -> string, onChange(zone, how), onLimit(kind), onPick(suggestion) }
  * `onChange` est appelé à la fin d'un geste (ou à chaque appui de touche) ; `how` : 'move' | 'start' | 'end' | 'place'.
  */
 export function createTimeline(opts) {
@@ -146,7 +146,7 @@ export function createTimeline(opts) {
       zoneEl.classList.toggle('tl-full', full);
       const len = z.end_ms - z.start_ms;
       readout.textContent = `${fmt(z.start_ms)} → ${fmt(z.end_ms)} · ${durLabel(len)} sur ${durLabel(limits.maxMs)} maximum${full ? ' (durée maximale atteinte)' : ''}`;
-      detail.textContent = `Début : « ${opts.textAt(z.start_ms, 'start')} »  ·  Fin : « ${opts.textAt(z.end_ms, 'end')} »`;
+      detail.textContent = `Début : « ${opts.textAt(z.start_ms)} »  ·  Fin : « ${opts.textAt(z.end_ms)} »`;
       zoneBody.setAttribute('aria-label', `Zone choisie, de ${fmt(z.start_ms)} à ${fmt(z.end_ms)} : flèches pour la déplacer`);
       miniZone.style.display = '';
       Object.assign(miniZone.style, { left: pct(z.start_ms), width: `max(3px, ${(len / durationMs) * 100}%)` });

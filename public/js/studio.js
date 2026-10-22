@@ -365,8 +365,6 @@ async function openEditor(youtubeId) {
     }
     return best;
   };
-  // The end of an extract is exclusive: the line quoted for it is the last one heard, not the one starting right at the end
-  const lineBefore = (ms) => S.lines.findLast((l) => l.start_ms < ms) ?? S.lines[0];
   // File duration may be missing: fall back to the last transcript line
   const videoEndMs = () => (S.video.duration_s > 0 ? Math.floor(S.video.duration_s * 1000) : (S.lines.at(-1)?.end_ms ?? 0));
 
@@ -554,7 +552,7 @@ async function openEditor(youtubeId) {
       const go = (dir) => nudge(ex, which, dir);
       return el('div', { class: 'st-edge' },
         el('div', { class: 'st-edge-ctl' }, el('span', { class: 'st-edge-label' }, label), btn('−', lessTitle, () => go(-1), false, `${i}:${which}:-1`), field, btn('+', moreTitle, () => go(1), false, `${i}:${which}:1`)),
-        el('span', { class: 'st-edge-text' }, `« ${excerpt((which === 'end_ms' ? lineBefore : lineAround)(ex[which]).text)} »`));
+        el('span', { class: 'st-edge-text' }, `« ${excerpt(lineAround(ex[which]).text)} »`));
     };
     return el('li', { class: 'st-ex', 'data-ex': String(i) },
       el('div', { class: 'st-ex-head' }, el('strong', {}, ex.title || 'Passage libre'), el('span', { class: 'badge' }, `${fmtT(ex.start_ms)} → ${fmtT(ex.end_ms)} · ${secs(exDur(ex))}`)),
@@ -618,7 +616,7 @@ async function openEditor(youtubeId) {
     minMs: LIMITS.minExtractS * 1000,
     maxMs: LIMITS.maxTotalS * 1000,
     fmt: fmtT,
-    textAt: (ms, edge) => excerpt((edge === 'end' ? lineBefore : lineAround)(ms)?.text ?? '', 48),
+    textAt: (ms) => excerpt(lineAround(ms)?.text ?? '', 48),
     onPick: (sg) => useSuggestion(sg),
     onChange(zone) {
       const ex = activeEx();
