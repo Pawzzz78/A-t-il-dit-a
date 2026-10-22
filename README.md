@@ -120,12 +120,6 @@ qu'à choisir les extraits.
     `<STORAGE_DIR>/studio/strips/` (`GET /api/studio/videos/:id/strip`, puis `/api/studio/strips/:nom`) ; elle est créée à la
     première demande (une dizaine de secondes pour une heure d'interview), supprimée avec la vidéo, et la timeline marche sans
     elle si ffmpeg échoue.;
-  - **chemin rapide** : sous la timeline, un bandeau « Créer maintenant » pour le passage choisi, et un bouton « Créer ce TikTok » sur
-    chaque extrait détaillé de l'IA. Une petite fenêtre résume les réglages en cours (durée, sous-titres, musique, format, qualité,
-    écran de fin), demande l'engagement à ne pas déformer les propos (le même que dans l'onglet Créer, coché une fois pour les deux) et
-    lance la création ; on arrive sur l'onglet Créer, où la vidéo se prépare. « Personnaliser d'abord » choisit l'extrait et ouvre
-    l'onglet Sous-titres. Si l'extrait remplace un passage déjà retouché (zone déplacée ou étirée, plusieurs extraits d'un ancien
-    brouillon), la fenêtre le signale ; pendant qu'une vidéo est en cours, elle ne s'ouvre pas ;
   - **réglage des bornes** : boutons − / + avec un pas au choix (0,1 s, 0,5 s par défaut, 1 s, 2 s, « Ligne » = jusqu'à la limite de ligne
     suivante, ou n'importe quelle durée de 0,01 à 30 s dans le champ libre) ; on peut aussi **taper l'instant exact** (`1:23,5`).
     Les bornes sont en millisecondes (arrondies au centième de seconde) ; une ligne coupée au milieu ne garde que les mots dits dans la

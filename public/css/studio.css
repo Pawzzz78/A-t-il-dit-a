@@ -419,18 +419,3 @@
 .st-ex > .btn { margin-top: .6rem; }
 @media (min-width: 900px) { .tl { --tl-h: 5.5rem; } }
 @media (prefers-reduced-motion: reduce) { .tl-zone.tl-limit { animation: none; } }
-
-/* chemin rapide : créer la vidéo depuis un extrait, sans passer par tous les onglets */
-.btn.accent { background: var(--color-accent); color: var(--color-accent-contrast); }
-.btn.accent:hover { filter: brightness(.9); }
-.st-quickbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .6rem 1rem; margin: .9rem 0 0; padding: .8rem 1rem; border: 1px dashed var(--color-accent); border-radius: var(--radius); background: #fff; }
-.st-quickbar p { flex: 1 1 16rem; margin: 0; font-size: .85rem; }
-.st-quick { width: min(92vw, 30rem); max-height: 92vh; max-height: 92dvh; overflow-y: auto; padding: 1.5rem 1.4rem 1.2rem; border: 0; border-radius: var(--radius-card); background: var(--color-surface); color: var(--color-text); box-shadow: 0 20px 60px rgba(15, 23, 82, .45); }
-.st-quick::backdrop { background: rgba(15, 23, 82, .74); }
-.st-quick h2 { margin: 0 2rem .5rem 0; font-family: var(--font-display); font-size: 1.15rem; color: var(--color-primary); overflow-wrap: anywhere; }
-.st-quick .eyebrow { margin-bottom: .4rem; }
-.st-quick-recap { margin: 0 0 .8rem; font-size: .85rem; color: var(--color-muted); }
-.st-quick-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; margin-top: 1rem; }
-.st-quick-close { position: absolute; top: .7rem; right: .7rem; margin: 0; }
-.st-quick-close .close { width: 2.4rem; height: 2.4rem; border: 0; border-radius: 50%; background: var(--color-surface-alt); color: var(--color-primary); font-size: 1.4rem; line-height: 1; cursor: pointer; }
-.st-quick-close .close:hover { background: var(--color-border); }
