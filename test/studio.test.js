@@ -102,7 +102,7 @@ test('éléments de l\'éditeur : 22 polices présentes, 10 musiques, 5 styles',
   if (!enabled) return;
   const a = (await api('GET', '/api/studio/assets')).body;
   assert.deepEqual([a.fonts.length, a.music.length, a.presets.length], [22, 10, 5]);
-  assert.equal(a.limits.maxTotalS, 90);
+  assert.equal(a.limits.maxTotalS, 120);
   assert.deepEqual(a.presets.map((p) => p.id), ['hormozi', 'un-mot', 'karaoke', 'classique', 'boite']);
 });
 
@@ -120,17 +120,60 @@ test('studio : seules les vidéos autorisées sont listées, sans jamais exposer
   for (const p of [`/api/studio/file/${YT}`, `/videos/${YT}.mp4`, `/api/admin/videos/${videoRowId}/file`]) assert.ok([401, 404].includes((await fetch(base + p)).status), p);
 });
 
+test('timeline : grille de vignettes créée une fois, servie, jamais la vidéo', { skip: !enabled }, async () => {
+  assert.equal((await api('GET', `/api/studio/videos/${YT_OFF}/strip`)).status, 404);
+  assert.equal((await api('GET', '/api/studio/videos/pas-un-id/strip')).status, 404);
+  let r = (await api('GET', `/api/studio/videos/${YT}/strip`)).body;
+  assert.deepEqual([r.step_s, r.frames, r.cols, r.rows, r.thumb_w, r.thumb_h], [5, 3, 10, 1, 160, 90]); // 12 s : une image toutes les 5 s
+  for (let i = 0; i < 100 && !r.ready; i++) {
+    assert.equal(r.failed, false);
+    await new Promise((ok) => setTimeout(ok, 100));
+    r = (await api('GET', `/api/studio/videos/${YT}/strip`)).body;
+  }
+  assert.equal(r.ready, true);
+  assert.match(r.url, new RegExp(`^/api/studio/strips/${YT}-[0-9a-f]{8}\\.jpg$`));
+  const img = await fetch(base + r.url);
+  assert.equal(img.status, 200);
+  assert.equal(img.headers.get('content-type'), 'image/jpeg');
+  const file = path.join(dir, 'strip.jpg');
+  await fs.writeFile(file, Buffer.from(await img.arrayBuffer()));
+  const size = probe(file).streams[0];
+  assert.deepEqual([size.width, size.height], [1600, 90]);
+  // une seule génération : le second appel est servi tel quel
+  const again = (await api('GET', `/api/studio/videos/${YT}/strip`)).body;
+  assert.deepEqual([again.ready, again.url], [true, r.url]);
+  // noms inventés et vidéos non autorisées : rien
+  for (const bad of ['../../etc/passwd', 'x.jpg', `${YT_OFF}-00000000.jpg`, `${YT}-zzzzzzzz.jpg`]) assert.equal((await fetch(`${base}/api/studio/strips/${encodeURIComponent(bad)}`)).status, 404, bad);
+  // la suppression de la vidéo emporte ses vignettes
+  const { removeVideoFiles } = await import('../src/media.js');
+  const { stripPath } = await import('../src/studio/strip.js');
+  const keep = path.join(process.env.STORAGE_DIR, 'studio', 'strips', 'KEEPtest_001-00000000.jpg');
+  await fs.writeFile(keep, 'x');
+  const video = (await pool.query('SELECT * FROM videos WHERE youtube_id = $1', [YT])).rows[0];
+  const mine = stripPath(video);
+  await fs.copyFile(mine, path.join(dir, 'saved.jpg'));
+  await removeVideoFiles(YT).catch(() => {});
+  assert.equal(await fs.stat(mine).then(() => true, () => false), false);
+  assert.equal(await fs.stat(keep).then(() => true, () => false), true); // celles des autres vidéos restent
+  // remise en état pour la suite des tests
+  await fs.copyFile(path.join(process.env.STORAGE_DIR, 'videos', `${YT_OFF}.mp4`), path.join(process.env.STORAGE_DIR, 'videos', `${YT}.mp4`));
+  await fs.copyFile(path.join(dir, 'saved.jpg'), mine);
+});
+
 test('demande : extraits, cadrage, style et musique validés', { skip: !enabled }, async () => {
   const { normalizeRequest } = studio;
-  const video = { file_duration_s: 120 };
+  const video = { file_duration_s: 600 };
   const ok = normalizeRequest({ extracts: [{ start_ms: 1000, end_ms: 31000 }], style: { preset: 'karaoke', size: 5000 }, music: { id: 'lofi-doux', volume: 9 }, layout: { fit: 'crop', cropX: -3, quality: 'x' } }, video);
   assert.deepEqual([ok.total, ok.style.size, ok.music.volume, ok.layout.fit, ok.layout.cropX, ok.layout.quality, ok.voice], [30, 220, 1, 'crop', 0, 'hd', 1]);
   const bad = (body, re) => assert.throws(() => normalizeRequest(body, video), (e) => e.status === 400 && re.test(e.message), JSON.stringify(body).slice(0, 80));
   bad({}, /au moins un extrait/);
   bad({ extracts: [{ start_ms: 0, end_ms: 1000 }] }, /au moins 3 secondes/);
   bad({ extracts: [{ start_ms: 5000, end_ms: 4000 }] }, /invalide/);
-  bad({ extracts: [{ start_ms: 0, end_ms: 200_000 }] }, /dépasse la durée/);
-  bad({ extracts: [{ start_ms: 0, end_ms: 50_000 }, { start_ms: 60_000, end_ms: 110_000 }] }, /90 secondes/);
+  bad({ extracts: [{ start_ms: 0, end_ms: 700_000 }] }, /dépasse la durée/);
+  // un seul passage libre de 2 minutes passe, au-delà non
+  assert.equal(normalizeRequest({ extracts: [{ start_ms: 100_000, end_ms: 220_000 }] }, video).total, 120);
+  bad({ extracts: [{ start_ms: 100_000, end_ms: 221_000 }] }, /120 secondes/);
+  bad({ extracts: [{ start_ms: 0, end_ms: 70_000 }, { start_ms: 80_000, end_ms: 140_000 }] }, /120 secondes/);
   bad({ extracts: Array.from({ length: 5 }, () => ({ start_ms: 0, end_ms: 5000 })) }, /4 extraits/);
   bad({ extracts: [{ start_ms: 0, end_ms: 5000 }], music: { id: 'inconnue' } }, /Musique inconnue/);
 });

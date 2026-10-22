@@ -3,6 +3,7 @@
  * styles), aperçu du cadrage, rendu du MP4 en arrière-plan (file d'attente) et téléchargement.
  * Le fichier vidéo d'origine n'est jamais servi : seuls des extraits (aperçu 360p, rendu final) en sortent.
  */
+import path from 'node:path';
 import express, { Router } from 'express';
 import { getClipSuggestions, prepareSegments, CLIP_LIMITS } from '../clip-suggestions.js';
 import { pool } from '../db.js';
@@ -12,6 +13,7 @@ import { cancelJob, saveCard, config as studioConfig, createPreview, enqueueRend
 import { CATEGORIES, ensureMusic, libraryFile, publicTracks } from '../studio/music.js';
 import { facesStatus, framingForRequest } from '../studio/faces.js';
 import { recordEvent } from '../studio/stats.js';
+import { stripNameOk, stripStatus, stripsDir } from '../studio/strip.js';
 import { ensureImage, searchPhotos, stockEnabled, stockProvider } from '../studio/stock.js';
 import { parseYoutubeId } from '../youtube.js';
 import { ensureOwner, libraryConfigured } from '../library/owner.js';
@@ -122,6 +124,31 @@ studioRouter.get(
       suggestions: (sg?.clips ?? []).map(({ start_ms, end_ms, duration_s, title, why, score, text, description }) => ({ start_ms, end_ms, duration_s, title, why, score, text, description: description ?? null })),
       lines,
       faces: await publicFaces(v), // cadrage automatique possible ; reconnaissance de la personne de référence disponible
+    });
+  }),
+);
+
+/**
+ * Vignettes de la timeline : une grille d'images tirées de l'interview, créée au premier besoin puis gardée. Tant qu'elle n'est pas
+ * prête (`ready: false`), l'éditeur demande à nouveau quelques secondes plus tard ; si elle échoue (`failed`), la timeline reste utilisable sans images.
+ */
+studioRouter.get(
+  '/videos/:youtubeId/strip',
+  ah(async (req, res) => {
+    const v = await loadVideo(req.params.youtubeId);
+    res.set('Cache-Control', 'no-store');
+    res.json(await stripStatus(v));
+  }),
+);
+
+studioRouter.get(
+  '/strips/:file',
+  ah(async (req, res) => {
+    const name = String(req.params.file);
+    if (!stripNameOk(name)) throw new HttpError(404, 'Vignettes introuvables.');
+    await loadVideo(name.slice(0, 11)); // l'autorisation de la vidéo peut avoir été retirée depuis
+    res.sendFile(path.join(stripsDir(), name), { headers: { 'Cache-Control': 'private, max-age=86400', 'Content-Type': 'image/jpeg' } }, (err) => {
+      if (err && !res.headersSent) res.status(404).json({ error: 'Vignettes introuvables.' });
     });
   }),
 );
