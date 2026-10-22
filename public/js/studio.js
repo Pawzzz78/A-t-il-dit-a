@@ -1041,8 +1041,8 @@ async function openEditor(youtubeId) {
           el('span', {}, upload, el('button', { type: 'button', class: 'st-link', onclick: () => { S.logo = { ...S.logo, on: false, dataUrl: '' }; logoChanged(); } }, 'Retirer')))),
       L.on ? [
         el('p', { class: 'st-ec-label' }, 'Emplacement'),
-        el('div', { class: 'st-logo-grid', role: 'radiogroup', 'aria-label': 'Emplacement du logo' },
-          LOGO.positions.map((p) => el('button', { type: 'button', role: 'radio', class: L.pos === p ? 'on' : '', 'aria-checked': String(L.pos === p), 'aria-label': POS_LABELS[p], title: POS_LABELS[p], 'data-k': `logo:p:${p}`, onclick: () => { S.logo.pos = p; logoChanged(); } }, el('span', {})))),
+        el('div', { class: 'st-logo-grid', role: 'group', 'aria-label': 'Emplacement du logo' },
+          LOGO.positions.map((p) => el('button', { type: 'button', class: L.pos === p ? 'on' : '', 'aria-pressed': String(L.pos === p), 'aria-label': POS_LABELS[p], title: POS_LABELS[p], 'data-k': `logo:p:${p}`, onclick: () => { S.logo.pos = p; logoChanged(); } }, el('span', {})))),
         range('size', LOGO.minSize * 100, LOGO.maxSize * 100, Math.round(L.size * 100), 'Taille', (v) => `${v} %`),
         range('opacity', LOGO.minOpacity * 100, 100, Math.round(L.opacity * 100), 'Opacité', (v) => `${v} %`),
       ] : null,

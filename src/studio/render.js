@@ -564,13 +564,14 @@ export async function enqueueRender({ video, req, lines, ip: rawIp = 'local', ow
   const id = crypto.randomBytes(12).toString('hex');
   // The job keeps its own copy of the card: cleanup protects job files, not the shared upload
   const card = req.end_card?.image ? path.join(dirs().renders, `${id}.card.jpg`) : null;
-  if (card) await fs.copyFile(cardFile(req.end_card.image), card).catch(() => {
-    throw new HttpError(409, 'Le visuel de fin a expiré : crée la vidéo à nouveau.');
-  });
   const logo = req.logo ? path.join(dirs().renders, `${id}.logo.png`) : null;
-  if (logo) await fs.copyFile(logoFile(req.logo.image), logo).catch(() => {
-    throw new HttpError(409, 'Le logo a expiré : crée la vidéo à nouveau.');
-  });
+  try {
+    if (card) await fs.copyFile(cardFile(req.end_card.image), card).catch(() => { throw new HttpError(409, 'Le visuel de fin a expiré : crée la vidéo à nouveau.'); });
+    if (logo) await fs.copyFile(logoFile(req.logo.image), logo).catch(() => { throw new HttpError(409, 'Le logo a expiré : crée la vidéo à nouveau.'); });
+  } catch (e) {
+    for (const f of [card, logo]) if (f) await fs.rm(f, { force: true });
+    throw e;
+  }
   const job = {
     id,
     ip,
@@ -626,6 +627,7 @@ async function runJob(job) {
     await run.promise;
     if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true }); // cancelled just after ffmpeg ended
     job.size = (await fs.stat(job.out)).size;
+    job.sizeServed = job.outLogo ? (await fs.stat(job.outLogo)).size : job.size;
     if (job.card) await fs.utimes(job.card, new Date(), new Date()).catch(() => {}); // kept as long as the finished clip
     job.status = 'done';
     job.progress = 1;
@@ -643,6 +645,7 @@ async function runJob(job) {
     job.finishedAt = Date.now();
     job.cancel = null;
     await fs.rm(job.assPath, { force: true });
+    if (job.logo) await fs.rm(job.logo, { force: true });
     delete job.lines;
   }
   if (job.onDone) await job.onDone(job).catch((e) => console.error(`Rendu ${job.id} (suite) : ${e.message}`));
@@ -652,6 +655,7 @@ async function runJob(job) {
 export async function cancelJob(job) {
   if (job.status === 'queued') {
     queue.splice(queue.indexOf(job), 1);
+    for (const f of [job.logo, job.card]) if (f) await fs.rm(f, { force: true });
     job.status = 'cancelled';
     job.finishedAt = Date.now();
   } else if (job.status === 'running') {

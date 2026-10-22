@@ -230,7 +230,7 @@ studioRouter.get('/render/:id/file', async (req, res, next) => {
     const job = jobOr404(req.params.id);
     if (job.status !== 'done') throw new HttpError(409, "Le clip n'est pas encore prêt.");
     // Cap the bytes actually sent per clip (seeking in <video> only costs what is transferred)
-    if ((job.bytesServed ?? 0) >= (job.size ?? 0) * studioConfig().fileServeFactor) {
+    if ((job.bytesServed ?? 0) >= (job.sizeServed ?? job.size ?? 0) * studioConfig().fileServeFactor) {
       throw new HttpError(429, 'Ce clip a déjà été téléchargé de nombreuses fois : crée-le à nouveau si besoin.');
     }
     const socket = req.socket;
