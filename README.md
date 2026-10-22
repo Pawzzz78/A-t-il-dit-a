@@ -384,6 +384,15 @@ Deuxième section du site, `/mur/` : un mur des meilleurs TikToks publiés avec 
   en texte brut.
 - Tables : `wall_clips`, `wall_hidden_authors` ; dernière actualisation dans `settings` (`wall_last_run`). Tests : `test/wall.test.js` (Apify simulé).
 
+### Logo du compte
+
+- Onglet « Format », facultatif : le visiteur ajoute le logo de son compte (PNG, JPG, WebP ou SVG, réduit à 512 px en PNG dans le navigateur),
+  le place sur une grille de 9 positions (marges : 5 % sur les côtés, 7 % en haut, 20 % en bas pour éviter les boutons de TikTok), règle sa taille
+  (8 à 40 % de la largeur) et son opacité ; l'aperçu le montre en direct. Le logo et ses réglages restent **dans le navigateur** (`studio.logo.v1`).
+- Au rendu, il est envoyé en PNG (`POST /api/studio/logo`, vérifié avec ffprobe, gardé le temps du rendu) ; ffmpeg produit en une passe **deux
+  fichiers** : la vidéo avec le logo (téléchargée et partagée par le visiteur) et la vidéo sans logo, **la seule publiée dans la bibliothèque**. Le
+  réglage du logo n'est pas gardé avec le clip (« Modifier » et « Recréer » ne le reprennent pas). Le logo n'apparaît pas sur l'écran de fin.
+
 ### Modèles et écran de fin
 
 - **Modèles** : barre « Modèles » en haut de l'éditeur. « Enregistrer mes réglages » garde sous un nom le style des sous-titres, la musique et
