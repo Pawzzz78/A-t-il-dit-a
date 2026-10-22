@@ -686,6 +686,11 @@ async function openEditor(youtubeId) {
         : el('p', { class: 'st-help' }, 'Place ta zone sur la timeline ou choisis un extrait proposé : l’aperçu apparaît avec la vidéo.'),
       el('p', { class: totalS() > LIMITS.maxTotalS ? 'st-total err' : 'st-total' }, S.extracts.length ? `Durée : ${minTotalNote()}` : ''),
       note,
+      S.extracts.length
+        ? el('div', { class: 'st-quickbar' },
+            el('p', {}, el('strong', {}, 'Pressé ? '), 'Crée la vidéo tout de suite avec ce passage et les réglages actuels, tu pourras la personnaliser ensuite.'),
+            el('button', { class: 'btn small accent', type: 'button', 'data-k': 'quick', onclick: () => openQuick() }, 'Créer maintenant'))
+        : null,
       S.suggestions.length ? el('h3', {}, `Détail des extraits proposés (${S.suggestions.length}, du plus au moins viral)`) : null,
       S.suggestions.length
         ? el('ul', { class: 'st-sugg' }, S.suggestions.slice(0, suggShown).map((sg) =>
@@ -695,6 +700,7 @@ async function openEditor(youtubeId) {
               el('p', { class: 'st-meta' }, `${mmss(sg.start_ms)} → ${mmss(sg.end_ms)} · ${secs(sg.duration_s)}`),
               el('details', {}, el('summary', {}, 'Lire l’extrait'), el('p', { class: 'st-text' }, sg.text)),
               el('div', { class: 'st-card-actions' },
+                el('button', { class: 'btn small accent', type: 'button', 'data-k': `sgq:${sg.start_ms}`, onclick: () => openQuick(sg) }, 'Créer ce TikTok'),
                 taken.has(sg.start_ms)
                   ? el('button', { class: 'btn secondary small', type: 'button', 'data-k': `sg:${sg.start_ms}`, onclick: () => { const k = S.extracts.findIndex((e) => e.from === sg.start_ms); if (k >= 0) { S.extracts.splice(k, 1); extractsChanged(); } } }, 'Retirer de mon clip')
                   : el('button', { class: 'btn small', type: 'button', 'data-k': `sg:${sg.start_ms}`, onclick: () => useSuggestion(sg) }, 'Utiliser cet extrait')),
@@ -1222,6 +1228,71 @@ async function openEditor(youtubeId) {
   }
   pledge.addEventListener('change', renderCreateSummary);
 
+  // Chemin rapide : depuis un extrait proposé (ou « Mon clip »), un récapitulatif et l'engagement, puis la vidéo est lancée avec les
+  // réglages en cours ; tout reste modifiable ensuite
+  const quick = el('dialog', { class: 'st-quick', 'aria-labelledby': 'st-quick-title' });
+  quick.addEventListener('close', () => put(quick));
+  function openQuick(sg = null) {
+    if (jobActive()) {
+      openTab('creer');
+      return toast('Une vidéo est déjà en cours de création : attends qu’elle soit prête.', true);
+    }
+    if (!sg && !S.extracts.length) return;
+    const only = S.extracts.length === 1 ? S.extracts[0] : null;
+    const replaces = Boolean(sg) && only?.from !== sg.start_ms;
+    // the clip loaded on arrival is the best suggestion: replacing it needs no warning, unlike a clip the visitor shaped
+    const shaped = S.extracts.length > 1 || (only && !S.suggestions.some((x) => x.start_ms === only.from && x.start_ms === only.start_ms && x.end_ms === only.end_ms));
+    const apply = () => {
+      if (!replaces) return;
+      S.extracts = [{ start_ms: sg.start_ms, end_ms: Math.min(sg.end_ms, videoEndMs()), title: sg.title, from: sg.start_ms, caption: sg.description }];
+      S.active = 0;
+      revealZone = true;
+      extractsChanged();
+    };
+    const track = assets.music.find((m) => m.id === S.music.id);
+    const recap = [
+      `${secs(replaces ? exDur(sg) : totalS())}`,
+      `sous-titres ${PRESETS[S.style.preset].label.toLowerCase()} (${fontById.get(S.style.font).label})`,
+      track ? `musique « ${track.title} »` : 'sans musique',
+      S.layout.fit === 'blur' ? 'vidéo entière sur fond flou' : 'plein écran',
+      S.layout.quality === 'hd' ? 'HD' : 'qualité rapide',
+      S.endCard.on ? `écran de fin de ${S.endCard.dur} s` : null,
+    ].filter(Boolean).join(' · ');
+    const agree = el('input', { type: 'checkbox', checked: pledge.checked, 'data-k': 'quick:pledge' });
+    const go = el('button', { class: 'btn', type: 'button', disabled: !pledge.checked, 'data-k': 'quick:go' }, 'Créer la vidéo');
+    agree.addEventListener('change', () => {
+      pledge.checked = agree.checked;
+      go.disabled = !agree.checked;
+      renderCreateSummary();
+    });
+    go.addEventListener('click', async () => {
+      apply();
+      quick.close();
+      openTab('creer');
+      makeBtn.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      await createVideo();
+      if (makeMsg.textContent) toast(makeMsg.textContent, true); // e.g. an incomplete end card sends the visitor to its tab
+    });
+    const custom = el('button', { class: 'st-link', type: 'button', 'data-k': 'quick:custom' }, 'Personnaliser d’abord');
+    custom.addEventListener('click', () => {
+      quick.close();
+      openTab('style', true);
+      apply();
+      tabBar.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    });
+    put(quick,
+      el('form', { method: 'dialog', class: 'st-quick-close' }, el('button', { class: 'close', 'aria-label': 'Fermer' }, '×')),
+      el('p', { class: 'eyebrow' }, 'Créer en un clic'),
+      el('h2', { id: 'st-quick-title' }, sg ? sg.title : only ? only.title || 'Passage libre' : `Mon clip (${S.extracts.length} extraits)`),
+      el('p', { class: 'st-quick-recap' }, recap),
+      replaces && shaped ? el('p', { class: 'st-help warn' }, 'Cet extrait remplacera le passage que tu as choisi sur la timeline.') : null,
+      el('label', { class: 'st-check pledge' }, agree, 'Je m’engage à ne pas déformer le sens des propos de cette interview, y compris dans les sous-titres que j’ai corrigés.'),
+      el('div', { class: 'st-quick-actions' }, go, custom),
+      el('p', { class: 'st-help' }, 'Tu pourras encore tout modifier et recréer la vidéo ensuite.'),
+    );
+    quick.showModal();
+  }
+
   const run = {
     text: el('p', { class: 'st-job-text' }),
     bar: el('progress', { max: '100', 'aria-label': 'Avancement de la création' }),
@@ -1487,7 +1558,8 @@ async function openEditor(youtubeId) {
     openTab('creer');
     if (jobActive()) poll();
   }
-  makeBtn.addEventListener('click', async () => {
+  makeBtn.addEventListener('click', createVideo);
+  async function createVideo() {
     makeMsg.textContent = '';
     makeBtn.disabled = true;
     try {
@@ -1512,7 +1584,7 @@ async function openEditor(youtubeId) {
       if (!e.gate) fail(makeMsg, e);
       renderCreateSummary();
     }
-  });
+  }
 
   const beforeUnload = (e) => {
     const waiting = job?.status === 'done' && !S.delivered && !(job.expiresAt != null && Date.now() >= job.expiresAt);
@@ -1906,6 +1978,7 @@ async function openEditor(youtubeId) {
     el('div', { class: 'st-grid' }, el('div', { class: 'st-left' }, phone.root), stage),
     disclaimer(),
     toastEl,
+    quick,
   );
 
   const fromClip = await draftFromLibrary();
@@ -1941,6 +2014,7 @@ async function openEditor(youtubeId) {
     phone.pause();
     phone.setAudio({ url: null });
     audition.pause();
+    if (quick.open) quick.close();
     jobBox.querySelector('video')?.pause();
     removeEventListener('beforeunload', beforeUnload);
     removeEventListener('pagehide', onPageHide);
