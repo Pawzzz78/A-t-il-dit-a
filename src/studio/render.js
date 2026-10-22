@@ -4,7 +4,7 @@
  *  - Aperçu : même cadrage en 360 × 640, sans sous-titres (dessinés en direct dans le navigateur), mis en cache 1 h.
  *  - Rendu final : file d'attente (STUDIO_CONCURRENCY clips à la fois, 1 par défaut), limites par visiteur, progression,
  *    annulation, fichier supprimé 1 h après sa création. Rien n'est conservé durablement.
- *  - Les fichiers vidéo d'origine ne sont jamais servis : seuls ces extraits (≤ 90 s au total) sortent du serveur.
+ *  - Les fichiers vidéo d'origine ne sont jamais servis : seuls ces extraits (≤ 2 min au total) sortent du serveur.
  */
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';

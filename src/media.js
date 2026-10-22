@@ -159,9 +159,17 @@ export function finishUpload(youtubeId, expectedSize) {
 const removeFinalFiles = (youtubeId, keepExt = null) =>
   Promise.all(EXTENSIONS.filter((ext) => ext !== keepExt).map((ext) => fs.rm(path.join(storageDir(), 'videos', `${safeId(youtubeId)}.${ext}`), { force: true })));
 
-/** Supprime le fichier (toutes extensions) et un éventuel dépôt en cours. */
+/** Supprime les vignettes de la timeline du studio (voir studio/strip.js) d'une vidéo. */
+async function removeStrips(youtubeId) {
+  const dir = path.join(storageDir(), 'studio', 'strips');
+  const id = safeId(youtubeId);
+  const names = await fs.readdir(dir).catch(() => []);
+  await Promise.all(names.filter((n) => n.startsWith(`${id}-`)).map((n) => fs.rm(path.join(dir, n), { recursive: true, force: true })));
+}
+
+/** Supprime le fichier (toutes extensions), ses vignettes et un éventuel dépôt en cours. */
 export async function removeVideoFiles(youtubeId) {
-  await Promise.all([removeFinalFiles(youtubeId), fs.rm(partPath(youtubeId), { force: true })]);
+  await Promise.all([removeFinalFiles(youtubeId), removeStrips(youtubeId), fs.rm(partPath(youtubeId), { force: true })]);
 }
 
 /** Écart de durée toléré entre le fichier et la vidéo YouTube (secondes) avant d'avertir. */
