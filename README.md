@@ -105,27 +105,9 @@ qu'à choisir les extraits.
   ordinateur, le bouton ouvre `tiktok.com/upload`, télécharge la vidéo et copie la description. Le partage fait depuis le téléphone est
   compté par `POST /api/studio/render/:id/used`. La publication **automatique** n'est pas faite : l'API TikTok « Content Posting »
   exige une application TikTok validée (audit) et, sans elle, ne publie qu'en privé.
-- **Studio public** (`/studio/`) : les visiteurs choisissent une interview dont l'admin a autorisé les clips, prennent un passage
-  de **2 minutes au plus** (`LIMITS.maxTotalS` dans `public/js/studio-core.js`, revérifié côté serveur) : un extrait proposé par
-  l'IA (en un appui) ou **n'importe quel passage de l'interview**, choisi sur une **timeline** façon logiciel de montage, puis
-  ajustent le début et la fin **avec précision** et habillent le clip :
-  - **timeline** (`public/js/timeline.js`, calculs testés dans `timeline-core.js`) : toute l'interview sur une règle graduée, avec
-    des vignettes de la vidéo, les extraits de l'IA repérés en bas, une vue d'ensemble, et **une zone** à déplacer (glisser le
-    centre) ou à étirer (glisser une poignée). La durée maximale **bloque** l'extension : la poignée s'arrête et le message le dit.
-    Zoom avec − / +, pincement (téléphone) ou Ctrl + molette ; le fond se fait glisser pour défiler, un appui y place la zone ;
-    les bornes se calent sur les phrases (case à décocher) ; au clavier, flèches sur la zone ou une poignée (Maj = grands pas).
-    Déplacée loin de l'extrait de l'IA d'origine, la zone devient un passage libre (titre et description de l'IA retirés).
-    **Vignettes** : le navigateur ne reçoit jamais la vidéo ; le serveur tire une image toutes les `⌈durée/200⌉` s (5 s au minimum)
-    du fichier déjà présent, en fait une grille JPEG (160 × 90 par case, 300 à 400 Ko pour une heure) gardée dans
-    `<STORAGE_DIR>/studio/strips/` (`GET /api/studio/videos/:id/strip`, puis `/api/studio/strips/:nom`) ; elle est créée à la
-    première demande (une dizaine de secondes pour une heure d'interview), supprimée avec la vidéo, et la timeline marche sans
-    elle si ffmpeg échoue.;
-  - **chemin rapide** : sous la timeline, un bandeau « Créer maintenant » pour le passage choisi, et un bouton « Créer ce TikTok » sur
-    chaque extrait détaillé de l'IA. Une petite fenêtre résume les réglages en cours (durée, sous-titres, musique, format, qualité,
-    écran de fin), demande l'engagement à ne pas déformer les propos (le même que dans l'onglet Créer, coché une fois pour les deux) et
-    lance la création ; on arrive sur l'onglet Créer, où la vidéo se prépare. « Personnaliser d'abord » choisit l'extrait et ouvre
-    l'onglet Sous-titres. Si l'extrait remplace un passage déjà retouché (zone déplacée ou étirée, plusieurs extraits d'un ancien
-    brouillon), la fenêtre le signale ; pendant qu'une vidéo est en cours, elle ne s'ouvre pas ;
+- **Studio public** (`/studio/`) : les visiteurs choisissent une interview dont l'admin a autorisé les clips, prennent un ou
+  plusieurs extraits (jusqu'à 4, 90 s au total : les propositions de l'IA, ou un passage libre dans la transcription), ajustent le
+  début et la fin **avec précision**, puis habillent le clip :
   - **réglage des bornes** : boutons − / + avec un pas au choix (0,1 s, 0,5 s par défaut, 1 s, 2 s, « Ligne » = jusqu'à la limite de ligne
     suivante, ou n'importe quelle durée de 0,01 à 30 s dans le champ libre) ; on peut aussi **taper l'instant exact** (`1:23,5`).
     Les bornes sont en millisecondes (arrondies au centième de seconde) ; une ligne coupée au milieu ne garde que les mots dits dans la
@@ -408,7 +390,7 @@ Deuxième section du site, `/mur/` : un mur des meilleurs TikToks publiés avec 
   les volumes, le format (fond flou ou plein écran, qualité, miroir, suivi du visage), les réglages de zoom et l'écran de fin ; pas les extraits,
   les corrections ni les images, qui dépendent de l'interview. Jusqu'à 20 modèles, gardés **dans le navigateur** (`studio.models.v1`), rien sur
   le serveur. Appliquer un modèle peut être annulé ; une police ou une musique disparue est ignorée.
-- **Écran de fin** (onglet « Écran de fin », désactivé par défaut) : un visuel de 2 à 5 s (3 par défaut) ajouté **après** le clip, hors limite de 2 min, dans l'esprit
+- **Écran de fin** (onglet « Écran de fin », désactivé par défaut) : un visuel de 2 à 5 s (3 par défaut) ajouté **après** le clip, hors limite de 90 s, dans l'esprit
   des visuels PostLisnard. Modèles « Une idée forte », « Citation », « Un chiffre » (avec sa source), « Événement » (date, heure, lieu), « Image +
   message » et « Appel à l'action » ; couleurs bleu, blanc ou kaki ; photo du visiteur (JPG, PNG, WebP, 10 Mo) en grand ou en fond assombri ; centré
   ou aligné à gauche, majuscules, logo Projet Lisnard, citation de l'interview. Le visuel est **dessiné dans le navigateur** (canvas 1080 × 1920,
