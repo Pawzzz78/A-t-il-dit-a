@@ -7,7 +7,7 @@ const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
 /**
  * Déplace une borne de la zone sans jamais dépasser la durée maximale ni descendre sous la durée minimale : l'extension est bloquée.
- * `limited` dit pourquoi la borne demandée n'a pas été atteinte : 'max' (4 minutes), 'min', 'edge' (début ou fin de la vidéo) ou null.
+ * `limited` dit pourquoi la borne demandée n'a pas été atteinte : 'max' (durée maximale), 'min', 'edge' (début ou fin de la vidéo) ou null.
  */
 export function resizeZone(zone, edge, ms, { durationMs, minMs, maxMs }) {
   if (edge === 'start') {

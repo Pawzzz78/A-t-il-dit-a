@@ -607,7 +607,7 @@ async function openEditor(youtubeId) {
     addExtract(S.lines[i].start_ms, S.lines[b].end_ms, null, null, null, true);
   }
 
-  // --- timeline : toute l'interview, une zone à déplacer ou à étirer (4 minutes au plus)
+  // --- timeline : toute l'interview, une zone à déplacer ou à étirer (2 minutes au plus)
   const activeEx = () => S.extracts[Math.min(S.active, S.extracts.length - 1)] ?? null;
   const tl = createTimeline({
     durationMs: videoEndMs(),
