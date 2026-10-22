@@ -28,6 +28,7 @@ import {
   fitDescription,
   draftFromClip,
   sanitizeEndCard,
+  sanitizeLogo,
   modelFromState,
   sanitizeModel,
   parseModels,
@@ -545,4 +546,11 @@ test('visuel de fin : réglages validés, champs propres à chaque modèle, date
   assert.equal(needsPhoto({ template: 'quote' }), false);
   assert.match(eventDateText('2026-11-05', '18:30'), /5 novembre · 18 h 30$/);
   assert.deepEqual(wrapText('un deux trois', 7, (s) => s.length), ['un deux', 'trois']);
+});
+
+test('logo du compte : réglages validés et bornés', () => {
+  assert.equal(sanitizeLogo(null), null);
+  assert.equal(sanitizeLogo({ image: 'abc' }), null);
+  assert.deepEqual(sanitizeLogo({ image: 'a'.repeat(40) }), { image: 'a'.repeat(40), pos: 'tr', size: 0.18, opacity: 1 });
+  assert.deepEqual(sanitizeLogo({ image: 'a'.repeat(40), pos: 'bc', size: 0.01, opacity: 0 }), { image: 'a'.repeat(40), pos: 'bc', size: 0.08, opacity: 0.3 });
 });

@@ -18,13 +18,13 @@ import { startWallScheduler } from './wall/wall.js';
 import { startLibraryMaintenance } from './library/library.js';
 import { startVideoFetcher } from './video-fetch.js';
 
-// Origins the pages really use: YouTube (admin player, thumbnails), TikTok (wall), Pixabay/Pexels (stock thumbnails); blob: for photos picked for the end card.
+// Origins the pages really use: YouTube (admin player, thumbnails), TikTok (wall), Pixabay/Pexels (stock thumbnails); blob: and data: for the end card photo and the account logo kept in the browser.
 // Inline styles stay allowed: the studio injects its @font-face rules and the admin sets style attributes.
 const CSP = [
   "default-src 'self'",
   "script-src 'self' https://www.youtube.com",
   'frame-src https://www.youtube.com https://www.tiktok.com',
-  "img-src 'self' blob: https://i.ytimg.com https://pixabay.com https://cdn.pixabay.com https://images.pexels.com",
+  "img-src 'self' blob: data: https://i.ytimg.com https://pixabay.com https://cdn.pixabay.com https://images.pexels.com",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self'",
   "media-src 'self'",

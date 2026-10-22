@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 import { promises as fs, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BROLL, END_CARD, FPS, LIMITS, OUT, buildAss, endCardContent, sanitizeEndCard, sourceText, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
+import { BROLL, END_CARD, FPS, LIMITS, LOGO, OUT, sanitizeLogo, buildAss, endCardContent, sanitizeEndCard, sourceText, groupWords, kenBurnsFilter, roundedBox, sanitizeStyle, sanitizeZoom, wordsForExtracts, zoomFilter, zoomPlan } from '../../public/js/studio-core.js';
 import { ensureImage, stockDir, validPhotoId } from './stock.js';
 import { escFilterPath, measureBoxes } from './box-probe.js';
 import { cropXExpr } from '../../public/js/framing.js';
@@ -142,6 +142,7 @@ export function normalizeRequest(body, video) {
     zoom: zoom.events.length ? zoom : null,
     broll: normalizeBroll(b.broll, clipTotal),
     end_card: endCard,
+    logo: sanitizeLogo(b.logo),
     total: clipTotal,
     outTotal: endCard ? Math.round((clipTotal + endCard.dur) * 1000) / 1000 : clipTotal,
   };
@@ -199,7 +200,7 @@ function layoutChain(i, { w, h }, layout, kind, keys = null) {
  * Arguments ffmpeg d'un rendu. `kind` : 'final' (sous-titres + musique) ou 'preview' (cadrage seul, petite définition).
  * Fonction pure : testable sans lancer ffmpeg.
  */
-export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'final', images = {} }) {
+export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'final', images = {}, outLogo = null }) {
   const size = kind === 'preview' ? SIZES.preview : SIZES[req.layout.quality];
   const args = ['-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1', '-y'];
   req.extracts.forEach((e) => args.push('-ss', String(e.start_ms / 1000), '-t', String((e.end_ms - e.start_ms) / 1000), '-i', file));
@@ -213,6 +214,9 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
   const cardIdx = imageIdx + broll.length;
   const cardImage = kind === 'final' && req.end_card?.image ? images.__card ?? cardFile(req.end_card.image) : null;
   if (cardImage) args.push('-loop', '1', '-framerate', String(FPS), '-t', String(req.end_card.dur), '-i', cardImage);
+  const logoIdx = cardIdx + (cardImage ? 1 : 0);
+  const logoImage = kind === 'final' && req.logo && outLogo ? images.__logo ?? logoFile(req.logo.image) : null;
+  if (logoImage) args.push('-loop', '1', '-framerate', String(FPS), '-t', String(outTotal), '-i', logoImage);
 
   const f = [];
   req.extracts.forEach((e, i) => {
@@ -264,9 +268,26 @@ export function buildFfmpegArgs({ file, req, hasAudio, assPath, out, kind = 'fin
     args.push('-c:v', 'libvpx', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '700k', '-pix_fmt', 'yuv420p', '-r', '30', '-c:a', 'libopus', '-b:a', '64k', '-ar', '48000', '-t', String(req.total), out);
     return args;
   }
-  args.push('-c:v', 'libx264', '-preset', size.preset, '-crf', String(size.crf), '-pix_fmt', 'yuv420p', '-r', '30');
-  if (kind === 'final') args.push('-profile:v', 'high', '-level', '4.1');
-  args.push('-c:a', 'aac', '-b:a', kind === 'final' ? '160k' : '64k', '-ar', '48000', '-t', String(outTotal), '-movflags', '+faststart', out);
+  const enc = ['-c:v', 'libx264', '-preset', size.preset, '-crf', String(size.crf), '-pix_fmt', 'yuv420p', '-r', '30'];
+  if (kind === 'final') enc.push('-profile:v', 'high', '-level', '4.1');
+  enc.push('-c:a', 'aac', '-b:a', kind === 'final' ? '160k' : '64k', '-ar', '48000', '-t', String(outTotal), '-movflags', '+faststart');
+  if (!logoImage) {
+    args.push(...enc, out);
+    return args;
+  }
+  // Two outputs from one pass: the clean video (published to the library) and the one carrying the account logo
+  const fc = args[args.indexOf('-filter_complex') + 1];
+  const lw = even(size.w * req.logo.size);
+  const x = { l: `W*${LOGO.marginX}`, c: '(W-w)/2', r: `W-w-W*${LOGO.marginX}` }[req.logo.pos[1]];
+  const y = { t: `H*${LOGO.marginTop}`, m: '(H-h)/2', b: `H-h-H*${LOGO.marginBottom}` }[req.logo.pos[0]];
+  const extra = [
+    '[vo]split=2[vclean][vl]',
+    `[${logoIdx}:v]scale=${lw}:-1,format=rgba,colorchannelmixer=aa=${req.logo.opacity}[lg]`,
+    `[vl][lg]overlay=x=${x}:y=${y}:enable='lt(t,${req.total})':eof_action=pass,format=yuv420p[vlogo]`,
+    '[ao]asplit=2[ao1][ao2]',
+  ].join(';');
+  args.splice(args.indexOf('-filter_complex'), 6, '-filter_complex', `${fc};${extra}`);
+  args.push('-map', '[vclean]', '-map', '[ao1]', ...enc, out, '-map', '[vlogo]', '-map', '[ao2]', ...enc, outLogo);
   return args;
 }
 
@@ -298,13 +319,15 @@ function endCardFor(req, video) {
 
 // --- exécution de ffmpeg ----------------------------------------------------------------------------
 
-const dirs = () => ({ renders: path.join(storageDir(), 'renders'), previews: path.join(storageDir(), 'previews'), stock: stockDir(), cards: path.join(storageDir(), 'cards') });
+const dirs = () => ({ renders: path.join(storageDir(), 'renders'), previews: path.join(storageDir(), 'previews'), stock: stockDir(), cards: path.join(storageDir(), 'cards'), logos: path.join(storageDir(), 'logos') });
+export const logoFile = (id) => (/^[0-9a-f]{40}$/.test(String(id)) ? path.join(dirs().logos, `${id}.png`) : null);
 export const cardFile = (id) => (/^[0-9a-f]{40}$/.test(String(id)) ? path.join(dirs().cards, `${id}.jpg`) : null);
 async function ensureDirs() {
   const d = dirs();
   await fs.mkdir(d.renders, { recursive: true });
   await fs.mkdir(d.previews, { recursive: true });
   await fs.mkdir(d.cards, { recursive: true });
+  await fs.mkdir(d.logos, { recursive: true });
   await fs.mkdir(d.stock, { recursive: true });
 }
 
@@ -393,6 +416,32 @@ export async function saveCard(buffer, ip = 'local') {
     // A concurrent upload of the same bytes may have stored it meanwhile
     if (await fs.stat(file).then(() => true, () => false)) return id;
     throw new HttpError(400, 'Visuel de fin illisible : envoie une image JPEG verticale.');
+  }
+  await fs.rename(tmp, file);
+  return id;
+}
+
+// Account logo, prepared in the browser (PNG, 512 px at most): kept only for the time of the render
+export async function saveLogo(buffer, ip = 'local') {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 60 || buffer.readUInt32BE(0) !== 0x89504e47) throw new HttpError(400, 'Logo illisible : il doit être une image PNG.');
+  if (!take('logo', ip, 40)) throw new HttpError(429, 'Trop de logos envoyés pour le moment : réessaie dans quelques minutes.');
+  await ensureDirs();
+  if ((await dirBytes(dirs().logos)) > CARDS_MAX_BYTES) throw new HttpError(503, 'Le studio est très sollicité : réessaie dans quelques minutes.');
+  const id = crypto.createHash('sha1').update(buffer).digest('hex');
+  const file = logoFile(id);
+  if (await fs.stat(file).then(() => true, () => false)) {
+    await fs.utimes(file, new Date(), new Date()).catch(() => {});
+    return id;
+  }
+  const tmp = `${file}.${crypto.randomBytes(6).toString('hex')}.tmp.png`;
+  await fs.writeFile(tmp, buffer);
+  while (probesRunning >= 2) await new Promise((r) => setTimeout(r, 50));
+  probesRunning++;
+  const st = await probeImage(tmp).finally(() => probesRunning--);
+  if (!st || st.codec_name !== 'png' || !(st.width >= 16 && st.width <= 1024 && st.height >= 16 && st.height <= 1024)) {
+    await fs.rm(tmp, { force: true });
+    if (await fs.stat(file).then(() => true, () => false)) return id;
+    throw new HttpError(400, 'Logo illisible : envoie une image PNG de 1024 px au plus.');
   }
   await fs.rename(tmp, file);
   return id;
@@ -494,6 +543,7 @@ export function publicJob(job) {
     duration_s: job.total,
     filename: job.filename,
     size: job.size ?? null,
+    has_logo: Boolean(job.outLogo),
     expires_in_s: job.finishedAt ? Math.max(0, Math.round((job.finishedAt + config().ttlMs - Date.now()) / 1000)) : null,
   };
 }
@@ -517,6 +567,10 @@ export async function enqueueRender({ video, req, lines, ip: rawIp = 'local', ow
   if (card) await fs.copyFile(cardFile(req.end_card.image), card).catch(() => {
     throw new HttpError(409, 'Le visuel de fin a expiré : crée la vidéo à nouveau.');
   });
+  const logo = req.logo ? path.join(dirs().renders, `${id}.logo.png`) : null;
+  if (logo) await fs.copyFile(logoFile(req.logo.image), logo).catch(() => {
+    throw new HttpError(409, 'Le logo a expiré : crée la vidéo à nouveau.');
+  });
   const job = {
     id,
     ip,
@@ -529,6 +583,8 @@ export async function enqueueRender({ video, req, lines, ip: rawIp = 'local', ow
     total: req.outTotal ?? req.total,
     filename: `studio-lisnard-${slug(video.title)}-${id.slice(0, 6)}.mp4`,
     out: path.join(dirs().renders, `${id}.mp4`),
+    outLogo: logo ? path.join(dirs().renders, `${id}.withlogo.mp4`) : null,
+    logo,
     assPath: path.join(dirs().renders, `${id}.ass`),
     file: videoFilePath(video.file_name),
     hasAudio: video.file_has_audio,
@@ -563,7 +619,8 @@ async function runJob(job) {
     for (const b of job.req.broll) images[b.id] = await ensureImage(b.id, 'full', { ip: job.ip });
     if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true });
     if (job.card) images.__card = job.card;
-    const args = buildFfmpegArgs({ file: job.file, req: job.req, hasAudio: job.hasAudio, assPath: job.assPath, out: job.out, kind: 'final', images });
+    if (job.logo) images.__logo = job.logo;
+    const args = buildFfmpegArgs({ file: job.file, req: job.req, hasAudio: job.hasAudio, assPath: job.assPath, out: job.out, outLogo: job.outLogo, kind: 'final', images });
     const run = runFfmpeg(args, job.total, { onProgress: (p) => (job.progress = p), timeoutMs: config().timeoutMs });
     job.cancel = run.cancel;
     await run.promise;
@@ -581,6 +638,7 @@ async function runJob(job) {
       }
     }
     await fs.rm(job.out, { force: true });
+    if (job.outLogo) await fs.rm(job.outLogo, { force: true });
   } finally {
     job.finishedAt = Date.now();
     job.cancel = null;
@@ -601,6 +659,7 @@ export async function cancelJob(job) {
     job.cancel?.();
   } else {
     await fs.rm(job.out, { force: true });
+    if (job.outLogo) await fs.rm(job.outLogo, { force: true });
     jobs.delete(job.id);
   }
 }
@@ -612,6 +671,7 @@ export async function cleanup(now = Date.now()) {
   for (const [id, job] of jobs) {
     if (job.finishedAt && now - job.finishedAt > ttl) {
       await fs.rm(job.out, { force: true });
+      if (job.outLogo) await fs.rm(job.outLogo, { force: true });
       jobs.delete(id);
     }
   }
