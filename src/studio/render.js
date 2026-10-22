@@ -4,7 +4,7 @@
  *  - Aperçu : même cadrage en 360 × 640, sans sous-titres (dessinés en direct dans le navigateur), mis en cache 1 h.
  *  - Rendu final : file d'attente (STUDIO_CONCURRENCY clips à la fois, 1 par défaut), limites par visiteur, progression,
  *    annulation, fichier supprimé 1 h après sa création. Rien n'est conservé durablement.
- *  - Les fichiers vidéo d'origine ne sont jamais servis : seuls ces extraits (≤ 90 s au total) sortent du serveur.
+ *  - Les fichiers vidéo d'origine ne sont jamais servis : seuls ces extraits (≤ 4 min au total) sortent du serveur.
  */
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -38,6 +38,9 @@ export const config = () => ({
   ttlMs: 60 * 60 * 1000,
   timeoutMs: 12 * 60 * 1000,
 });
+
+/** Délai accordé à ffmpeg : au moins `base`, plus pour un long montage (`perSecondMs` par seconde de clip). */
+const scaledTimeout = (base, totalS, perSecondMs) => Math.max(base, Math.ceil(totalS * perSecondMs));
 
 /** Format de l'aperçu : MP4 (H.264, lu partout). STUDIO_PREVIEW_FORMAT=webm : réservé aux tests avec un navigateur sans H.264. */
 const previewExt = () => (process.env.STUDIO_PREVIEW_FORMAT === 'webm' ? 'webm' : 'mp4');
@@ -448,7 +451,7 @@ export async function createPreview({ video, req, ip = 'local' }) {
     try {
       const tmp = `${out}.tmp.${ext}`;
       const args = buildFfmpegArgs({ file: videoFilePath(video.file_name), req, hasAudio: video.file_has_audio, out: tmp, kind: 'preview' });
-      await runFfmpeg(args, req.total, { timeoutMs: 120_000 }).promise.catch((e) => {
+      await runFfmpeg(args, req.total, { timeoutMs: scaledTimeout(120_000, req.total, 1000) }).promise.catch((e) => {
         console.error(`Aperçu ${key} : ${e.message}`);
         throw new HttpError(500, 'Aperçu impossible pour le moment : réessaie.');
       });
@@ -564,7 +567,7 @@ async function runJob(job) {
     if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true });
     if (job.card) images.__card = job.card;
     const args = buildFfmpegArgs({ file: job.file, req: job.req, hasAudio: job.hasAudio, assPath: job.assPath, out: job.out, kind: 'final', images });
-    const run = runFfmpeg(args, job.total, { onProgress: (p) => (job.progress = p), timeoutMs: config().timeoutMs });
+    const run = runFfmpeg(args, job.total, { onProgress: (p) => (job.progress = p), timeoutMs: scaledTimeout(config().timeoutMs, job.total, 4000) });
     job.cancel = run.cancel;
     await run.promise;
     if (job.status === 'cancelled') throw Object.assign(new Error('annulé'), { cancelled: true }); // cancelled just after ffmpeg ended

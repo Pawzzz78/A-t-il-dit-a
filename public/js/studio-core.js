@@ -12,7 +12,7 @@ import { sanitizeDesign } from './endcard.js';
 import { isStopWord } from './stopwords.js';
 
 export const OUT = { w: 1080, h: 1920 };
-export const LIMITS = { maxExtracts: 4, minExtractS: 3, maxTotalS: 90 };
+export const LIMITS = { maxExtracts: 4, minExtractS: 3, maxTotalS: 240 };
 export const MODES = ['words', 'one', 'phrase', 'karaoke'];
 
 /** Styles « classiques TikTok » : chacun fixe le comportement (mode) et des valeurs de départ, toutes modifiables ensuite. */
