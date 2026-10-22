@@ -108,6 +108,11 @@ qu'à choisir les extraits.
 - **Studio public** (`/studio/`) : les visiteurs choisissent une interview dont l'admin a autorisé les clips, prennent un ou
   plusieurs extraits (jusqu'à 4, 90 s au total : les propositions de l'IA, ou un passage libre dans la transcription), ajustent le
   début et la fin **avec précision**, puis habillent le clip :
+  - **chemin rapide** : chaque extrait proposé a un bouton « Créer ce TikTok », et « Mon clip » un bandeau « Créer maintenant ». Une
+    petite fenêtre résume les réglages en cours (durée, sous-titres, musique, format, qualité, écran de fin), demande l'engagement à ne
+    pas déformer les propos (le même que dans l'onglet Créer, coché une fois pour les deux) et lance la création ; on arrive sur l'onglet
+    Créer, où la vidéo se prépare. « Personnaliser d'abord » choisit l'extrait et ouvre l'onglet Sous-titres. Si l'extrait remplace un
+    clip déjà retouché (bornes réglées, plusieurs extraits), la fenêtre le signale ; pendant qu'une vidéo est en cours, elle ne s'ouvre pas ;
   - **réglage des bornes** : boutons − / + avec un pas au choix (0,1 s, 0,5 s par défaut, 1 s, 2 s, « Ligne » = jusqu'à la limite de ligne
     suivante, ou n'importe quelle durée de 0,01 à 30 s dans le champ libre) ; on peut aussi **taper l'instant exact** (`1:23,5`).
     Les bornes sont en millisecondes (arrondies au centième de seconde) ; une ligne coupée au milieu ne garde que les mots dits dans la
