@@ -3,6 +3,8 @@
 import { CARD, PALETTES as EC_PALETTES, TEMPLATES as EC_TEMPLATES, cardBlob, drawEndCard, loadImage, needsPhoto } from './endcard.js';
 import { BROLL, DESCRIPTION_MAX, LIMITS, MODELS, PRESETS, SIMILARITY_WARNING, ZOOM, draftFromClip, endCardSettings, fitDescription, modelFromState, parseModels, sanitizeModel, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
 import { createPhone, el, outlineShadow, rgba } from './studio-preview.js';
+import { createTimeline } from './timeline.js';
+import { durLabel, overlapRatio } from './timeline-core.js';
 import { fmtDate } from './ui.js';
 
 const root = document.getElementById('studio');
@@ -221,6 +223,7 @@ async function openEditor(youtubeId) {
     lines: detail.lines.map(([start_ms, end_ms, text]) => ({ start_ms, end_ms, text })),
     suggestions: detail.suggestions,
     extracts: [], // { start_ms, end_ms, title, from } : bornes en millisecondes ; `from` : début de l'extrait proposé d'origine
+    active: 0, // extrait que la timeline modifie (un seul d'ordinaire ; plusieurs possibles dans d'anciens brouillons)
     step: prefs.step === 'line' ? 'line' : Number.isFinite(prefs.step) && prefs.step >= 10 && prefs.step <= 30000 ? prefs.step : 500, // pas de réglage : 'line' (limite de ligne) ou durée en ms
     style: sanitizeStyle(prefs.style, fontIds),
     music: { id: assets.music.some((m) => m.id === prefs.music?.id) ? prefs.music.id : null, volume: Number.isFinite(prefs.music?.volume) ? prefs.music.volume : 0.25 },
@@ -459,10 +462,11 @@ async function openEditor(youtubeId) {
 
   // ============================================================ onglet Extraits
   const panelExtracts = el('div', { class: 'st-panel' });
-  const minTotalNote = () => `${secs(totalS())} sur ${LIMITS.maxTotalS} s maximum`;
+  const minTotalNote = () => `${durLabel(totalS() * 1000)} sur ${durLabel(LIMITS.maxTotalS * 1000)} maximum`;
 
   let booting = true;
   let justAdded = null;
+  let revealZone = true; // la prochaine synchronisation met la timeline sur la zone (sinon elle garde son zoom)
   function addExtract(start_ms, end_ms, title, from, caption = null, replace = false) {
     if (!replace && S.extracts.length >= LIMITS.maxExtracts) return alertNote(`${LIMITS.maxExtracts} extraits au maximum.`);
     const ex = { start_ms, end_ms: Math.min(end_ms, videoEndMs()), title, from, caption };
@@ -470,8 +474,10 @@ async function openEditor(youtubeId) {
     if (replace) S.extracts = [ex];
     else S.extracts.push(ex);
     justAdded = booting ? null : ex;
+    if (replace) S.active = 0;
+    revealZone = true;
     extractsChanged();
-    if (!booting) toast(replace ? 'Extrait choisi : il remplace ton clip (voir « Mon clip »).' : 'Extrait ajouté à ton clip (voir « Mon clip »).');
+    if (!booting) toast(replace ? 'Passage choisi : il remplace ton clip (voir la timeline).' : 'Extrait ajouté à ton clip (voir la timeline).');
   }
   function extractsChanged(fine = false) {
     rebuildSubtitles();
@@ -550,6 +556,7 @@ async function openEditor(youtubeId) {
     };
     return el('li', { class: 'st-ex', 'data-ex': String(i) },
       el('div', { class: 'st-ex-head' }, el('strong', {}, ex.title || 'Passage libre'), el('span', { class: 'badge' }, `${fmtT(ex.start_ms)} → ${fmtT(ex.end_ms)} · ${secs(exDur(ex))}`)),
+      S.extracts.length > 1 ? el('button', { class: 'btn small secondary', type: 'button', 'data-k': `${i}:tl`, 'aria-pressed': String(activeEx() === ex), onclick: () => { S.active = i; revealZone = true; extractsChanged(); } }, activeEx() === ex ? 'Modifié sur la timeline' : 'Modifier sur la timeline') : null,
       edge('Début', 'start_ms', 'Commencer plus tôt (ajoute du temps avant)', 'Commencer plus tard (retire du temps au début)'),
       edge('Fin', 'end_ms', 'Finir plus tôt (retire du temps à la fin)', 'Finir plus tard (ajoute du temps après)'),
       el('div', { class: 'st-ex-tools' }, btn('↑', 'Monter', () => move(i, -1), i === 0, `${i}:up`), btn('↓', 'Descendre', () => move(i, 1), i === S.extracts.length - 1, `${i}:down`),
@@ -597,20 +604,89 @@ async function openEditor(youtubeId) {
   function startFree(i) {
     let b = i;
     while (b + 1 < S.lines.length && (S.lines[b].end_ms - S.lines[i].start_ms) / 1000 < 25) b++;
-    addExtract(S.lines[i].start_ms, S.lines[b].end_ms, null);
+    addExtract(S.lines[i].start_ms, S.lines[b].end_ms, null, null, null, true);
   }
 
+  // --- timeline : toute l'interview, une zone à déplacer ou à étirer (4 minutes au plus)
+  const activeEx = () => S.extracts[Math.min(S.active, S.extracts.length - 1)] ?? null;
+  const tl = createTimeline({
+    durationMs: videoEndMs(),
+    lines: S.lines,
+    suggestions: S.suggestions,
+    minMs: LIMITS.minExtractS * 1000,
+    maxMs: LIMITS.maxTotalS * 1000,
+    fmt: fmtT,
+    textAt: (ms) => excerpt(lineAround(ms)?.text ?? '', 48),
+    onPick: (sg) => useSuggestion(sg),
+    onChange(zone) {
+      const ex = activeEx();
+      if (!ex) {
+        S.extracts.push({ ...zone, title: null, from: null, caption: null });
+        S.active = S.extracts.length - 1;
+      } else {
+        Object.assign(ex, zone);
+        // déplacée loin de l'extrait proposé d'origine, la zone devient un passage libre : le titre et la description ne la décrivent plus
+        const sg = ex.from != null ? S.suggestions.find((x) => x.start_ms === ex.from) : null;
+        const range = sg && { start_ms: sg.start_ms, end_ms: sg.end_ms };
+        if (range && Math.max(overlapRatio(zone, range), overlapRatio(range, zone)) < 0.5) Object.assign(ex, { from: null, title: null, caption: null });
+      }
+      extractsChanged(true);
+    },
+  });
+  const useSuggestion = (sg) => addExtract(sg.start_ms, sg.end_ms, sg.title, sg.start_ms, sg.description, true);
+  function syncTimeline() {
+    const ex = activeEx();
+    const others = S.extracts.filter((e) => e !== ex);
+    tl.setMax(LIMITS.maxTotalS * 1000 - others.reduce((n, e) => n + (e.end_ms - e.start_ms), 0));
+    tl.setOthers(others.map(exMs));
+    tl.setZone(ex ? exMs(ex) : null, { reveal: revealZone, pickedFrom: ex?.from ?? null });
+    revealZone = false;
+  }
+  // vignettes : le serveur les prépare au premier besoin (quelques secondes) ; sans elles, la timeline reste utilisable
+  let stripTimer = 0;
+  async function loadStrip(attempt = 0) {
+    try {
+      const r = await api('GET', `/videos/${encodeURIComponent(S.video.youtube_id)}/strip`);
+      if (r.ready) tl.setStrip(r);
+      else if (!r.failed && attempt < 60) stripTimer = setTimeout(() => loadStrip(attempt + 1), 3000);
+    } catch {
+      // timeline sans images
+    }
+  }
+
+  // choix rapide : les extraits proposés par l'IA, au même endroit que la timeline
+  const chipsHost = el('div', { class: 'tl-ai' });
+  function renderChips() {
+    const ex = activeEx();
+    const picked = ex?.from ?? null;
+    putKeep(chipsHost,
+      S.suggestions.length
+        ? [el('p', { class: 'tl-ai-label' }, 'Extraits proposés par l’IA : touches-en un, ou fais glisser la zone ci-dessus pour un passage libre.'),
+           el('div', { class: 'tl-chips', role: 'group', 'aria-label': 'Extraits proposés par l’IA' }, S.suggestions.slice(0, 10).map((sg) =>
+             el('button', { type: 'button', class: 'tl-chip', 'aria-pressed': String(picked === sg.start_ms), 'data-k': `chip:${sg.start_ms}`, onclick: () => useSuggestion(sg) },
+               el('span', { class: 'tl-chip-n' }, `${sg.score}/10`), el('span', { class: 'tl-chip-t' }, sg.title), el('small', {}, `${mmss(sg.start_ms)} · ${secs(sg.duration_s)}`))))]
+        : el('p', { class: 'st-help' }, 'Pas d’extrait proposé pour cette vidéo : place ta zone sur la timeline.'),
+      ex ? el('p', { class: picked == null ? 'tl-custom on' : 'tl-custom' }, picked == null ? 'Passage libre : choisi par toi sur la timeline.' : `Extrait de l’IA : « ${ex.title} ». Fais glisser la zone pour le modifier.`) : null,
+    );
+  }
+
+  const dyn = el('div', { class: 'tl-dyn' });
+  panelExtracts.append(el('h3', {}, 'Choisis ton passage'), tl.root, chipsHost, dyn);
+  let fineOpen = false;
   let suggShown = 6; // extraits proposés affichés d'emblée (les mieux notés d'abord) ; le reste sur demande
   function renderExtracts() {
     const taken = new Set(S.extracts.map((e) => e.from).filter((v) => v != null));
-    const addLabel = S.extracts.length === 1 ? 'Utiliser cet extrait' : 'Remplacer mon clip par cet extrait';
-    putKeep(panelExtracts,
-      el('h3', {}, 'Mon clip'),
-      S.extracts.length ? stepBar() : null,
-      S.extracts.length ? el('ol', { class: 'st-exlist' }, S.extracts.map(extractRow)) : el('p', { class: 'st-help' }, 'Ajoute un extrait ci-dessous : l’aperçu apparaît avec la vidéo.'),
+    const many = S.extracts.length > 1;
+    syncTimeline();
+    renderChips();
+    putKeep(dyn,
+      S.extracts.length
+        ? el('details', { class: 'tl-fine', open: fineOpen || many, ontoggle: (e) => { fineOpen = e.target.open; } },
+            el('summary', {}, 'Réglage précis (au dixième de seconde)'), stepBar(), el('ol', { class: 'st-exlist' }, S.extracts.map(extractRow)))
+        : el('p', { class: 'st-help' }, 'Place ta zone sur la timeline ou choisis un extrait proposé : l’aperçu apparaît avec la vidéo.'),
       el('p', { class: totalS() > LIMITS.maxTotalS ? 'st-total err' : 'st-total' }, S.extracts.length ? `Durée : ${minTotalNote()}` : ''),
       note,
-      el('h3', {}, S.suggestions.length ? `Extraits proposés par l’IA (${S.suggestions.length}, du plus au moins viral)` : 'Extraits proposés par l’IA'),
+      S.suggestions.length ? el('h3', {}, `Détail des extraits proposés (${S.suggestions.length}, du plus au moins viral)`) : null,
       S.suggestions.length
         ? el('ul', { class: 'st-sugg' }, S.suggestions.slice(0, suggShown).map((sg) =>
             el('li', { class: 'st-card' },
@@ -621,24 +697,21 @@ async function openEditor(youtubeId) {
               el('div', { class: 'st-card-actions' },
                 taken.has(sg.start_ms)
                   ? el('button', { class: 'btn secondary small', type: 'button', 'data-k': `sg:${sg.start_ms}`, onclick: () => { const k = S.extracts.findIndex((e) => e.from === sg.start_ms); if (k >= 0) { S.extracts.splice(k, 1); extractsChanged(); } } }, 'Retirer de mon clip')
-                  : S.extracts.length
-                    ? [el('button', { class: 'btn small', type: 'button', 'data-k': `sg:${sg.start_ms}`, onclick: () => addExtract(sg.start_ms, sg.end_ms, sg.title, sg.start_ms, sg.description, true) }, addLabel),
-                       el('button', { class: 'btn secondary small', type: 'button', 'data-k': `sga:${sg.start_ms}`, onclick: () => addExtract(sg.start_ms, sg.end_ms, sg.title, sg.start_ms, sg.description) }, 'Ajouter à la suite')]
-                    : el('button', { class: 'btn small', type: 'button', 'data-k': `sg:${sg.start_ms}`, onclick: () => addExtract(sg.start_ms, sg.end_ms, sg.title, sg.start_ms, sg.description) }, 'Utiliser cet extrait')),
+                  : el('button', { class: 'btn small', type: 'button', 'data-k': `sg:${sg.start_ms}`, onclick: () => useSuggestion(sg) }, 'Utiliser cet extrait')),
             )),
           )
-        : el('p', { class: 'st-help' }, 'Pas d’extrait proposé pour cette vidéo : choisis un passage dans la transcription.'),
+        : null,
       ...(S.suggestions.length > suggShown ? [el('button', { class: 'btn secondary small', type: 'button', onclick: () => { suggShown += 8; renderExtracts(); } }, `Voir ${Math.min(8, S.suggestions.length - suggShown)} extrait${S.suggestions.length - suggShown > 1 ? 's' : ''} de plus (${S.suggestions.length - suggShown} restant${S.suggestions.length - suggShown > 1 ? 's' : ''})`)] : []),
-      el('h3', {}, 'Choisir un autre passage'),
-      el('p', { class: 'st-help' }, 'Touche une ligne : l’extrait démarre là (environ 25 s), puis ajuste le début et la fin au dixième de seconde (ou tape l’instant exact).'),
+      el('h3', {}, 'Chercher un passage par un mot'),
+      el('p', { class: 'st-help' }, 'Touche une ligne : ta zone se place là (environ 25 s). Tu peux ensuite l’étirer ou la déplacer sur la timeline.'),
       search,
       lineList,
     );
     renderLines();
     if (justAdded) {
-      const i = S.extracts.indexOf(justAdded);
       justAdded = null;
-      panelExtracts.querySelector(`[data-ex="${i}"]`)?.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      const r = tl.root.getBoundingClientRect();
+      if (r.top < 0 || r.bottom > innerHeight) tl.root.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     }
   }
 
@@ -1856,11 +1929,14 @@ async function openEditor(youtubeId) {
   if (!restored && best) addExtract(best.start_ms, best.end_ms, best.title, best.start_ms, best.description);
   else extractsChanged();
   booting = false;
+  loadStrip();
   if (S.jobId) resumeJob(S.jobId);
 
   teardown = () => {
     clearTimeout(polling);
     clearTimeout(previewTimer);
+    clearTimeout(stripTimer);
+    tl.destroy();
     stopExpiry();
     phone.pause();
     phone.setAudio({ url: null });
