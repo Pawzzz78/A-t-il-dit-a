@@ -102,7 +102,7 @@ test('éléments de l\'éditeur : 22 polices présentes, 10 musiques, 5 styles',
   if (!enabled) return;
   const a = (await api('GET', '/api/studio/assets')).body;
   assert.deepEqual([a.fonts.length, a.music.length, a.presets.length], [22, 10, 5]);
-  assert.equal(a.limits.maxTotalS, 240);
+  assert.equal(a.limits.maxTotalS, 120);
   assert.deepEqual(a.presets.map((p) => p.id), ['hormozi', 'un-mot', 'karaoke', 'classique', 'boite']);
 });
 
@@ -170,10 +170,10 @@ test('demande : extraits, cadrage, style et musique validés', { skip: !enabled 
   bad({ extracts: [{ start_ms: 0, end_ms: 1000 }] }, /au moins 3 secondes/);
   bad({ extracts: [{ start_ms: 5000, end_ms: 4000 }] }, /invalide/);
   bad({ extracts: [{ start_ms: 0, end_ms: 700_000 }] }, /dépasse la durée/);
-  // un seul passage libre de 4 minutes passe, au-delà non
-  assert.equal(normalizeRequest({ extracts: [{ start_ms: 100_000, end_ms: 340_000 }] }, video).total, 240);
-  bad({ extracts: [{ start_ms: 100_000, end_ms: 341_000 }] }, /240 secondes/);
-  bad({ extracts: [{ start_ms: 0, end_ms: 130_000 }, { start_ms: 140_000, end_ms: 260_000 }] }, /240 secondes/);
+  // un seul passage libre de 2 minutes passe, au-delà non
+  assert.equal(normalizeRequest({ extracts: [{ start_ms: 100_000, end_ms: 220_000 }] }, video).total, 120);
+  bad({ extracts: [{ start_ms: 100_000, end_ms: 221_000 }] }, /120 secondes/);
+  bad({ extracts: [{ start_ms: 0, end_ms: 70_000 }, { start_ms: 80_000, end_ms: 140_000 }] }, /120 secondes/);
   bad({ extracts: Array.from({ length: 5 }, () => ({ start_ms: 0, end_ms: 5000 })) }, /4 extraits/);
   bad({ extracts: [{ start_ms: 0, end_ms: 5000 }], music: { id: 'inconnue' } }, /Musique inconnue/);
 });

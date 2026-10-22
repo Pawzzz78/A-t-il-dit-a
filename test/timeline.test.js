@@ -4,23 +4,23 @@ import { test } from 'node:test';
 import { TL, clampView, durLabel, fitZone, moveZone, overlapRatio, resizeZone, rulerTicks, snapMove, snapTime, viewAround, viewFitting, visibleTiles, zoomView, zoneAround } from '../public/js/timeline-core.js';
 
 const MIN = 3000;
-const MAX = 240_000;
+const MAX = 120_000;
 const DUR = 3_600_000; // une interview d'une heure
 const L = { durationMs: DUR, minMs: MIN, maxMs: MAX };
 
-test('étirer la zone : la durée maximale (4 min) bloque l\'extension, des deux côtés', () => {
-  const z = { start_ms: 600_000, end_ms: 780_000 }; // 3 min
+test('étirer la zone : la durée maximale (durée max) bloque l\'extension, des deux côtés', () => {
+  const z = { start_ms: 600_000, end_ms: 690_000 }; // 1 min 30
   // on tire la fin vers la droite : elle s'arrête à 4 min après le début
   let r = resizeZone(z, 'end', 900_000, L);
-  assert.deepEqual(r.zone, { start_ms: 600_000, end_ms: 840_000 });
+  assert.deepEqual(r.zone, { start_ms: 600_000, end_ms: 720_000 });
   assert.equal(r.limited, 'max');
   // on tire le début vers la gauche : il s'arrête à 4 min avant la fin
   r = resizeZone(z, 'start', 100_000, L);
-  assert.deepEqual(r.zone, { start_ms: 540_000, end_ms: 780_000 });
+  assert.deepEqual(r.zone, { start_ms: 570_000, end_ms: 690_000 });
   assert.equal(r.limited, 'max');
   // dans la limite : suivi exact
-  r = resizeZone(z, 'end', 800_000, L);
-  assert.deepEqual([r.zone.end_ms, r.limited], [800_000, null]);
+  r = resizeZone(z, 'end', 700_000, L);
+  assert.deepEqual([r.zone.end_ms, r.limited], [700_000, null]);
 });
 
 test('étirer la zone : durée minimale, bords de la vidéo', () => {
@@ -30,10 +30,10 @@ test('étirer la zone : durée minimale, bords de la vidéo', () => {
   r = resizeZone(z, 'start', 39_500, L);
   assert.deepEqual([r.zone.start_ms, r.limited], [37_000, 'min']);
   r = resizeZone(z, 'start', -5000, L);
-  assert.deepEqual([r.zone.start_ms, r.limited], [0, 'edge']); // le bord de la vidéo, pas la limite des 4 minutes
+  assert.deepEqual([r.zone.start_ms, r.limited], [0, 'edge']); // le bord de la vidéo, pas la limite des durée maximale
   r = resizeZone({ start_ms: 3_500_000, end_ms: 3_590_000 }, 'end', 3_700_000, L);
   assert.deepEqual([r.zone.end_ms, r.limited], [DUR, 'edge']);
-  // une zone de 4 minutes pile ne peut plus grandir
+  // une zone de durée maximale pile ne peut plus grandir
   r = resizeZone({ start_ms: 0, end_ms: MAX }, 'end', MAX + 1000, L);
   assert.equal(r.zone.end_ms, MAX);
 });
