@@ -59,7 +59,8 @@ export function createPhone({ onMove, onCrop, onPick }) {
   const hint = el('div', { class: 'ph-hint', hidden: true }, '↔ Glisse la vidéo pour la recentrer');
   const busy = el('div', { class: 'ph-busy', hidden: true, role: 'status' });
   const playBtn = el('button', { class: 'ph-play', type: 'button', 'aria-label': 'Lire l’aperçu' }, '▶');
-  const screen = el('div', { class: 'ph-screen' }, stage, brollImg, subBox, pickLayer, pickDot, guideV, guideH, guides, hint, busy, playBtn);
+  const logoImg = el('img', { class: 'ph-logo', alt: '', hidden: true });
+  const screen = el('div', { class: 'ph-screen' }, stage, brollImg, logoImg, subBox, pickLayer, pickDot, guideV, guideH, guides, hint, busy, playBtn);
   const range = el('input', { class: 'ph-range', type: 'range', min: '0', max: '1000', value: '0', 'aria-label': 'Position dans l’aperçu' });
   const time = el('span', { class: 'ph-time' }, '0:00 / 0:00');
   const guideToggle = el('label', { class: 'ph-toggle' }, el('input', { type: 'checkbox' }), 'Zones masquées par TikTok');
@@ -354,6 +355,16 @@ export function createPhone({ onMove, onCrop, onPick }) {
   return {
     root,
     video,
+    // Same geometry as the render: share of the width, 5 % side margins, 7 % from the top, 20 % from the bottom
+    setLogo({ url = '', pos = 'tr', size = 0.18, opacity = 1 } = {}) {
+      logoImg.hidden = !url;
+      if (!url) return;
+      if (logoImg.getAttribute('src') !== url) logoImg.src = url;
+      const x = { l: 'left:5%', c: 'left:50%', r: 'right:5%' }[pos[1]];
+      const y = { t: 'top:7%', m: 'top:50%', b: 'bottom:20%' }[pos[0]];
+      const shift = `translate(${pos[1] === 'c' ? '-50%' : '0'},${pos[0] === 'm' ? '-50%' : '0'})`;
+      logoImg.style.cssText = `${x};${y};width:${size * 100}%;opacity:${opacity};transform:${shift}`;
+    },
     /** Nouvelle vidéo d'aperçu (cadrage) ; on garde la position de lecture. */
     setSource(url) {
       const keep = video.currentTime || 0;

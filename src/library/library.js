@@ -110,7 +110,7 @@ async function makePoster(id, duration) {
 
 // Stored as a studio request body so normalizeRequest can replay it
 export function storedRequest(req) {
-  const { framing: _f, total: _t, outTotal: _o, edits = [], ...rest } = req;
+  const { framing: _f, total: _t, outTotal: _o, logo: _l, edits = [], ...rest } = req;
   return { ...rest, edits: Object.fromEntries(edits.map((e) => [String(e.start_ms), e.text])) };
 }
 

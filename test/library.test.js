@@ -415,3 +415,19 @@ test('visuel de fin : gardé avec le clip, servi pour « Modifier », remis en p
   } while (st.file_state === 'pending' && Date.now() - t0 < 60_000);
   assert.equal(st.file_state, 'active');
 });
+
+test('logo du compte : la bibliothèque publie la version sans logo et n’en garde pas le réglage', { skip: !enabled }, async () => {
+  const alice = browser();
+  const png = path.join(dir, 'liblogo.png');
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=200x200', '-frames:v', '1', png]);
+  const up = await (await fetch(`${base}/api/studio/logo`, { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: await fs.readFile(png) })).json();
+  const job = await renderAs(alice, { logo: { image: up.id, pos: 'tl', size: 0.3, opacity: 1 } });
+  const clip = (await alice.call('POST', '/api/library/clips', { job_id: job })).body;
+  const file = await browser().call('GET', `/api/library/clips/${clip.id}/file?use=download`);
+  const f = path.join(dir, 'libclean.mp4');
+  await fs.writeFile(f, file.body);
+  const px = execFileSync('ffmpeg', ['-v', 'error', '-ss', '1', '-i', f, '-frames:v', '1', '-vf', 'crop=40:40:70:130,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
+  assert.ok(!(px[0] > 200 && px[1] < 60 && px[2] < 60), `aucun logo dans la bibliothèque ${[...px]}`);
+  const { body } = await browser().call('GET', `/api/library/clips/${clip.id}/request`);
+  assert.equal(body.req.logo, undefined);
+});

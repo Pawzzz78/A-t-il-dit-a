@@ -706,6 +706,16 @@ export function wordNear(words, t) {
 }
 
 // Library clip settings -> editor draft (localStorage v:1 format), for « Modifier »
+// Account logo: placed on a 3 × 3 grid, sized as a share of the video width, drawn during the clip only
+export const LOGO = { positions: ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br'], minSize: 0.08, maxSize: 0.4, defaultSize: 0.18, minOpacity: 0.3, marginX: 0.05, marginTop: 0.07, marginBottom: 0.2 };
+
+export function sanitizeLogo(input) {
+  const l = input && typeof input === 'object' ? input : null;
+  if (!l || typeof l.image !== 'string' || !/^[0-9a-f]{40}$/.test(l.image)) return null;
+  const num = (v, lo, hi, d) => (Number.isFinite(Number(v)) ? Math.round(Math.min(hi, Math.max(lo, Number(v))) * 100) / 100 : d);
+  return { image: l.image, pos: LOGO.positions.includes(l.pos) ? l.pos : 'tr', size: num(l.size, LOGO.minSize, LOGO.maxSize, LOGO.defaultSize), opacity: num(l.opacity, LOGO.minOpacity, 1, 1) };
+}
+
 export function draftFromClip(req, remixOf = null) {
   const r = req && typeof req === 'object' ? req : {};
   const l = r.layout ?? {};

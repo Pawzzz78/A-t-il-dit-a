@@ -1,7 +1,7 @@
 // Studio de clips : choix d'une interview, extraits (proposés par l'IA ou libres), sous-titres TikTok (style, police, couleurs,
 // contour, position, taille), musique, cadrage, puis création du MP4 sur le serveur. Aucun innerHTML : tout est posé en nœuds.
 import { CARD, PALETTES as EC_PALETTES, TEMPLATES as EC_TEMPLATES, cardBlob, drawEndCard, loadImage, needsPhoto } from './endcard.js';
-import { BROLL, DESCRIPTION_MAX, LIMITS, MODELS, PRESETS, SIMILARITY_WARNING, ZOOM, draftFromClip, endCardSettings, fitDescription, modelFromState, parseModels, sanitizeModel, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
+import { BROLL, DESCRIPTION_MAX, LIMITS, LOGO, MODELS, PRESETS, SIMILARITY_WARNING, ZOOM, draftFromClip, endCardSettings, fitDescription, modelFromState, parseModels, sanitizeModel, groupWords, lineSimilarity, sanitizeStyle, sanitizeZoom, sourceText, suggestZoomPoints, wordNear, wordsForExtracts, zoomPlan } from './studio-core.js';
 import { createPhone, el, outlineShadow, rgba } from './studio-preview.js';
 import { fmtDate } from './ui.js';
 
@@ -10,6 +10,7 @@ const params = new URLSearchParams(location.search);
 const SWATCHES = [['#FFFFFF', 'Blanc'], ['#FFE600', 'Jaune'], ['#25F4EE', 'Cyan'], ['#FE2C55', 'Rose'], ['#7CFF6B', 'Vert'], ['#FF9500', 'Orange'], ['#000000', 'Noir']];
 const PREF_KEY = 'studio.prefs.v1';
 const MODELS_KEY = 'studio.models.v1';
+const LOGO_KEY = 'studio.logo.v1';
 
 // Native replaceChildren would print null/false children as text
 const put = (node, ...kids) => node.replaceChildren(...kids.flat(Infinity).filter(Boolean));
@@ -155,6 +156,22 @@ const loadPrefs = () => {
     return {};
   }
 };
+const readLogo = () => {
+  const d = { on: false, dataUrl: '', pos: 'tr', size: 0.18, opacity: 1 };
+  try {
+    const l = JSON.parse(localStorage.getItem(LOGO_KEY) ?? '{}');
+    const num = (v, lo, hi, def) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : def);
+    return {
+      on: l.on === true && typeof l.dataUrl === 'string' && l.dataUrl.startsWith('data:image/png'),
+      dataUrl: typeof l.dataUrl === 'string' && l.dataUrl.startsWith('data:image/png') ? l.dataUrl : '',
+      pos: ['tl', 'tc', 'tr', 'ml', 'mc', 'mr', 'bl', 'bc', 'br'].includes(l.pos) ? l.pos : 'tr',
+      size: num(l.size, 0.08, 0.4, 0.18),
+      opacity: num(l.opacity, 0.3, 1, 1),
+    };
+  } catch {
+    return d;
+  }
+};
 let prefsTimer = 0;
 let flushPrefs = () => {};
 const savePrefs = (S) => {
@@ -233,6 +250,7 @@ async function openEditor(youtubeId) {
     ticket: 0,
     edits: new Map(), // corrections de texte : début de la ligne (ms) -> { orig, text }
     endCard: { ...endCardSettings(prefs.endCard), on: false },
+    logo: readLogo(),
   };
   // corrections gardées dans le navigateur (un rechargement ne les perd pas) ; ignorées si la transcription a changé depuis
   const editsKey = `studio.edits.${S.video.youtube_id}`;
@@ -941,10 +959,94 @@ async function openEditor(youtubeId) {
       el('h3', {}, 'Format de la vidéo'),
       el('div', { class: 'st-opts' }, opt('blur', 'Vidéo entière', 'Sur un fond flou fait avec la vidéo'), opt('crop', 'Plein écran', 'La vidéo est recadrée pour remplir l’écran')),
       S.layout.fit === 'crop' ? cropBlock() : null,
+      el('h3', {}, 'Ton logo'),
+      el('p', { class: 'st-help' }, 'Facultatif : le logo de ton compte, à l’endroit de ton choix, pendant tout le clip. Il n’apparaît que dans ta vidéo, jamais dans la version publiée dans la bibliothèque.'),
+      logoBlock(),
       el('h3', {}, 'Miroir'),
       el('label', { class: 'st-check' }, mirror, 'Retourner l’image horizontalement (miroir)'),
       el('p', { class: 'st-help' }, 'L’image est retournée gauche-droite ; les sous-titres ne le sont jamais. Attention : les textes visibles dans l’image (panneaux, logos, bandeaux de chaîne) apparaîtront à l’envers. Le miroir ne change pas les droits sur la vidéo d’origine.'),
     );
+  }
+
+  // ============================================================ account logo (Format tab)
+  // Kept in this browser only; sent for the render and never published with the library copy
+  const saveLogoPrefs = () => {
+    try {
+      localStorage.setItem(LOGO_KEY, JSON.stringify(S.logo));
+    } catch {
+      toast('Logo trop lourd pour être gardé dans ce navigateur : il servira pour cette vidéo seulement.', true);
+    }
+  };
+  const pushLogo = () => phone.setLogo({ url: S.logo.on ? S.logo.dataUrl : '', pos: S.logo.pos, size: S.logo.size, opacity: S.logo.opacity });
+  const logoChanged = (rerender = true) => {
+    saveLogoPrefs();
+    pushLogo();
+    renderCreateSummary();
+    if (rerender) renderFrame();
+  };
+  async function pickLogo(file) {
+    if (!file) return;
+    if (!/^image\/(png|jpeg|webp|svg\+xml)$/.test(file.type)) return toast('Choisis une image PNG, JPG, WebP ou SVG.', true);
+    if (file.size > 8 * 1024 * 1024) return toast('Image trop lourde (8 Mo au maximum).', true);
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise((resolve, reject) => {
+        const i = new Image();
+        i.onload = () => resolve(i);
+        i.onerror = reject;
+        i.src = url;
+      });
+      const k = Math.min(1, 512 / Math.max(img.naturalWidth || 512, img.naturalHeight || 512));
+      const cv = el('canvas', { width: String(Math.max(16, Math.round((img.naturalWidth || 512) * k))), height: String(Math.max(16, Math.round((img.naturalHeight || 512) * k))) });
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      S.logo = { ...S.logo, on: true, dataUrl: cv.toDataURL('image/png') };
+      logoChanged();
+    } catch {
+      toast('Cette image n’a pas pu être lue.', true);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+  async function logoPayload() {
+    if (!S.logo.on || !S.logo.dataUrl) return null;
+    // Decoded locally: the CSP (connect-src 'self') forbids fetching a data: URL
+    const bytes = Uint8Array.from(atob(S.logo.dataUrl.split(',')[1] ?? ''), (c) => c.charCodeAt(0));
+    const blob = new Blob([bytes], { type: 'image/png' });
+    const res = await fetch('/api/studio/logo', { method: 'POST', headers: { 'Content-Type': 'image/png' }, body: blob }).catch(() => null);
+    const data = res ? await res.json().catch(() => ({})) : {};
+    if (!res?.ok) throw new Error(data.error || 'Le logo n’a pas pu être envoyé : réessaie.');
+    return { image: data.id, pos: S.logo.pos, size: S.logo.size, opacity: S.logo.opacity };
+  }
+  const POS_LABELS = { tl: 'En haut à gauche', tc: 'En haut au centre', tr: 'En haut à droite', ml: 'Au milieu à gauche', mc: 'Au centre', mr: 'Au milieu à droite', bl: 'En bas à gauche', bc: 'En bas au centre', br: 'En bas à droite' };
+  function logoBlock() {
+    const L = S.logo;
+    const file = el('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/svg+xml', class: 'st-ec-file', 'data-k': 'logo:file', onchange: (e) => pickLogo(e.target.files[0]) });
+    const upload = el('label', { class: 'btn small secondary st-ec-upload' }, L.dataUrl ? 'Changer le logo' : 'Ajouter mon logo', file);
+    if (!L.dataUrl) return [upload];
+    const range = (k, min, max, value, label, fmt) => {
+      const out = el('output', {}, fmt(value));
+      const input = el('input', { type: 'range', min: String(min), max: String(max), step: '1', value: String(value), 'data-k': `logo:${k}`, 'aria-label': label });
+      input.addEventListener('input', () => {
+        S.logo[k] = Number(input.value) / 100;
+        out.textContent = fmt(Number(input.value));
+        logoChanged(false);
+      });
+      return el('label', { class: 'st-logo-range' }, el('span', {}, label), input, out);
+    };
+    return [
+      el('div', { class: 'st-logo-row' },
+        el('img', { class: 'st-logo-thumb', src: L.dataUrl, alt: 'Ton logo' }),
+        el('div', { class: 'st-logo-actions' },
+          el('label', { class: 'st-check' }, el('input', { type: 'checkbox', checked: L.on, 'data-k': 'logo:on', onchange: (e) => { S.logo.on = e.target.checked; logoChanged(); } }), 'Ajouter mon logo à la vidéo'),
+          el('span', {}, upload, el('button', { type: 'button', class: 'st-link', onclick: () => { S.logo = { ...S.logo, on: false, dataUrl: '' }; logoChanged(); } }, 'Retirer')))),
+      L.on ? [
+        el('p', { class: 'st-ec-label' }, 'Emplacement'),
+        el('div', { class: 'st-logo-grid', role: 'group', 'aria-label': 'Emplacement du logo' },
+          LOGO.positions.map((p) => el('button', { type: 'button', class: L.pos === p ? 'on' : '', 'aria-pressed': String(L.pos === p), 'aria-label': POS_LABELS[p], title: POS_LABELS[p], 'data-k': `logo:p:${p}`, onclick: () => { S.logo.pos = p; logoChanged(); } }, el('span', {})))),
+        range('size', LOGO.minSize * 100, LOGO.maxSize * 100, Math.round(L.size * 100), 'Taille', (v) => `${v} %`),
+        range('opacity', LOGO.minOpacity * 100, 100, Math.round(L.opacity * 100), 'Opacité', (v) => `${v} %`),
+      ] : null,
+    ];
   }
 
   // ============================================================ onglet Créer
@@ -1013,6 +1115,7 @@ async function openEditor(youtubeId) {
       editedInClip() ? el('li', {}, el('strong', {}, 'Texte : '), `${editedInClip()} ligne${editedInClip() > 1 ? 's' : ''} de sous-titres corrigée${editedInClip() > 1 ? 's' : ''}`) : null,
       (S.zoom.on && zoomsIn) || S.broll.length ? el('li', {}, el('strong', {}, 'Images & zooms : '), [S.zoom.on && zoomsIn ? `${zoomsIn} zoom${zoomsIn > 1 ? 's' : ''}` : '', S.broll.length ? `${S.broll.length} image${S.broll.length > 1 ? 's' : ''}` : ''].filter(Boolean).join(', ')) : null,
       S.endCard.on ? el('li', {}, el('strong', {}, 'Écran de fin : '), `${S.endCard.dur} s`) : null,
+      S.logo.on && S.logo.dataUrl ? el('li', {}, el('strong', {}, 'Logo : '), POS_LABELS[S.logo.pos].toLowerCase()) : null,
       el('li', {}, el('strong', {}, 'Format : '), `${S.layout.fit === 'blur' ? 'vidéo entière sur fond flou' : following() ? 'plein écran, suit le visage' : 'plein écran'}${S.layout.mirror ? ', en miroir' : ''}`)));
     const busy = jobActive();
     makeBtn.disabled = !S.extracts.length || !pledge.checked || busy;
@@ -1293,6 +1396,7 @@ async function openEditor(youtubeId) {
     jobBox.dataset.mode = 'done';
     put(jobBox,
       el('p', { class: 'st-job-text ok', role: 'status' }, 'Ta vidéo est prête !'),
+      job.has_logo ? el('p', { class: 'st-help' }, 'Ta vidéo contient ton logo ; la version publiée dans la bibliothèque n’en a pas.') : null,
       libraryBox(jobId),
       job.expiresAt != null ? expiry : null,
       el('video', { class: 'st-result', src: url, controls: true, playsinline: '', preload: 'metadata' }),
@@ -1432,6 +1536,7 @@ async function openEditor(youtubeId) {
         broll: S.broll.map(({ id, start, dur }) => ({ id, start, dur })),
         edits: Object.fromEntries(clipLines().filter((r) => S.edits.has(r.line.start_ms)).map((r) => [r.line.start_ms, S.edits.get(r.line.start_ms).text])),
         end_card: await endCardPayload(),
+        logo: await logoPayload(),
       }));
       showJob();
       poll();
@@ -1850,6 +1955,7 @@ async function openEditor(youtubeId) {
   syncStyleControls();
   applyAudio();
   pushFraming();
+  pushLogo();
   openTab('extraits');
 
   const best = [...S.suggestions].sort((x, y) => y.score - x.score)[0];

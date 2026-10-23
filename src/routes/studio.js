@@ -8,7 +8,7 @@ import { getClipSuggestions, prepareSegments, CLIP_LIMITS } from '../clip-sugges
 import { pool } from '../db.js';
 import { HttpError, ah, jsonErrors } from '../http-error.js';
 import { DEFAULT_STYLE, LIMITS, PRESETS } from '../../public/js/studio-core.js';
-import { cancelJob, saveCard, config as studioConfig, createPreview, enqueueRender, FONTS, framingAllowed, getJob, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
+import { cancelJob, saveCard, saveLogo, config as studioConfig, createPreview, enqueueRender, FONTS, framingAllowed, getJob, normalizeRequest, previewFile, publicJob } from '../studio/render.js';
 import { CATEGORIES, ensureMusic, libraryFile, publicTracks } from '../studio/music.js';
 import { facesStatus, framingForRequest } from '../studio/faces.js';
 import { recordEvent } from '../studio/stats.js';
@@ -168,6 +168,14 @@ studioRouter.post(
 );
 
 studioRouter.post(
+  '/logo',
+  express.raw({ type: 'image/png', limit: '2mb' }),
+  ah(async (req, res) => {
+    res.json({ id: await saveLogo(req.body, req.ip) });
+  }),
+);
+
+studioRouter.post(
   '/preview',
   ah(async (req, res) => {
     const v = await loadVideo(req.body?.youtube_id);
@@ -222,7 +230,7 @@ studioRouter.get('/render/:id/file', async (req, res, next) => {
     const job = jobOr404(req.params.id);
     if (job.status !== 'done') throw new HttpError(409, "Le clip n'est pas encore prêt.");
     // Cap the bytes actually sent per clip (seeking in <video> only costs what is transferred)
-    if ((job.bytesServed ?? 0) >= (job.size ?? 0) * studioConfig().fileServeFactor) {
+    if ((job.bytesServed ?? 0) >= (job.sizeServed ?? job.size ?? 0) * studioConfig().fileServeFactor) {
       throw new HttpError(429, 'Ce clip a déjà été téléchargé de nombreuses fois : crée-le à nouveau si besoin.');
     }
     const socket = req.socket;
@@ -235,7 +243,8 @@ studioRouter.get('/render/:id/file', async (req, res, next) => {
     const use = req.query.use === 'download' ? 'download' : req.query.use === 'share' ? 'share' : null;
     if (use && req.method === 'GET') await recordEvent(use, { jobId: job.id, youtubeId: job.youtube_id, ip: req.ip });
     res.set('Cache-Control', 'no-store');
-    res.download(job.out, job.filename, (err) => {
+    // The visitor gets the version with their logo; the library only ever receives the clean one
+    res.download(job.outLogo ?? job.out, job.filename, (err) => {
       if (err && !res.headersSent) res.status(404).json({ error: 'Clip expiré.' });
     });
   } catch (e) {

@@ -869,3 +869,29 @@ test('écran de fin dessiné dans le navigateur : image validée, ajoutée telle
   const req = studio.normalizeRequest({ ...REQ(), end_card: card }, { file_duration_s: DURATION });
   assert.deepEqual(req.end_card.design.values, { number: '42 %' }, 'réglages du visuel validés');
 });
+
+test('logo du compte : sur la vidéo téléchargée, jamais sur la version propre', { skip: !enabled }, async () => {
+  const png = path.join(dir, 'logo.png');
+  execFileSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=red:s=200x200', '-frames:v', '1', png]);
+  const send = (body, type = 'image/png') => fetch(`${base}/api/studio/logo`, { method: 'POST', headers: { 'Content-Type': type }, body }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  assert.equal((await send(Buffer.from('nope'.repeat(50)))).status, 400);
+  const up = await send(await fs.readFile(png));
+  assert.equal(up.status, 200, JSON.stringify(up.body));
+  const logo = { image: up.body.id, pos: 'tl', size: 0.3, opacity: 1 };
+  assert.deepEqual(studio.normalizeRequest({ ...REQ(), logo: { ...logo, pos: 'zz', size: 9 } }, { file_duration_s: DURATION }).logo, { ...logo, pos: 'tr', size: 0.4 });
+  assert.equal(studio.normalizeRequest({ ...REQ(), logo: { image: '../x' } }, { file_duration_s: DURATION }).logo, null);
+  const sent = await api('POST', '/api/studio/render', { ...REQ(), music: null, logo });
+  assert.equal(sent.status, 202, JSON.stringify(sent.body));
+  const done = await waitFor(sent.body.id, (s) => s.status === 'done' || s.status === 'error');
+  assert.equal(done.status, 'done', JSON.stringify(done));
+  assert.equal(done.has_logo, true);
+  const withLogo = path.join(dir, 'withlogo.mp4');
+  await fs.writeFile(withLogo, Buffer.from(await (await fetch(`${base}/api/studio/render/${sent.body.id}/file?use=download`)).arrayBuffer()));
+  const clean = path.join(process.env.STORAGE_DIR, 'renders', `${sent.body.id}.mp4`);
+  const corner = (f, t) => execFileSync('ffmpeg', ['-v', 'error', '-ss', String(t), '-i', f, '-frames:v', '1', '-vf', 'crop=40:40:70:130,scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
+  const a = corner(withLogo, 2);
+  assert.ok(a[0] > 200 && a[1] < 60 && a[2] < 60, `logo visible ${[...a]}`);
+  const b = corner(clean, 2);
+  assert.ok(!(b[0] > 200 && b[1] < 60 && b[2] < 60), `version propre sans logo ${[...b]}`);
+  assert.ok(Math.abs(Number(probe(withLogo).format.duration) - Number(probe(clean).format.duration)) < 0.1);
+});
